@@ -13,7 +13,7 @@ Arc 标准库以 Arc 源码组织于 `std/`，按 `.as` 模块划分。编译器
 
 ## Arc.Net / Arc.Net.P2P 能力面与诚实边界
 
-Arc.Net（`std/Net/`，`using Arc.Net;`）与 Arc.Net.P2P（`std/Net.P2P/`，`using Arc.Net.P2P;`）为显式依赖的领域子库。各能力面按最终设计锁定 API 与诚实边界：未实现的面返回真 `NotImplementedException`（禁返回空 / `null` 假面冒充实现）；本地闭环通过 ≠ 实网 / 生态互操作，验收通过前禁宣称。
+Arc.Net（`std/Net/`，`using Arc.Net;`）与 Arc.Net.P2P（`std/Net/P2P/`，`using Arc.Net.P2P;`）为显式依赖的领域子库。各能力面按最终设计锁定 API 与诚实边界：未实现的面返回真 `NotImplementedException`（禁返回空 / `null` 假面冒充实现）；本地闭环通过 ≠ 实网 / 生态互操作，验收通过前禁宣称。
 
 | 面 | 设计 API 与能力边界 |
 |----|------------------|

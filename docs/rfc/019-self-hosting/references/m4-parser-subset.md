@@ -5,9 +5,9 @@
 > `cargo test --workspace`（运行时面 `cargo test -p arc-tests --features full-rt`），
 > 详见仓库根 `CHANGELOG.md`。
 
-> 本文是 [019 自举](019-self-hosting.md) §4「子集边界」的**权威载体**，定义 M4（parser 子集）对照的约定边界、验收名与禁止项。
+> 本文是 [019 自举](../../019-self-hosting.md) §4「子集边界」的**权威载体**，定义 M4（parser 子集）对照的约定边界、验收名与禁止项。
 
-- **权威**：[019 自举](019-self-hosting.md) §4 · [003 词法与语法](003-lexicon-syntax.md) · [002 语法表面与编码标准](002-surface-contract.md) · 实现规划
+- **权威**：[019 自举](../../019-self-hosting.md) §4 · [003 词法与语法](../../003-lexicon-syntax.md) · [002 语法表面与编码标准](../../002-surface-contract.md) · 实现规划
 - **对照面**：Arc `compiler/parser/` ↔ Rust `crates/parse`（`Parser::parse_program` + `dump_parse`）
 
 ---
@@ -29,7 +29,7 @@
 |----|------|
 | **首个重写单元** | `parser`（最小）：输入 `string` → 结构化 dump（非完整 `ast` crate 二进制 ABI） |
 | **目录** | `compiler/parser/`（`Program.as` + `arc.toml`；lexer 对偶 `compiler/lexer/`） |
-| **Fixture 根** | [`crates/parse/fixtures/`](../../crates/parse/fixtures/)（相对仓库根；**单一事实源**） |
+| **Fixture 根** | [`crates/parse/fixtures/`](../../../../crates/parse/fixtures/)（相对仓库根；**单一事实源**） |
 | **构建** | `cargo run -p arc -- build compiler/parser/Program.as -o arc_parser`（Rust bootstrap 链） |
 | **Rust 权威** | `crates/parse`：`Parser::parse_program` + `dump_parse` |
 | **成功标准** | fixture 上 Arc dump ↔ Rust dump **diff 为零** |
@@ -109,9 +109,9 @@
 
 | 层 | 文件（仓库相对路径） | 覆盖 ID |
 |----|---------------------|---------|
-| **smoke** | [`compiler/parser/fixtures/smoke.as`](../../crates/parse/fixtures/smoke.as) | I1–I3、S1–S3、E1–E6 最小竖切 |
-| **types** | [`compiler/parser/fixtures/types.as`](../../crates/parse/fixtures/types.as) | I4–I8、T1–T2、字段初始化 |
-| **control** | [`compiler/parser/fixtures/control.as`](../../crates/parse/fixtures/control.as) | S4–S9、E3–E4、enum+switch |
+| **smoke** | [`compiler/parser/fixtures/smoke.as`](../../../../crates/parse/fixtures/smoke.as) | I1–I3、S1–S3、E1–E6 最小竖切 |
+| **types** | [`compiler/parser/fixtures/types.as`](../../../../crates/parse/fixtures/types.as) | I4–I8、T1–T2、字段初始化 |
+| **control** | [`compiler/parser/fixtures/control.as`](../../../../crates/parse/fixtures/control.as) | S4–S9、E3–E4、enum+switch |
 
 Rust `dump_parse` 单测、Arc parser CLI、`arc_parser_parity_e2e` **共用**该目录。新增 fixture 须两侧同挂。
 
@@ -154,18 +154,18 @@ Rust `dump_parse` 单测、Arc parser CLI、`arc_parser_parity_e2e` **共用**�
 | 无边界开工 | 无本文件（或后继 Accepted 修订）即大范围实现 Arc parser |
 | 宣称全语法对等 | 违反 §1 / §4 |
 | 单侧改 dump | 改格式须同 PR 更新 Rust + Arc + e2e + §2.1 |
-| 掩盖语言债 | 违反 [019 立宪公理](019-self-hosting.md) |
+| 掩盖语言债 | 违反 [019 立宪公理](../../019-self-hosting.md) |
 | 用 Skip 名义绿 | `arc_parser_parity_e2e` 须非 Skip |
 
 ---
 
 ## 边界
 
-- 本篇只讲 M4 parser 子集边界；自举阶段划分/门禁/硬约束见 [019 自举](019-self-hosting.md)。
-- 语法权威见 [003 词法与语法](003-lexicon-syntax.md) 与 [002 语法表面与编码标准](002-surface-contract.md)。
+- 本篇只讲 M4 parser 子集边界；自举阶段划分/门禁/硬约束见 [019 自举](../../019-self-hosting.md)。
+- 语法权威见 [003 词法与语法](../../003-lexicon-syntax.md) 与 [002 语法表面与编码标准](../../002-surface-contract.md)。
 - 里程碑排期与状态演进见 实现规划，不属本设计契约。
 
 ---
 
-上一节：[019 自举](019-self-hosting.md) · [返回 RFC 目录](index.md)
+上一节：[019 自举](../../019-self-hosting.md) · [返回 RFC 目录](../../index.md)
 

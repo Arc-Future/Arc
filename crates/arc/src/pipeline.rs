@@ -2639,10 +2639,7 @@ fn ai_esc(s: &str) -> String {
 }
 
 /// RFC 038: 若程序含 `[AITool]` 方法，合成 `__AIToolHost` 工具宿主并入编译单元（普通 build / test / publish 均生效）。
-fn maybe_inject_ai_tool_host(
-    unit: &mut CompileUnit,
-    obj_dir: Option<&Path>,
-) -> Result<(), String> {
+fn maybe_inject_ai_tool_host(unit: &mut CompileUnit, obj_dir: Option<&Path>) -> Result<(), String> {
     let tools = collect_ai_tool_methods(&unit.program)?;
     if tools.is_empty() {
         return Ok(());
@@ -2876,10 +2873,7 @@ fn inject_inject_bootstrap_call(items: &mut [ast::Spanned<Item>], classes: &[Inj
 
 /// 若程序含 `[Inject]` 类，向 DI 装配点直接发射 AddXxx 绑定。
 /// 普通 build / test / publish 均生效。
-fn maybe_inject_di_bindings(
-    unit: &mut CompileUnit,
-    _obj_dir: Option<&Path>,
-) -> Result<(), String> {
+fn maybe_inject_di_bindings(unit: &mut CompileUnit, _obj_dir: Option<&Path>) -> Result<(), String> {
     let classes = collect_inject_classes(&unit.program);
     if classes.is_empty() {
         return Ok(());
@@ -4273,10 +4267,7 @@ fn body_contains_rvalue(body: &mir::MirCfgBody, pred: impl Fn(&mir::MirRvalue) -
         .any(|b| b.statements.iter().any(|s| stmt_contains_rvalue(s, &pred)))
 }
 
-fn stmt_contains_rvalue(
-    stmt: &mir::MirStatement,
-    pred: &impl Fn(&mir::MirRvalue) -> bool,
-) -> bool {
+fn stmt_contains_rvalue(stmt: &mir::MirStatement, pred: &impl Fn(&mir::MirRvalue) -> bool) -> bool {
     match stmt {
         mir::MirStatement::Assign { rvalue, .. }
         | mir::MirStatement::Return(Some(rvalue))
@@ -4749,7 +4740,10 @@ fn filter_reachable_mir_fns(
     // → 完整性门报 arc-prune-001（u5_entry_call_roundtrip e2e 实证）。与上方
     // P1 同构：检测到 Entry 调用点即 force-keep 异常 ctor，基类 ctor 链
     // （SystemException / Exception）由下方闭包扩展沿 Call 边带入。
-    if mir_fns.iter().any(|(_, body)| body_uses_assembly_entry(body)) {
+    if mir_fns
+        .iter()
+        .any(|(_, body)| body_uses_assembly_entry(body))
+    {
         if let Some(&id) = name_to_id.get("__ctor::EntryPointNotFoundException_1") {
             reachable.insert(id);
         }

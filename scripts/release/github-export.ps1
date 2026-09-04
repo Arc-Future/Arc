@@ -31,22 +31,24 @@ param(
     [switch]$InitGit,
     [string]$CommitMessage = "chore: Arc 1.0.0 initial public release",
     [string]$AuthorName = "LUSIDA (Start)",
-    [string]$AuthorEmail = "474309146@qq.com"
+    [string]$AuthorEmail = "209404271+lusida2026@users.noreply.github.com",
+    [string]$RemoteUrl = "https://github.com/Arc-Future/Arc.git"
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 if (-not $OutDir) { $OutDir = Join-Path $repo "target\github-export\arc" }
 
-$ExcludeExact = @(
-    "docs/plan.md",
-    "docs/discuss.md",
-    ".git-blame-ignore-revs"
-)
-$ExcludeDirs = @(
-    "docs/reviews/",
-    "docs/rfc/proposals/"
-)
+# Exclusion list: shared with github-sync.ps1 via export-exclusions.txt
+# (one entry per line; `dir/` excludes a whole directory; `#` comments).
+$ExcludeExact = @()
+$ExcludeDirs = @()
+$exclusionFile = Join-Path $PSScriptRoot "export-exclusions.txt"
+foreach ($line in [System.IO.File]::ReadAllLines($exclusionFile)) {
+    $l = $line.Trim()
+    if ($l -eq '' -or $l.StartsWith('#')) { continue }
+    if ($l.EndsWith('/')) { $ExcludeDirs += $l } else { $ExcludeExact += $l }
+}
 
 # --- 1. Export (committed index state via checkout-index; immune to in-flight
 #        working-tree changes from parallel sessions) ---
@@ -97,16 +99,24 @@ function Find-InExport([string]$Pattern) {
         }
 }
 
-# 2a. file:// absolute links with a drive letter (local machine paths leaking).
-#     Code that HANDLES the file:// URI scheme and protocol-syntax docs are
-#     legitimate; scan prose-like files only and require a drive prefix.
-$hits = @(Find-InExport 'file:///[a-zA-Z]:[/\\]')
+# 2a. file:// absolute links with a drive letter in PROSE files (local machine
+#     paths leaking). Source code legitimately handles the file:// URI scheme
+#     (release.rs URI parsing, vendored SQLite) - not scanned here.
+$proseFiles = Get-ChildItem $OutDir -Recurse -File |
+    Where-Object { $_.Extension.ToLowerInvariant() -in @('.md', '.txt') }
+$hits = @($proseFiles | Select-String -Pattern 'file:///[a-zA-Z]:[/\\]' -List |
+    ForEach-Object {
+        $p = $_.Path
+        if ($p.StartsWith($OutDir)) { $p = $p.Substring($OutDir.Length) }
+        ($p.TrimStart('\', '/') -replace '\\', '/')
+    })
 if ($hits.Count -gt 0) { Warn ("file:// drive links found in: " + ($hits -join ', ')) }
 
-# 2b. Personal email (README/LICENSE/Cargo.toml are the intentional signature
-#     spots; anything else must be reviewed)
+# 2b. Personal email (README/LICENSE/Cargo.toml are signature spots;
+#     github-export.ps1 embeds the author default by design; anything else
+#     must be reviewed)
 $hits = @(Find-InExport '[a-zA-Z0-9._%+-]+@(qq|gmail|outlook|163|hotmail)\.(com|net)' |
-    Where-Object { $_ -notmatch '^(README\.md|README\.en\.md|LICENSE|Cargo\.toml)$' -and $_ -notmatch '^crates/runtime-' })
+    Where-Object { $_ -notmatch '^(README\.md|README\.en\.md|LICENSE|Cargo\.toml|scripts/release/github-export\.ps1)$' -and $_ -notmatch '^crates/runtime-' })
 if ($hits.Count -gt 0) { Warn ("personal email outside signature/vendored files: " + ($hits -join ', ')) }
 
 # 2c. Personal absolute paths (Windows / macOS drive & user dirs)
@@ -114,10 +124,11 @@ $hits = @(Find-InExport 'C:\\Users\\|D:\\GitCode|/Users/[a-z]+/')
 if ($hits.Count -gt 0) { Warn ("personal absolute paths found in: " + ($hits -join ', ')) }
 
 # 2d. 64-hex key material (an Ed25519 seed is a PRIVATE key to keep offline;
-#     public keys are fine to embed). Known-safe: hash.rs (SHA-256 test
-#     vector), components.json (component checksums).
+#     public keys are fine to embed). Known-safe literals: release.rs embeds
+#     the PUBLIC trust-anchor key, release_sign.rs carries hex test vectors -
+#     the actual seed-rotation gate is check 2e below.
 $hits = @(Find-InExport '"[0-9a-fA-F]{64}"' |
-    Where-Object { $_ -match '^crates/arc/src/' -and $_ -notmatch '^(crates/arc/src/hash\.rs|crates/arc/src/components\.json)$' })
+    Where-Object { $_ -match '^crates/arc/src/' -and $_ -notmatch '^(crates/arc/src/hash\.rs|crates/arc/src/components\.json|crates/arc/src/release\.rs|crates/arc/src/release_sign\.rs)$' })
 if ($hits.Count -gt 0) { Warn ("64-hex literals in compiler sources (verify none is a signing seed): " + ($hits -join ', ')) }
 
 # 2e. Release signing placeholder key: if the public repo still embeds the dev
@@ -151,7 +162,8 @@ if ($InitGit) {
         git config user.email $AuthorEmail
         git commit -m $CommitMessage | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "git commit failed in $OutDir" }
-        Write-Host "==> git repository initialized with a single clean commit (author: $AuthorName <$AuthorEmail>)"
+        if (-not (git remote)) { git remote add origin $RemoteUrl }
+        Write-Host "==> git repository initialized with a single clean commit (author: $AuthorName <$AuthorEmail>; origin -> $RemoteUrl)"
     } finally {
         Pop-Location
     }

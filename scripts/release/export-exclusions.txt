@@ -1,0 +1,14 @@
+# GitHub 公开导出排除清单（github-export.ps1 / github-sync.ps1 共享）。
+# 语法：一行一条；精确文件直接写路径；目录以 / 结尾（整目录排除）；# 注释。
+# 原则：内部迭代过程资产不入公开仓；开发治理文档（AGENTS.md / .cursor/）保留。
+
+# 内部实现规划（迭代进度 / 技术债账面，非确定性设计）
+docs/plan.md
+# 内部讨论稿
+docs/discuss.md
+# 内部审查记录
+docs/reviews/
+# 内部提案与否决备忘
+docs/rfc/proposals/
+# 依赖内部完整 git 历史，公开仓无意义
+.git-blame-ignore-revs

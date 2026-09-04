@@ -1,6 +1,6 @@
 # Arc 语言之书
 
-[前言](preface.md) · [语言宣言](manifesto.md) · 实现规划
+[前言](preface.md) · [语言宣言](manifesto.md) · [实现规划](plan.md) · [LLVM 后端结论](discuss.md)
 
 ---
 
@@ -68,13 +68,14 @@
 - [Arc.Net 网络与 P2P](domain/networking-p2p.md)
 - [Arc.DI 依赖注入](domain/di.md)
 - [Arc.Chord 插件内核](domain/chord.md)
-- [Arc.UI 拟真引擎](domain/realism-engine.md)
+- [Arc.Illusory 游戏引擎](domain/illusory.md)
+- [Arc.UI 拟真引擎（程序化内容生成）](domain/realism-engine.md)
 
 ## RFC 设计决策
 
 [RFC 索引](rfc/index.md)
 
-### 语言核心（001–012）
+### I · 语言核心（001–012）
 
 - [001 语言宪章](rfc/001-language-charter.md)
 - [002 语法表面与编码标准](rfc/002-surface-contract.md)
@@ -89,7 +90,7 @@
 - [011 表达式树与查询语言](rfc/011-expression-trees-query.md)
 - [012 编译期元编程](rfc/012-compile-time-metaprogramming.md)
 
-### 编译与运行时（013–019）
+### II · 编译与运行时（013–019）
 
 - [013 编译管线架构](rfc/013-compiler-pipeline.md)
 - [014 运行时 ABI](rfc/014-runtime-abi.md)
@@ -98,8 +99,9 @@
 - [017 编译产物、包体系与类型身份](rfc/017-build-artifacts-packages.md)
 - [018 类型体系与反射元数据](rfc/018-type-reflection-metadata.md)
 - [019 自举路线图](rfc/019-self-hosting.md)
+  - [子文档索引](rfc/019-self-hosting/references/index.md) · [M4 Parser 子集边界](rfc/019-self-hosting/references/m4-parser-subset.md)
 
-### 标准库（020–030）
+### III · 标准库（020–030）
 
 - [020 标准库架构与拆分](rfc/020-std-architecture.md)
 - [021 集合、IO 与文本](rfc/021-collections-io-text.md)
@@ -113,7 +115,7 @@
 - [029 图像与图形](rfc/029-imaging-graphics.md)
 - [030 Protobuf 二进制序列化](rfc/030-protobuf.md)
 
-### 工具链（031–036）
+### IV · 工具链（031–036）
 
 - [031 编译器 CLI 与构建](rfc/031-compiler-cli.md)
 - [032 质检框架 QIF](rfc/032-qif.md)
@@ -122,7 +124,7 @@
 - [035 调试器与 MIR 解释器](rfc/035-debugger.md)
 - [036 成熟度与基础面稳定](rfc/036-maturity.md)
 
-### 领域库（037–043）
+### V · 领域库（037–043）
 
 - [037 UI 声明式框架](rfc/037-ui.md)
 - [038 AI 宿主](rfc/038-ai-host.md)
@@ -131,16 +133,21 @@
 - [041 AI 推理](rfc/041-ai-inference.md)
 - [042 P2P 网络](rfc/042-p2p.md)
 - [043 Coding Agent Harness 工程](rfc/043-harness.md)
-  - [渐进式披露子项索引](rfc/043-harness/references/index.md)
-  - [AIRfc 体系](rfc/043-harness/references/airfc.md)
-  - [LLM 门闩](rfc/043-harness/references/llm-gates.md)
-  - [冲突织物](rfc/043-harness/references/conflict-fabric.md)
-  - [API 草图](rfc/043-harness/references/api-sketch.md)
-  - [包布局](rfc/043-harness/references/package-layout.md)
-  - [收敛迁移](rfc/043-harness/references/convergence-migration.md)
-  - [可执行 DoD](rfc/043-harness/references/definition-of-done.md)
+
+### VI · 后续主题（044+）
+
 - [044 yield 迭代器](rfc/044-yield-iterators.md)
 - [045 插件内核](rfc/045-chord.md)
 - [046 通道——多生产者/多消费者通信](rfc/046-channels.md)
+- [047 透明对象图迁移](rfc/047-object-graph-migration.md)
 - [048 命名管道与本机 IPC](rfc/048-named-pipes.md)
+- [049 Illusory 游戏引擎](rfc/049-illusory-engine.md)
 - [050 统一对象头](rfc/050-unified-object-header.md)
+
+### 提案区
+
+[proposals 索引](rfc/proposals/index.md)（待裁决草案 / 已裁决备忘）
+
+## 评审记录
+
+[reviews 索引](reviews/index.md)（专项评审 / 架构审查的历史基线）

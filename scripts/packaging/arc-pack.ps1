@@ -402,6 +402,51 @@ void Main() {
     } finally {
         Pop-Location
     }
+
+    # 6c. Installed-SDK development acceptance: consume std beyond the implicit
+    #     Arc root - Arc.Collections (List<int> generics + namespace-index source
+    #     pull from lib/std), proving users can do real Arc project development
+    #     right after install.
+    $projStd = Join-Path $verifyRoot "stdapp"
+    New-Item -ItemType Directory -Force -Path $projStd | Out-Null
+    Write-Utf8NoBom (Join-Path $projStd "arc.toml") "[package]`nname = `"stdapp`"`nversion = `"0.1.0`"`nedition = `"1`"`n"
+    $stdMain = @"
+using Arc;
+using Arc.Collections;
+
+void Main() {
+    List<int> xs = new List<int>();
+    xs.Add(40);
+    xs.Add(2);
+    int sum = 0;
+    for (int i = 0; i < xs.Count; i = i + 1) {
+        sum = sum + xs[i];
+    }
+    Console.WriteLine("std:ok " + sum);
+}
+"@
+    Write-Utf8NoBom (Join-Path $projStd "main.as") $stdMain
+    Push-Location $projStd
+    try {
+        $prevEap2 = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $buildOut2 = & $arc build $projStd 2>&1
+            $buildExit2 = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $prevEap2
+        }
+        $buildOut2 | ForEach-Object { Write-Host "    $_" }
+        if ($buildExit2 -ne 0) { throw "verify failed: std-consuming build failed (exit $buildExit2)" }
+        $exe2 = Join-Path $projStd "bin\Debug\stdapp.exe"
+        if (-not (Test-Path $exe2)) { throw "verify failed: expected stdapp binary $exe2" }
+        $runOut2 = (cmd /c "`"$exe2`"") -join "`n"
+        if ($runOut2.Trim() -ne "std:ok 42") { throw "verify failed: stdapp output '$runOut2'" }
+        Write-Host "    ok: installed SDK builds a std-consuming project (Arc.Collections)"
+    } finally {
+        Pop-Location
+    }
+
     } finally {
         $env:ARC_SDK_ROOT = $prevSdkRoot
         $env:ARC_HOME = $prevArcHome

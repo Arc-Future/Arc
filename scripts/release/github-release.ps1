@@ -184,24 +184,63 @@ try {
     }
 }
 $relId = $release.id
+Write-Host "==> release id=$relId (tag=$($release.tag_name), draft=$($release.draft))"
 
-# --- 6. Upload assets (idempotent: replace same-name assets) ---
+# --- 6. Upload assets via curl.exe (Invoke-RestMethod -InFile uploads are
+#        unreliable for large bodies on Windows PowerShell 5.1: 201 responses
+#        whose assets silently vanish). Every upload is verified by re-reading
+#        the asset list; missing entries trigger a bounded replace-and-retry. ---
+$curl = (Get-Command curl.exe -ErrorAction SilentlyContinue).Source
+if (-not $curl) { throw "curl.exe not found (Windows 10+ ships it at System32\curl.exe)" }
+
+function Publish-Asset([string]$name, [string]$path) {
+    $assetsUri = "https://api.github.com/repos/$Repo/releases/$relId/assets?per_page=100"
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        # clean the slot if an asset with this name is present
+        $list = @(Invoke-RestMethod -Uri $assetsUri -Headers $headers)
+        $old = $list | Where-Object { $_.name -eq $name }
+        if ($old) {
+            Invoke-RestMethod -Method Delete -Uri "$apiBase/releases/assets/$($old.id)" -Headers $headers | Out-Null
+            Write-Host "==> replaced existing asset: $name"
+            Start-Sleep -Seconds 3
+        }
+        $null = & $curl -sS --fail -X POST -H "Authorization: token $Token" `
+            -H "Content-Type: application/octet-stream" `
+            --data-binary "@$path" `
+            "https://uploads.github.com/repos/$Repo/releases/$relId/assets?name=$name"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "==> upload attempt $attempt for $name failed (curl exit $LASTEXITCODE)"
+            Start-Sleep -Seconds 3
+            continue
+        }
+        Start-Sleep -Seconds 2
+        $verify = @(Invoke-RestMethod -Uri $assetsUri -Headers $headers)
+        if ($verify | Where-Object { $_.name -eq $name }) {
+            Write-Host "==> uploaded: $name"
+            return
+        }
+        Write-Host "==> asset $name not listed after upload (attempt $attempt) - retrying"
+        Start-Sleep -Seconds 3
+    }
+    throw "asset upload failed after retries: $name"
+}
+
 $assets = @($zipName, "$zipName.sha256", "manifest.json", "manifest.json.sig")
-$existing = @(Invoke-RestMethod -Uri "$apiBase/releases/$relId/assets" -Headers $headers)
 foreach ($a in $assets) {
     $path = Join-Path $DistDir ($a -replace '/', '\')
     if (-not (Test-Path $path)) { throw "missing asset file: $path" }
-    $old = $existing | Where-Object { $_.name -eq $a }
-    if ($old) {
-        Invoke-RestMethod -Method Delete -Uri "$apiBase/releases/assets/$($old.id)" -Headers $headers | Out-Null
-        Write-Host "==> replaced existing asset: $a"
-    }
-    $uploadUri = "https://uploads.github.com/repos/$Repo/releases/$relId/assets?name=$a"
-    Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers -InFile $path `
-        -ContentType 'application/octet-stream' -TimeoutSec 1800 | Out-Null
-    Write-Host "==> uploaded: $a"
+    Publish-Asset -name $a -path $path
 }
 
-# --- 7. Read back and report ---
-$final = Invoke-RestMethod -Uri "$apiBase/releases/tags/$tag" -Headers $headers
+# --- 7. Read back and report (settled state; refuse to report success on an
+#        incomplete asset list) ---
+Start-Sleep -Seconds 10
+$final = $null
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+    $final = Invoke-RestMethod -Uri "$apiBase/releases/tags/$tag" -Headers $headers
+    if ($final.assets.Count -ge 4) { break }
+    Write-Host "==> asset list incomplete ($($final.assets.Count)/4) - settling and re-reading"
+    Start-Sleep -Seconds 10
+}
+if ($final.assets.Count -lt 4) { throw "asset listing incomplete after publish: $($final.assets.Count)/4" }
 Write-Host ("==> release published: {0} ({1} asset(s), {2})" -f $final.html_url, $final.assets.Count, $final.tag_name)
