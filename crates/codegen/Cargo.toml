@@ -1,0 +1,24 @@
+﻿[package]
+name = "codegen"
+description = "LLVM 22 native code generation for Arc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ast = { workspace = true }
+typeck = { workspace = true }
+mir = { workspace = true }
+thiserror = { workspace = true }
+# RFC 061 M4锛歟mit_static.rs 浣跨敤 IndexMap 淇濇寔 __sinit 鍑芥暟鎸夌被澹版槑椤哄簭鍙戝皠銆?
+indexmap = { workspace = true }
+# rt_cache 鍐呭瀵诲潃锛歳untime `.o` 缂撳瓨鍛戒腑鍒ゅ畾鎸夋簮鐮?渚濊禆/閫夐」鍐呭鍝堝笇锛堝純 mtime锛夈€?
+sha2 = { workspace = true }
+
+[dev-dependencies]
+parse = { workspace = true }
+
+# lint 基线统一由 workspace 管理（见根 Cargo.toml [workspace.lints]）
+[lints]
+workspace = true

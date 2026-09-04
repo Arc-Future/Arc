@@ -1,0 +1,75 @@
+// iree.ani — Arc.AI.Iree native contract（RFC 027 / RFC 103 验证式 FFI）。
+//
+// 封装 IREE Runtime（iree_shim.cpp 将 iree/runtime/api.h 的高层 runtime C API
+// 包成 extern "C" C ABI，见 crates/runtime-iree/iree_shim.{h,cpp}）。
+//
+// `load = "auto"`：编译期库可定位（resolve_native_lib + 符号验证成功）→ static；
+// 否则确定性降级 runtime。运行时经 `ARC_IREE_LIB` 环境变量（RFC 103 环境变量
+// 形态②）求值库**目录**，再追加平台库名（iree_shim.dll / libiree_shim.so /
+// libiree_shim.dylib）懒加载；未设置 / 目录缺库 / 符号缺失 → 模块 `unavailable`
+// （`Native.IsAvailable("iree")` == false），调用点经 <c>Native.IsAvailable</c>
+// 门闩优雅降级（RFC 034 §1.2.3 / §1.2.4；与 onnx.ani 同构）。
+//
+// ABI 语义对齐 iree_shim.h 所有权模型：
+//   - 不透明句柄 Instance / Module / BufferView 为**拥有式**堆对象，各配一个
+//     `iree_*_release` 释放；不得交叉释放。Arc 侧统一存为内置 `NativePtr`
+//     （对应 C `void*`，按值传递）——对齐 onnx/wgpu 已验证模式。
+//   - `List<byte>` 展开为 `ptr buffer, i32 size`（size = 字节数）；`List<long>`
+//     展开为 `ptr buffer, i32 size`（size = 元素数，携带句柄/维度）。二者均
+//     **零拷贝**（RFC 027 M3 §3.3）。
+//   - 错误协议：返回 0 成功 / 非零失败；失败后 `iree_last_error` 取末次错误串。
+//
+// 里程碑映射：M-I0 立本契约 + 降级链；M-I1 补 invoke 闭环；M-I2 补 buffer_view
+// 类型化读写；M-I3 补多后端 device；M-I4 接共享抽象（Tensor/IAIModel）。
+native module iree {
+    load = "auto";
+    library = Environment.GetEnvironmentVariable("ARC_IREE_LIB");
+
+    // ── 错误 ──
+    fn iree_last_error(List<byte> buf) -> int;
+    fn iree_clear_error();
+
+    // ── Runtime 实例（拥有式）──
+    // 创建 IREE runtime instance（底层含 HAL driver registry / VM instance）。
+    fn iree_create_runtime(int logLevel, string name, out NativePtr instance) -> int;
+    fn iree_release_runtime(NativePtr instance);
+
+    // ── 模块加载（M-I1：.vmfb → module）──
+    fn iree_load_module(NativePtr instance, string modulePath, out NativePtr module) -> int;
+    fn iree_release_module(NativePtr module);
+    fn iree_module_function_count(NativePtr module, out int count) -> int;
+
+    // ── 设备 / 驱动探测（M-I3：多后端 + 确定性回退 local-task）──
+    // 返回 0 = 驱动可用，非零 = 不可用（供 iree_device_driver_available 门闩）。
+    fn iree_device_driver_available(string driver) -> int;
+
+    // ── BufferView（M-I2：类型化读写 + shape/type 惰性元数据）──
+    // 拥有式：创建时把调用方数据拷入 IREE 自有存储，创建后调用方缓冲可即释。
+    // 元素类型码（iree_buffer_view_get_elem_type 返回，与 TensorElementType 对齐）：
+    //   1=Float32  2=Float64  3=Int32  4=Int64  5=UInt8
+    fn iree_create_buffer_float(List<long> shape, List<float> data, out NativePtr v) -> int;
+    fn iree_create_buffer_double(List<long> shape, List<double> data, out NativePtr v) -> int;
+    fn iree_create_buffer_i32(List<long> shape, List<int> data, out NativePtr v) -> int;
+    fn iree_create_buffer_i64(List<long> shape, List<long> data, out NativePtr v) -> int;
+    fn iree_create_buffer_byte(List<long> shape, List<byte> data, out NativePtr v) -> int;
+    fn iree_release_buffer_view(NativePtr v);
+    fn iree_buffer_view_read_float(NativePtr v, List<float> buf, out int len) -> int;
+    fn iree_buffer_view_read_double(NativePtr v, List<double> buf, out int len) -> int;
+    fn iree_buffer_view_read_i32(NativePtr v, List<int> buf, out int len) -> int;
+    fn iree_buffer_view_read_i64(NativePtr v, List<long> buf, out int len) -> int;
+    fn iree_buffer_view_read_byte(NativePtr v, List<byte> buf, out int len) -> int;
+    fn iree_buffer_view_get_shape(NativePtr v, List<long> dims, out int dimCount) -> int;
+    fn iree_buffer_view_get_elem_type(NativePtr v, out int elemType) -> int;
+    fn iree_buffer_view_get_total(NativePtr v, out long total) -> int;
+
+    // ── 推理（M-I1：invoke 闭环）──
+    // inputs: nInputs 个 BufferView 句柄；outputs 容量（元素数）>= 请求输出数；
+    // 成功时写入产出句柄（调用方所有，经 iree_release_buffer_view 释放），
+    // outCount 为实际产出数。
+    fn iree_invoke(NativePtr module, string functionName,
+                   List<long> inputs, List<long> outputs, out int outCount) -> int;
+
+    // ── 元数据（M-I1：函数 I/O 计数，供 IAIModel.InputCount/OutputCount）──
+    fn iree_invoke_arg_count(NativePtr module, string functionName,
+                             out int inCount, out int outCount) -> int;
+}

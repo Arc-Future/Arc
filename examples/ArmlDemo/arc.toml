@@ -1,0 +1,27 @@
+[package]
+name = "ArmlDemo"
+version = "0.1.0"
+edition = "2026"
+namespace = "ArmlDemo"
+
+# RFC 025 M2+ InternalsVisibleTo：ARML 项目合并 Arc.UI 框架源码进编译单元，
+# 框架文件（归本项目包）与 Arc.UI / Arc.UI.Edit 包需双向 internal 互通
+# （Edit 组件库文件访问合并的 Core internal，如 EditorViewport → LayoutHelper）。
+internals_visible_to = ["Arc.UI", "Arc.UI.Edit"]
+
+# RFC 025 M2：ARML 示例依赖 Arc.UI（框架）+ Arc.UI.Edit（CodeEditor 组件库）。
+[dependencies]
+"Arc.UI" = { path = "../../std/UI/Core" }
+"Arc.UI.Edit" = { path = "../../std/UI/Edit" }
+
+# RFC 026 M2 ARML code-behind 项目描述。
+# 对标 WPF csproj 的 <ApplicationDefinition> + <Page> 项。
+# `arc build` 接受项目路径时会自动触发 ARML codegen + 编译流程：
+#   1. 对每个 `arml` 生成 `.g.as` 到 `obj/<config>/<ClassName>.g.as`
+#   2. 合并所有 `.g.as` + `sources` + `program` 为 `obj/<config>/Program.as`
+#   3. 编译 `Program.as` 为 `bin/<config>/<package>.exe`
+[ui]
+arml = ["App.arml", "MainWindow.arml"]
+sources = ["App.arml.as", "MainWindow.arml.as"]
+program = "Program.as"
+namespace = "ArmlDemo"

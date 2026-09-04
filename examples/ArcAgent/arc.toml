@@ -1,0 +1,16 @@
+[package]
+name = "ArcAgent"
+version = "0.1.0"
+edition = "1"
+namespace = "ArcAgent"
+
+# 标杆参考项目：真实编程智能体控制台应用。
+# 目录结构（namespace 即目录，根命名空间 = package.name）：
+#   Program.as            —— 入口（无 namespace，C# Program.cs 惯例）
+#   ArcAgent/Host/        —— 组合根：class AgentHost（Provider 选择 + 会话选项）
+#   ArcAgent/Tools/       —— 能力层：按职责分类，一类一文件，声明式 [AITool] 工具实现
+[dependencies]
+"Arc.Agent" = { path = "../../std/AI/Agent" }
+"Arc.Agent.DeepSeek" = { path = "../../std/AI/Agent.DeepSeek" }
+"Arc.Agent.Harness" = { path = "../../std/AI/Agent.Harness" }
+"Arc.Agent.Harness.Coding" = { path = "../../std/AI/Agent.Harness.Coding" }

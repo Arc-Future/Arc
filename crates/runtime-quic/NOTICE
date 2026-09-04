@@ -1,0 +1,44 @@
+Arc runtime-quic vendored C base — Third-Party Notices
+=========================================================
+
+This directory vendors a C QUIC base used by Arc's RFC 033 S4 HTTP/3 (QUIC)
+minimal client (see RFC 033 §2.6). It is distributed under the Apache License
+2.0, consistent with the Arc project's licensing.
+
+Vendored components
+-------------------
+
+1. ngtcp2 1.25.0 (RFC 9000 QUIC transport, with the OpenSSL QUIC-TLS adapter)
+   - Upstream: https://github.com/ngtcp2/ngtcp2 (tag v1.25.0)
+   - MSYS2 package: mingw-w64-ucrt-x86_64-ngtcp2-1.25.0-1-any.pkg.tar.zst
+     (https://repo.msys2.org/mingw/ucrt64/)
+   - SHA256: CCE230D80A05CD0A1EC38FA5D76C0445C9BB725C65C2136BE3D23E6DC218A89E
+   - License: MIT (see https://raw.githubusercontent.com/ngtcp2/ngtcp2/v1.25.0/COPYING)
+   - Used as the QUIC transport layer; libngtcp2_crypto_ossl implements the
+     TLS 1.3 over QUIC adaptation (RFC 9001) via OpenSSL's SSL_set_quic_tls_cbs
+     (set_encryption_secrets / add_handshake_data / flush_flight / send_alert),
+     semantically equivalent to the BoringSSL SSL_QUIC_METHOD referenced in
+     RFC 033 §1.2.b.
+
+2. OpenSSL 3.5.4
+   - Upstream: https://github.com/openssl/openssl (tag openssl-3.5.4)
+   - MSYS2 package: mingw-w64-ucrt-x86_64-openssl-3.5.4-1-any.pkg.tar.zst
+     (https://repo.msys2.org/mingw/ucrt64/)
+   - SHA256: F124FDA279F00B6789D3FC4EEF564ECF37B3C44D31C712A7E77E3E822B498A06
+   - License: Apache-2.0 (see https://www.openssl.org/source/license.html)
+   - Used strictly as the TLS 1.3 backend for ngtcp2. OpenSSL's native QUIC
+     stack (QRL) is NOT used.
+
+3. Arc ABI shim (crates/runtime-quic/shim/rt_quic_native.c)
+   - Arc-authored; implements the rt_quic_* ABI surface wrapping ngtcp2 +
+     OpenSSL. License: Apache-2.0.
+
+Replacement policy
+------------------
+If the base is switched to a BoringSSL or AWS-LC prebuilt (or ngtcp2/OpenSSL
+versions are bumped), this NOTICE must be updated to reflect the new upstream
+project, version, and hash (RFC 035 §1.4: version locking + independent PR
+updates; no "updated" claim without tracking upstream security releases).
+
+All components above are Apache-2.0 or MIT compatible. No GPL/AGPL/LGPL-2.1-only
+or other incompatible licenses are vendored.

@@ -1,0 +1,109 @@
+/target/
+# 嵌套脚本 crate 的 Cargo target（如 scripts/bench/rust-concurrent/target/）
+/scripts/**/target/
+# 构建产物统一收敛到 <project>/target/（obj/<config>/ + bin/<config>/）
+**/target/
+**/obj/
+**/bin/
+**/*.exe
+**/*.o
+**/*.obj
+**/*.pdb
+**/*.lib
+**/*.exp
+**/*.ilk
+**/*.dll
+**/*.ao
+**/*.ll
+**/*.a
+
+# vendor 本地库目录保留 .dll/.lib（wgpu_native 等运行时依赖）
+#
+# 注意：git 忽略规则中，若目录本身被 `**/bin/` 排除，git 不会进入该目录，
+# 因而 `!.../*.dll` 无法重新包含其中的文件。须先解除 wgpu 供应商目录本身
+# 的忽略，其内部 .dll/.lib 才可被下方的 `!` 规则重新纳入。
+!crates/runtime-ui/wgpu-native/bin/
+!crates/runtime-ui/wgpu-native/bin/**
+!crates/runtime-ui/wgpu-native/**/*.dll
+!crates/runtime-ui/wgpu-native/**/*.lib
+!crates/runtime-sqlite/**/*.dll
+!crates/runtime-sqlite/**/*.lib
+!crates/runtime-crypto/bin/
+!crates/runtime-crypto/bin/**
+!crates/runtime-crypto/**/*.dll
+!crates/runtime-crypto/**/*.lib
+!crates/runtime-crypto/**/*.a
+!crates/runtime-quic/bin/
+!crates/runtime-quic/bin/**
+!crates/runtime-quic/**/*.dll
+!crates/runtime-quic/**/*.lib
+crates/runtime-quic/**/*.dll.locked
+
+# RFC 035 §1.4：vendored 底座只提交预编译 DLL（bin/windows/），源码树不入库——
+# 构建经 scripts/fetch-boringssl-native.ps1 在 TEMP 下载/编译，仅复制产物到 bin/。
+crates/runtime-crypto/.mbedtls-src/
+gc_test
+Cargo.lock
+
+# arc check 生成的 XML 文档（examples/<name>/Program.xml）
+examples/*/Program.xml
+
+# 禁止 XML 产物写入源码树（std/**/*.xml 等）
+**/*.xml
+
+# 临时测试输出（cargo test 重定向文件）
+test_*.txt
+*_output.txt
+stderr.txt
+stdout.txt
+err.txt
+out.txt
+.test_output.txt
+target/commit_msg_*.txt
+target/test_workspace*.log
+target/task_api_*.log
+
+# 一次性脚本：仅 scripts/（含职责子目录）下的 .ps1 纳入版本库；根目录散落脚本应归入 scripts/，不跟踪
+*.ps1
+!scripts/*.ps1
+!scripts/**/*.ps1
+
+# 根目录临时源码（test_*.as / tmp_*）
+/test_*.as
+/tmp_*
+
+# 临时目录
+/tmp_cargo_ao_dump/
+/tmp_count_test/
+/tmp_lib_test/
+
+# 运行时缓存重定向目录（ARC_HOME 指向工作区可写目录，绕开沙箱对 %USERPROFILE% 的拦截）
+.arc_home*/
+/.arc-home/
+
+# 遗留调试 / 复现 / 测试运行时产物（防再污染源码树 · 2026-08-09 收敛）
+# - e2e 测试运行时写出的二进制（seek.bin / roundtrip.bin 等，每次运行重新生成）
+*.bin
+!crates/runtime-crypto/**/*.bin
+!crates/runtime-quic/**/*.bin
+!crates/runtime-ui/**/*.bin
+
+# 调试日志 / 一次性失败转储（防再入库 · 2026-08-19 收敛）
+# - debug.log 等测试运行日志：落 $env:TEMP 或 target/scratch/，禁止源码树
+*.log
+# - e2e 失败转储（docs/failed/）：一次性快照，不得入库（挂账走 plan.md CD 表）
+docs/failed/
+# - IDE 私有文档（.trae/）：本地规划/备忘，非仓库资产（spec-guard SKIP_DIRS 同源）
+.trae/
+
+# 根目录散落探测 / 构建 / e2e 诊断输出（防再入库 · 2026-08-29 收敛）
+# - 历史污染源：arc/e2e/probe/h4c/t1c/r2 等一次性重定向文件；合法根级
+#   文档一律走 .md（README/docs/），根目录禁止散落 .txt（含点前缀转储）。
+/*.txt
+*.bak
+# - 一次性诊断 / 复现工作目录（arc 诊断转储、探针工程副本）
+/.arc_asan/
+/.arc_diag*/
+/bs_repro/
+/chain_probe/
+

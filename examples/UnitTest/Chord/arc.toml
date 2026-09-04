@@ -1,0 +1,12 @@
+[package]
+name = "UnitTest.Chord"
+edition = "1"
+namespace = "UnitTest.Chord"
+
+# RFC 045 Chord QIF 独立测试项目：只依赖被测库 Arc.Chord 与 QIF 宿主，
+# 与 UnitTest 全量闭包解耦（全量项目含 std/AI WIP 与历史文件错误时，
+# Chord 端到端仍可独立收敛与运行）。
+[dependencies]
+"Arc.QIF" = { path = "../../../std/QIF" }
+"Arc.Chord" = { path = "../../../std/Chord" }
+"Arc.DI" = { path = "../../../std/DI" }

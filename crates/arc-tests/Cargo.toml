@@ -1,0 +1,20 @@
+﻿[package]
+name = "arc-tests"
+description = "In-process fast compiler tests for the Arc compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+arc = { path = "../arc" }
+codegen = { path = "../codegen" }
+insta = { workspace = true }
+
+[features]
+# L2 杩愯鏃?杩涚▼绫绘祴璇曢棬鎺э細榛樿涓嶈繍琛岋紝鍏ㄩ噺 `cargo test --features full-rt`锛堟垨 CI 鐙珛浠诲姟锛夈€?
+full-rt = []
+
+# lint 基线统一由 workspace 管理（见根 Cargo.toml [workspace.lints]）
+[lints]
+workspace = true

@@ -1,0 +1,14 @@
+[package]
+name = "UnitTest"
+edition = "1"
+namespace = "UnitTest"
+
+# RFC 025 M2：非 Arc 子库须显式声明（Arc 隐式引入）。
+[dependencies]
+"Arc.Security" = { path = "../../std/Security" }
+"Arc.UI" = { path = "../../std/UI/Core" }
+"Arc.QIF" = { path = "../../std/QIF" }
+"Arc.Agent" = { path = "../../std/AI/Agent" }
+"Arc.Net" = { path = "../../std/Net/Core" }
+"Arc.Web" = { path = "../../std/Web/Core" }
+"Arc.Chord" = { path = "../../std/Chord" }

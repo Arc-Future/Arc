@@ -1,0 +1,31 @@
+Arc runtime-crypto vendored C base — Third-Party Notices
+=========================================================
+
+This directory vendors a C cryptography base used by Arc's S0 TLS 1.3 subset
+(see RFC 035). It is distributed under the Apache License 2.0, consistent with
+the Arc project's licensing.
+
+Vendored components
+-------------------
+
+1. mbedTLS 4.1.1 (LTS branch)
+   - Upstream: https://github.com/Mbed-TLS/mbedtls (tag mbedtls-4.1.1)
+   - Source archive: mbedtls-4.1.1.tar.bz2
+   - SHA256: 3359a349e23db3d5536fcee032ae7b2ecbfc08972fab643089b5cbf2a375c98c
+   - License: Apache-2.0 (with additional notice; see
+     https://github.com/Mbed-TLS/mbedtls/blob/development/LICENSE)
+   - Used as the S0 fallback base per RFC 035 §1.1 ("clang 直编最省事").
+
+2. BoringSSL-family probe shim (crates/runtime-crypto/shim/openssl_compat.c)
+   - Arc-authored, M0 probe surface only (symbol-resolution test double).
+   - License: Apache-2.0.
+
+Replacement policy
+------------------
+If the base is later switched to a BoringSSL or AWS-LC prebuilt, this NOTICE
+must be updated to reflect the new upstream project, version, and hash
+(RFC 035 §1.4: version locking + independent PR updates; no "updated" claim
+without tracking upstream security releases).
+
+All components above are Apache-2.0 compatible. No GPL/AGPL/LGPL-2.1-only or
+other incompatible licenses are vendored.

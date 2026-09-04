@@ -1,0 +1,620 @@
+// RFC 026 §D7.2 + §D10.2: wgpu-native C API 契约（验证式 FFI）。
+//
+// 本契约声明 wgpu-native 库的 C API 子集，Arc 侧通过 RFC 027 验证式 FFI
+// 机制调用——typeck 在编译期验证符号与类型，codegen 直接 emit 调用，
+// 用户侧零 unsafe、零原生指针。
+//
+// wgpu-native 是 wgpu（Mozilla 主导的纯 Rust WebGPU 实现）的 C API 封装，
+// 提供跨平台 GPU 访问：
+//   - Windows → DirectX 12
+//   - macOS   → Metal
+//   - Linux   → Vulkan
+//   - Web    → WebGPU / WebGL2 兜底
+//
+// 设计原则（对齐 Arc 高性能章程 D-1 + RFC 026 §D7.2）：
+//   1. 显式 Command Buffer 编码——所有渲染命令先编码再一次性 submit，
+//      减少 CPU-GPU 往返（对比 Skia 隐式批处理的运行时调度开销）。
+//   2. 异步 mapAsync——避免 CPU-GPU 数据拷贝阻塞，适合流式数据上传。
+//   3. GPU 特性富集——compute/indirect/storage buffer 一等公民，
+//      与 Arc 系统级定位匹配（RFC 026 §D7.2 表 4）。
+//   4. 零分配热路径——Instance/Adapter/Device/Queue 在 Initialize 创建，
+//      帧循环仅 CommandBuffer 复用，无 malloc。
+//
+// 所有不透明句柄（WGPUInstance/WGPUSurface/WGPUAdapter/WGPUDevice/WGPUQueue/
+// WGPUBuffer/WGPUTexture/WGPUTextureView/WGPUShaderModule/WGPURenderPipeline/
+// WGPUCommandEncoder/WGPUCommandBuffer/WGPURenderPassEncoder）在 Arc 侧
+// 统一映射为 NativePtr（对应 C void*），按值传递。
+//
+// 注意：本契约为 M2 阶段最小子集（surface 创建 + 基础渲染循环）。
+// 完整 wgpu-native API 约 200+ 函数，按需扩展（buffer/texture/shader/
+// pipeline/compute pass/query 等）。
+native module wgpu_native {
+    // ============================================================
+    // Instance / Surface / Adapter / Device —— 初始化链
+    // ============================================================
+
+    /// 创建 wgpu Instance（应用入口）。返回 NULL 失败。
+    /// 对应 WGPUInstance wgpuCreateInstance(const WGPUInstanceDescriptor* descriptor)
+    /// descriptor 传 NULL 用默认配置。
+    fn wgpu_create_instance(NativePtr descriptor) -> NativePtr;
+
+    /// 从平台原生窗口 handle 创建 wgpu Surface。
+    /// - Windows: HWND
+    /// - Linux:   X11 Window (需要 Display* + Window 配对，由 C 侧封装)
+    /// - macOS:   NSView*
+    /// 返回 NULL 失败。
+    /// 对应 wgpuInstanceCreateSurface(instance, descriptor) 的高层封装，
+    /// 由 rt_ui_wgpu.c 实现平台原生 handle → WGPUSurfaceDescriptor 转换。
+    fn wgpu_create_surface_from_handle(
+        NativePtr instance,
+        NativePtr native_window_handle
+    ) -> NativePtr;
+
+    /// 请求 Adapter（GPU 设备枚举）——同步版本。
+    /// 返回 NULL 失败（无可用 GPU）。
+    /// 对应 wgpuInstanceRequestAdapterSync 的封装。
+    fn wgpu_request_adapter_sync(
+        NativePtr instance,
+        NativePtr surface,
+        int power_preference  // 0=LowPower, 1=HighPerformance, 2=Default
+    ) -> NativePtr;
+
+    /// 请求 Device（逻辑设备 + 队列）——同步版本。
+    /// 返回 NULL 失败。
+    /// 对应 wgpuAdapterRequestDeviceSync 的封装。
+    ///
+    /// 对齐 WGPU.NET `adapter.RequestDevice(limits: supportedLimits.limits)` +
+    /// `device.SetUncapturedErrorCallback(...)` 两处最佳实践，由 C 侧在设备描述符
+    /// 内闭环（本 vendored wgpu 无独立 SetUncapturedErrorCallback 函数，错误回调
+    /// 经 WGPUDeviceDescriptor.uncapturedErrorCallbackInfo 安装）：
+    ///   - requiredLimits ← wgpuAdapterGetLimits 透传 adapter 支持上限（item 3）
+    ///   - uncapturedErrorCallbackInfo ← 报告 GPU 错误（Validation/OutOfMemory/
+    ///     Internal）到 stderr，不再静默吞掉（item 1）
+    /// descriptor 参数保留（NULL 用默认 + 上述增强）。
+    fn wgpu_request_device_sync(
+        NativePtr adapter,
+        NativePtr descriptor
+    ) -> NativePtr;
+
+    /// 获取 Device 的默认 Queue（命令提交通道）。
+    /// 对应 wgpuDeviceGetQueue(device)。
+    fn wgpu_device_get_queue(NativePtr device) -> NativePtr;
+
+    // ============================================================
+    // Surface 配置 + 帧循环
+    // ============================================================
+
+    /// 配置 Surface 的输出格式/尺寸。
+    /// format: 0=BGRA8Unorm, 1=RGBA8Unorm, 2=BGRA8UnormSrgb
+    /// usage:  bit 1=RenderAttachment
+    /// vsync:  0=Immediate, 1=Fifo (VSync on), 2=Mailbox
+    fn wgpu_surface_configure(
+        NativePtr surface,
+        NativePtr device,
+        int format,
+        int usage,
+        int width,
+        int height,
+        int present_mode
+    ) -> int;
+
+    /// 获取 Surface 的首选格式（渲染 + 管线创建统一用它）。
+    /// 返回 WGPUTextureFormat 枚举值；失败返回 -1（调用方兜底 BGRA8Unorm）。
+    /// 对齐 WGPU.NET `surface.GetPreferredFormat(adapter)`——本 vendored wgpu 无
+    /// GetPreferredFormat（v24+ 已弃用），C 侧经 wgpuSurfaceGetCapabilities(...).formats[0]
+    /// 取首选格式（capabilities 数组按偏好排序）。
+    fn wgpu_surface_get_preferred_format(
+        NativePtr surface,
+        NativePtr adapter
+    ) -> int;
+
+    /// 获取当前帧的 Texture（render target）。
+    /// 输出 surface_texture_view——由 C 侧封装为 TextureView。
+    /// 返回 0 成功，非 0 错误码（如 SurfaceLost）。
+    fn wgpu_surface_get_current_texture(
+        NativePtr surface,
+        out NativePtr texture_view
+    ) -> int;
+
+    /// 提交当前帧到屏幕。
+    /// 对应 wgpuSurfacePresent(surface)。
+    fn wgpu_surface_present(NativePtr surface) -> void;
+
+    // ============================================================
+    // Command 编码 —— 批量绘制（零分配热路径核心）
+    // ============================================================
+
+    /// 创建 CommandEncoder（每帧创建/复用）。
+    /// 对应 wgpuDeviceCreateCommandEncoder(device, descriptor)。
+    fn wgpu_command_encoder_create(NativePtr device) -> NativePtr;
+
+    /// 开始 RenderPass——绑定 render target（surface texture view）。
+    /// clear_color: 0=不 clear, 1=clear (用 clear_r/g/b/a)
+    fn wgpu_render_pass_begin(
+        NativePtr encoder,
+        NativePtr texture_view,
+        int clear,
+        double clear_r,
+        double clear_g,
+        double clear_b,
+        double clear_a
+    ) -> NativePtr;
+
+    /// 设置 RenderPipeline（shader + 状态）。
+    fn wgpu_render_pass_set_pipeline(
+        NativePtr pass,
+        NativePtr pipeline
+    ) -> void;
+
+    /// 绘制（vertex_count/instance_count/first_vertex/first_instance）。
+    fn wgpu_render_pass_draw(
+        NativePtr pass,
+        int vertex_count,
+        int instance_count,
+        int first_vertex,
+        int first_instance
+    ) -> void;
+
+    /// 结束 RenderPass。
+    fn wgpu_render_pass_end(NativePtr pass) -> void;
+
+    /// 完成 CommandEncoder → 生成不可变 CommandBuffer。
+    /// 对应 wgpuCommandEncoderFinish。
+    fn wgpu_command_encoder_finish(NativePtr encoder) -> NativePtr;
+
+    /// 提交 CommandBuffer 到 Queue。
+    /// 对应 wgpuQueueSubmit(queue, count, buffers)——单 buffer 高层封装。
+    fn wgpu_queue_submit_one(NativePtr queue, NativePtr command_buffer) -> void;
+
+    // ============================================================
+    // 资源创建（Initialize 期一次性，不在热路径）
+    // ============================================================
+
+    /// 创建 ShaderModule（WGSL 源码）。
+    /// source 为 UTF-8 WGSL 字符串。
+    fn wgpu_shader_module_create_wgsl(
+        NativePtr device,
+        string source
+    ) -> NativePtr;
+
+    /// 创建简单 RenderPipeline（单 shader + 三角形 topology）。
+    /// 对 ArcUI M2 阶段足够——后续扩展完整 vertex/fragment state。
+    fn wgpu_render_pipeline_create_basic(
+        NativePtr device,
+        NativePtr shader_module,
+        int format
+    ) -> NativePtr;
+
+    // ============================================================
+    // RFC 026 M3.5 矩形绘制资源（uniform buffer + bind group + rect pipeline）
+    //
+    // 这些 ABI 为 WgpuRender.DrawRect/RenderElementTree 真实绘制提供支持。
+    // 设计采用「单 uniform buffer 池 + 动态偏移 bind group」：
+    //   - Initialize 期：创建一个大的 uniform buffer（如 64KB）+ 单 bind group
+    //     绑定整个 buffer（has_dynamic_offset=true）
+    //   - BeginFrame 期：重置 offset = 0
+    //   - DrawRect 期：在当前 offset 写入 32 字节 uniform 数据，
+    //     set_bind_group 传入动态 offset，draw(6, 1, 0, 0)，offset += 256
+    //     （256 = min_uniform_buffer_offset_alignment 对齐）
+    // ============================================================
+
+    /// 创建 Buffer（uniform 或 storage）。
+    /// size: 字节数；usage: 位掩码（0x0040=UNIFORM, 0x0008=COPY_DST）。
+    /// 返回 NULL 失败。
+    fn wgpu_buffer_create(
+        NativePtr device,
+        int size,
+        int usage
+    ) -> NativePtr;
+
+    /// 创建 BindGroupLayout——含 1 个 uniform buffer entry（has_dynamic_offset=true）。
+    /// binding: 绑定槽位（通常 0）；stage: 着色器阶段（0x1000=VERTEX, 0x2000=FRAGMENT）。
+    /// 返回 NULL 失败。
+    fn wgpu_uniform_bind_group_layout_create(
+        NativePtr device,
+        int binding,
+        int stage
+    ) -> NativePtr;
+
+    /// 创建 BindGroup——绑定整个 uniform buffer。
+    /// layout: 由 wgpu_uniform_bind_group_layout_create 创建。
+    /// buffer: 由 wgpu_buffer_create 创建。
+    /// 返回 NULL 失败。
+    fn wgpu_uniform_bind_group_create(
+        NativePtr device,
+        NativePtr layout,
+        NativePtr buffer
+    ) -> NativePtr;
+
+    /// 创建矩形绘制 RenderPipeline（带 bind group layout）。
+    /// shader: WGSL 矩形 shader（vs_main + fs_main）。
+    /// format: surface 纹理格式（与 surface_configure 一致）。
+    /// bg_layout: bind group layout（由 wgpu_uniform_bind_group_layout_create 创建）。
+    /// 返回 NULL 失败。
+    fn wgpu_render_pipeline_create_rect(
+        NativePtr device,
+        NativePtr shader,
+        int format,
+        NativePtr bg_layout
+    ) -> NativePtr;
+
+    // ============================================================
+    // RFC 037 浮层阴影（Shadow.Surface）：软阴影 bind group layout / bind group / pipeline
+    // ============================================================
+
+    /// 创建阴影 BindGroupLayout——含 1 个 uniform buffer entry
+    /// （minBindingSize=64，has_dynamic_offset=true）。返回 NULL 失败。
+    fn wgpu_shadow_bind_group_layout_create(
+        NativePtr device,
+        int binding,
+        int stage
+    ) -> NativePtr;
+
+    /// 创建阴影 BindGroup——绑定整个 uniform buffer（entry size=64）。
+    /// 返回 NULL 失败。
+    fn wgpu_shadow_bind_group_create(
+        NativePtr device,
+        NativePtr layout,
+        NativePtr buffer
+    ) -> NativePtr;
+
+    /// 创建阴影 RenderPipeline（带 shadow bind group layout）。
+    /// shader: WGSL 阴影 shader（vs_main + fs_main，64 字节 ShadowUniform）。
+    /// 返回 NULL 失败。
+    fn wgpu_render_pipeline_create_shadow(
+        NativePtr device,
+        NativePtr shader,
+        int format,
+        NativePtr bg_layout
+    ) -> NativePtr;
+
+    // ============================================================
+    // 帧内绘制 ABI（在 BeginFrame/EndFrame 之间调用）
+    // ============================================================
+
+    /// 设置 BindGroup + 1 个动态偏移。
+    /// group_index: 通常为 0（@group(0)）。
+    /// bind_group: 由 wgpu_uniform_bind_group_create 创建。
+    /// dynamic_offset: uniform buffer 内的偏移（字节）。
+    fn wgpu_render_pass_set_bind_group(
+        NativePtr pass,
+        int group_index,
+        NativePtr bind_group,
+        int dynamic_offset
+    ) -> void;
+
+    /// 设置 RenderPass 裁剪矩形（scissor）——P0 真实裁剪（ScrollView/ListView 前提）。
+    /// 后续所有 draw 仅绘制落在 [x, x+w) × [y, y+h) 内的像素；超出部分被裁掉。
+    /// 坐标用 surface 像素（左/上，y 向下），与 DrawRect 的 CSS 像素一致。
+    /// 对齐 wgpuRenderPassEncoderSetScissorRect。
+    fn wgpu_render_pass_set_scissor(
+        NativePtr pass,
+        int x,
+        int y,
+        int w,
+        int h
+    ) -> void;
+
+    // ============================================================
+    // RFC 038 M1: wgpu ABI 扩展（texture / sampler / 通用队列写入）
+    //
+    // 为 wgpu 全量集成（M1 骨架 + M2 文本纹理渲染）扩展的基础 ABI。
+    // 延续既有验证式 FFI 模式：Arc 侧 NativePtr 透传，C 侧 rt_wgpu_native.c
+    // shim 转发到 wgpu-native C API。所有数据缓冲（像素/顶点）以
+    // NativePtr + size 零拷贝传递，Arc 侧持有指针。
+    // ============================================================
+
+    /// 通用队列写入——向 buffer 指定偏移写入 size 字节数据。
+    /// data: 指向数据缓冲的指针（NativePtr 透传，零拷贝）。
+    /// 对应 wgpuQueueWriteBuffer(queue, buffer, offset, data, size)。
+    /// 用于顶点/索引缓冲上传（M2 线渲染）。
+    fn wgpu_queue_write_buffer(
+        NativePtr queue,
+        NativePtr buffer,
+        int offset,
+        NativePtr data,
+        int size
+    ) -> void;
+
+    /// 创建 2D 纹理（glyph atlas 用）。
+    /// format: 纹理格式（0=RGBA8Unorm, 1=BGRA8Unorm）。
+    /// usage: 位掩码（0x0004=TEXTURE_BINDING, 0x0002=COPY_DST——
+    ///        WGPUTextureUsage 枚举与 BufferUsage 位布局不同）。
+    /// 返回 NULL 失败。
+    fn wgpu_texture_create_2d(
+        NativePtr device,
+        int width,
+        int height,
+        int format,
+        int usage
+    ) -> NativePtr;
+
+    /// 创建纹理视图（采样/渲染目标绑定用）。
+    /// 返回 NULL 失败。释放由 wgpu_release 按 TEXTURE_VIEW tag 处理。
+    fn wgpu_texture_create_view(NativePtr texture) -> NativePtr;
+
+    /// 向纹理写入像素数据（整块上传）。
+    /// data: 指向像素缓冲的指针（NativePtr 透传，零拷贝）。
+    /// size: 像素数据字节数（RGBA8 下 = width*height*4）。
+    /// 对应 wgpuQueueWriteTexture。
+    fn wgpu_texture_write(
+        NativePtr queue,
+        NativePtr texture,
+        int width,
+        int height,
+        NativePtr data,
+        int size
+    ) -> void;
+
+    /// 创建采样器。filter: 0=Nearest（glyph 硬边用），1=Linear（图像缩放用）。
+    /// 返回 NULL 失败。
+    fn wgpu_sampler_create(NativePtr device, int filter) -> NativePtr;
+
+    // ============================================================
+    // RFC 038 M2: 内置 8x16 点阵字体 + glyph atlas + 文本纹理管线
+    //
+    // DrawText 真实字形上屏的三段：
+    //   1. 光栅路径（可无 GPU 测试）：ASCII 字符串 → RGBA8 像素缓冲
+    //   2. atlas：95 可打印字形 → 128x96 RGBA 纹理，一次 wgpu_texture_write 上传
+    //   3. 采样管线：uniform@0 动态偏移 + texture@1 + sampler@2 → 逐字形 quad 绘制
+    // ============================================================
+
+    /// 将 ASCII 字符串光栅化为 RGBA8 像素缓冲（每字符 8x16，前景不透明白/
+    /// 背景透明）。text 超出 0x20-0x7E 的字符按空格处理。
+    /// 返回 malloc 缓冲（width*height*4 字节），由 wgpu_font_buffer_free 释放。
+    /// 返回 NULL 失败。
+    fn wgpu_font8x16_rasterize_ascii(
+        string text,
+        out int width,
+        out int height
+    ) -> NativePtr;
+
+    /// 构建全部 95 个可打印 ASCII 字形的 RGBA8 glyph atlas（128x96）。
+    /// 返回 malloc 缓冲（128*96*4 字节），由 wgpu_font_buffer_free 释放。
+    /// 返回 NULL 失败。
+    fn wgpu_font8x16_build_atlas(
+        out int width,
+        out int height
+    ) -> NativePtr;
+
+    /// 释放字体光栅缓冲（wgpu_font8x16_* 返回的 malloc 缓冲）。
+    fn wgpu_font_buffer_free(NativePtr buf) -> void;
+
+    /// 创建文本渲染 BindGroupLayout（3 entries：
+    /// uniform@0 动态偏移（VERTEX|FRAGMENT） + texture@1（FRAGMENT） +
+    /// sampler@2（FRAGMENT））。
+    /// 返回 NULL 失败。
+    fn wgpu_text_bind_group_layout_create(NativePtr device) -> NativePtr;
+
+    /// 创建文本渲染 RenderPipeline（带文本 bind group layout）。
+    /// shader: WGSL 文本 shader（vs_main + fs_main）。
+    /// format: surface 纹理格式。
+    /// bg_layout: 由 wgpu_text_bind_group_layout_create 创建。
+    /// 返回 NULL 失败。
+    fn wgpu_text_pipeline_create(
+        NativePtr device,
+        NativePtr shader,
+        int format,
+        NativePtr bg_layout
+    ) -> NativePtr;
+
+    /// 创建文本渲染 BindGroup（uniform buffer + atlas texture view + sampler）。
+    /// layout: 由 wgpu_text_bind_group_layout_create 创建。
+    /// 返回 NULL 失败。
+    fn wgpu_text_bind_group_create(
+        NativePtr device,
+        NativePtr layout,
+        NativePtr uniform_buffer,
+        NativePtr texture_view,
+        NativePtr sampler
+    ) -> NativePtr;
+
+    // ============================================================
+    // RFC 042 P3 阶段1：CPU staging 批上传（消除逐绘制 GPU 上传 + set_pipeline 冗余）
+    //
+    // DrawRect/DrawText 不再逐项 wgpuQueueWriteBuffer（每次独立 GPU 拷贝），
+    // 而是把 uniform 写入 C 侧连续 staging 缓冲（纯 memcpy，无 GPU 往返），
+    // 帧末一次性 wgpu_queue_write_buffer 整片上传 + 按 pipeline 去重重放 draw。
+    // Shader 零改动——uniform 布局/绑定不变。
+    // ============================================================
+
+    /// 创建 CPU staging 缓冲（malloc 连续内存，max_bytes 大小）。
+    /// 供整帧 uniform 数据批写入，帧末一次上传 GPU。返回 NULL 失败。
+    fn wgpu_batch_staging_create(int max_bytes) -> NativePtr;
+
+    /// 向 staging 指定偏移写入表面填充 uniform（80 字节）。
+    /// 布局 = wgpu_rect_uniform_t：目标矩形 + c0/c1 色 + 渐变轴 + radius/stroke + surface。
+    /// 纯色：c1=c0 且 (sx,sy)==(ex,ey)；渐变：c0→c1 沿轴插值；radius/stroke 经 SDF 裁剪。
+    fn wgpu_batch_rect_write(
+        NativePtr staging,
+        int offset,
+        double x, double y, double w, double h,
+        double c0r, double c0g, double c0b, double c0a,
+        double c1r, double c1g, double c1b, double c1a,
+        double sx, double sy, double ex, double ey,
+        double radius, double stroke,
+        int surface_w, int surface_h
+    ) -> void;
+
+    /// 向 staging 指定偏移写入阴影 uniform（64 字节）。
+    /// 布局 = wgpu_shadow_uniform_t（quad 边界 + 核心矩形 + radius/blur/alpha + surface），
+    /// 与阴影 shader 契约一致。
+    fn wgpu_batch_shadow_write(
+        NativePtr staging,
+        int offset,
+        double x, double y, double w, double h,
+        double cx, double cy, double cw, double ch,
+        double radius, double blur, double a,
+        int surface_w, int surface_h
+    ) -> void;
+
+    /// 向 staging 指定偏移写入文本 uniform（64 字节）。
+    /// 布局 = wgpu_text_uniform_t（x/y/w/h + u0/v0/u1/v1 + r/g/b/a + surface_w/h），与 shader 契约一致。
+    fn wgpu_batch_text_write(
+        NativePtr staging,
+        int offset,
+        double x, double y, double w, double h,
+        double u0, double v0, double u1, double v1,
+        double r, double g, double b, double a,
+        int surface_w, int surface_h
+    ) -> void;
+
+    /// 释放 staging 缓冲（wgpu_batch_staging_create 的 malloc 内存）。
+    fn wgpu_batch_staging_destroy(NativePtr staging) -> void;
+
+    // ============================================================
+    // RFC 038 M3: 跨平台动态字形 atlas（stb_truetype 高清光栅）
+    //
+    // 替代内置 8x16 点阵：启动时加载系统默认 UI 字体（Windows 微软雅黑、
+    // macOS 苹方、Linux Noto Sans CJK），动态光栅化 CJK/Latin/Emoji 字形
+    // 到 2048×2048 RGBA8 atlas，增量 dirty rect 上传 GPU。
+    //
+    // 设计：
+    //   - atlas 基准像素高度 32px（足够覆盖 16px @200% DPI 原生清晰度）
+    //   - 逐 glyph 查询：首次遇到 codepoint 时光栅化 + shelf-packing 入 atlas
+    //   - DrawText 前 flush 脏区上传 GPU；lookup_glyph 返回 UV+metrics
+    //   - 字体加载失败 / atlas 满时 fallback 到 8x16 点阵（RFC 027 §8.1 R3）
+    // ============================================================
+
+    /// 创建动态字体 atlas：加载系统默认字体 + 预分配 2048×2048 atlas 纹理。
+    /// base_size: 基准像素高度（推荐 32.0，对应 16px @200% DPI 原生清晰度）。
+    /// 返回 atlas 句柄；字体加载失败时 fallback 模式（is_fallback=1）。
+    fn wgpu_font_atlas_create(
+        NativePtr device,
+        NativePtr queue,
+        double base_size
+    ) -> NativePtr;
+
+    /// 获取 atlas 纹理视图（文本 bind group 绑定用）。
+    fn wgpu_font_atlas_get_texture_view(NativePtr atlas) -> NativePtr;
+
+    /// 是否回退到 8x16 点阵（字体加载失败时）。1=fallback，0=正常。
+    fn wgpu_font_atlas_is_fallback(NativePtr atlas) -> int;
+
+    /// 获取字体 ascent（基准像素高度下，从 baseline 到顶部的像素数，正值）。
+    fn wgpu_font_atlas_get_ascent(NativePtr atlas) -> double;
+
+    /// 获取字体 descent（基准像素高度下，从 baseline 到底部的像素数，负值）。
+    fn wgpu_font_atlas_get_descent(NativePtr atlas) -> double;
+
+    /// 获取字体 line gap（基准像素高度下的行间距）。
+    fn wgpu_font_atlas_get_line_gap(NativePtr atlas) -> double;
+
+    /// 查询 glyph：若已缓存直接返回 UV+metrics；否则光栅化并入 atlas（标记 dirty）。
+    /// family_index: 请求的字体族（0 = 默认族；缺失字形回退默认族链）。
+    /// weight: 0 = Normal 面，1 = Bold 面（无 Bold 槽时 C 侧回退 Normal 面）。
+    /// size_px: 目标物理像素高度（per-size bucket）——按此尺寸 1:1 光栅化，
+    ///          屏幕采样零缩放（正文锐度的决定性前提）。
+    /// 返回值：1 = 新增字形（需要 flush 上传 GPU）；0 = 已缓存；-1 = 失败（字形不存在/atlas 满）。
+    /// 输出：u0/v0/u1/v1（0-1 UV 坐标）；advance（size_px 物理像素下水平步进）；
+    ///       xoff/yoff（size_px 物理像素下字形左上角相对 cursor 原点偏移）；gw/gh（字形位图尺寸）。
+    fn wgpu_font_atlas_lookup_glyph(
+        NativePtr atlas,
+        int family_index,
+        int weight,
+        int codepoint,
+        double size_px,
+        out double u0, out double v0, out double u1, out double v1,
+        out double advance,
+        out double xoff, out double yoff,
+        out double gw, out double gh
+    ) -> int;
+
+    // ============================================================
+    // FontFamily 选择 API（阶段二 · 字体系统基础设施）——解除硬编码默认链
+    //
+    // 默认族（family 0，名称 "Segoe UI"）由 create 用平台默认链预注册，覆盖
+    // 主/Symbol/Emoji 三分类，并尝试加载系统 Bold 主面（如 msyhbd / segoeuib）。
+    // 此 API 让 Arc 侧注册任意命名字体族，并按名称解析为 family 索引，供
+    // lookup_glyph 与 per-family 度量使用。
+    // chain_str 格式：'|' 分隔分类（主/Symbol/Emoji），';' 分隔同分类候选路径，
+    // 首个可用者胜。FontManager RegisterFamily(normal, bold) 使用单 '|' 形态
+    // "normalPath|boldPath"（第二段挂 bold_slot，供 FontWeight=Bold）。
+    // ============================================================
+
+    /// 注册命名字体族。chain_str: 仅 Normal，或 FontManager 的 "normal|bold"。
+    /// 返回 family 索引（>=1）；失败（参数错/池满/无字体可加载）返回 -1。
+    /// 幂等：同名已注册返回既有索引。
+    fn wgpu_font_atlas_add_family(
+        NativePtr atlas,
+        string name,
+        string chain_str
+    ) -> int;
+
+    /// 按名称解析 family 索引；未注册返回 -1（调用方应回退 family 0）。
+    fn wgpu_font_atlas_get_family_index(
+        NativePtr atlas,
+        string name
+    ) -> int;
+
+    /// 按 family 取度量（越界回退 family 0 默认族）。
+    fn wgpu_font_atlas_get_family_ascent(NativePtr atlas, int family_index) -> double;
+    fn wgpu_font_atlas_get_family_descent(NativePtr atlas, int family_index) -> double;
+    fn wgpu_font_atlas_get_family_line_gap(NativePtr atlas, int family_index) -> double;
+
+    /// 将 atlas 脏区（自上次 flush 以来新增的字形）增量上传到 GPU 纹理。
+    /// 每帧 DrawText 之前调用一次即可（若 lookup_glyph 无新增则无操作）。
+    fn wgpu_font_atlas_flush(NativePtr atlas, NativePtr queue) -> void;
+
+    /// 销毁 atlas，释放所有关联资源（字体/纹理/缓存缓冲）。
+    fn wgpu_font_atlas_destroy(NativePtr atlas) -> void;
+
+
+    // ============================================================
+    // RFC 037 §10 AI 原生 AL-P0：离屏渲染 + 像素回读（references/render-capture）
+    //
+    // 离屏渲染目标不依赖窗口 surface（headless 可测）：创建 RGBA8Unorm 纹理
+    // （RENDER_ATTACHMENT|COPY_SRC）+ 视图 + readback 缓冲（MAP_READ|COPY_DST）。
+    // 渲染命令走既有 wgpu_render_pass_* 通用路径（同一管线，单一惯用法）。
+    // ============================================================
+
+    /// 从平台原生窗口 handle 创建 Surface（long 句柄版）。
+    /// handle 为 long（HWND 整数形态）——C 层内部转指针，避免 Arc 侧
+    /// long→NativePtr cast（编译器缺陷 CD-29）。返回 NULL 失败。
+    fn wgpu_create_surface_from_hwnd(
+        NativePtr instance,
+        long native_window_handle
+    ) -> NativePtr;
+
+    /// 创建离屏渲染目标。width/height 为物理像素，上限 2048；返回 NULL 失败。
+    /// 销毁经 wgpu_offscreen_destroy 或通用 wgpu_release（按 OFFSCREEN tag 分派）。
+    fn wgpu_offscreen_create(
+        NativePtr device,
+        int width,
+        int height
+    ) -> NativePtr;
+
+    /// 开始离屏 RenderPass（绑定离屏 texture view；clear 语义同 wgpu_render_pass_begin）。
+    /// 返回 PASS 句柄，经既有 wgpu_render_pass_end / wgpu_release 管理。
+    fn wgpu_offscreen_begin_pass(
+        NativePtr offscreen,
+        NativePtr encoder,
+        int clear,
+        double clear_r,
+        double clear_g,
+        double clear_b,
+        double clear_a
+    ) -> NativePtr;
+
+    /// 回读离屏像素到 CPU 缓冲（RGBA8，bytesPerRow = width*4；阻塞至 map 完成）。
+    /// out_rgba: 调用方缓冲句柄（long，rt_image_alloc 形态；容量 >= width*height*4）。
+    /// long 形态避免 Arc 侧 long→NativePtr cast（编译器缺陷 CD-29，转换在 C 层闭环）。
+    /// 返回 0 成功；-1 参数错；-2 容量不足；-3 提交/map 失败或超时。
+    fn wgpu_offscreen_readback(
+        NativePtr offscreen,
+        NativePtr queue,
+        long out_rgba,
+        int capacity
+    ) -> int;
+
+    /// 销毁离屏目标（释放 texture/view/readback buffer 与句柄）。
+    fn wgpu_offscreen_destroy(NativePtr offscreen) -> void;
+
+    // ============================================================
+    // 生命周期
+    // ============================================================
+
+    /// 释放对象（wgpu-native 用 reference counting，Release 减 1）。
+    /// 各类型共享一个 release entry（C 侧 dispatch by type tag）。
+    fn wgpu_release(NativePtr handle) -> void;
+}

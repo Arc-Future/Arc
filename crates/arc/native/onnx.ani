@@ -1,0 +1,79 @@
+// onnx.ani — Arc.AI.Onnx native contract（RFC 027 / RFC 103 验证式 FFI）。
+//
+// 封装 ONNX Runtime C++（onnx_shim.cpp 将 onnxruntime_cxx_api.h 包成
+// extern "C" C ABI，见 crates/runtime-onnx/onnx_shim.{h,cpp}）。
+//
+// `load = "auto"`：编译期库可定位（resolve_native_lib + 符号验证成功）→ static；
+// 否则确定性降级 runtime。运行时经 `ARC_ONNX_LIB` 环境变量（RFC 103 环境变量
+// 形态②）求值库**目录**，再追加平台库名（onnx.dll / libonnx.so /
+// libonnx.dylib）懒加载；未设置 / 目录缺库 / 符号缺失 → 模块 `unavailable`
+// （`Native.IsAvailable("onnx")` == false），调用点经 <c>Native.IsAvailable</c>
+// 门闩优雅降级（RFC 034 §1.2.3 / §1.2.4；与 zxing.ani 同构）。
+//
+// ABI 语义对齐 onnx_shim.h 所有权模型：
+//   - 不透明句柄 Env / Session / SessionOptions / Value 为**拥有式**堆对象，
+//     各配一个 `onnx_*_release` 释放；不得交叉释放。Arc 侧统一存为内置
+//     `NativePtr`（对应 C `void*`，按值传递）——对齐 wgpu/Process 已验证模式。
+//   - `List<byte>` 展开为 `ptr buffer, i32 size`（size = 字节数）；`List<long>`
+//     展开为 `ptr buffer, i32 size`（size = 元素数，携带句柄/维度）。二者均
+//     **零拷贝**（RFC 027 M3 §3.3）。
+//   - 错误协议：返回 0 成功 / 非零失败；失败后 `onnx_last_error` 取末次错误串。
+//   - `onnx_create_tensor_*` 创建**拥有式**张量（Ort::Value 持有数据私有副本），
+//     调用方数据缓冲在创建返回后即可释放；Value 句柄存活期与数据无关。
+//
+// DirectML EP（Windows GPU 后端）经 `onnx_options_append_dml` 启用；CPU 为基线。
+native module onnx {
+    load = "auto";
+    library = Environment.GetEnvironmentVariable("ARC_ONNX_LIB");
+
+    // ── 错误 ──
+    fn onnx_last_error(List<byte> buf) -> int;
+    fn onnx_clear_error();
+
+    // ── 环境 ──
+    fn onnx_create_env(int logLevel, string name, out NativePtr env) -> int;
+    fn onnx_release_env(NativePtr env);
+
+    // ── SessionOptions ──
+    fn onnx_create_session_options(out NativePtr o) -> int;
+    fn onnx_release_session_options(NativePtr o);
+    fn onnx_options_set_intra_op_threads(NativePtr o, int n) -> int;
+    fn onnx_options_set_inter_op_threads(NativePtr o, int n) -> int;
+    fn onnx_options_set_graph_opt_level(NativePtr o, int level) -> int;
+    fn onnx_options_append_dml(NativePtr o, int deviceId) -> int;
+
+    // ── Session（模型加载 / 元数据）──
+    fn onnx_create_session(NativePtr env, string modelPath, NativePtr opts, out NativePtr s) -> int;
+    fn onnx_release_session(NativePtr s);
+    fn onnx_session_input_count(NativePtr s, out int count) -> int;
+    fn onnx_session_output_count(NativePtr s, out int count) -> int;
+    fn onnx_session_get_input_name(NativePtr s, int index, List<byte> buf, out int len) -> int;
+    fn onnx_session_get_output_name(NativePtr s, int index, List<byte> buf, out int len) -> int;
+    fn onnx_session_get_input_info(NativePtr s, int index, out int elemType, List<long> dims, out int dimCount) -> int;
+    fn onnx_session_get_output_info(NativePtr s, int index, out int elemType, List<long> dims, out int dimCount) -> int;
+
+    // ── Tensor Value（拥有式：Value 持有数据私有副本，创建后调用方缓冲可立即释放）──
+    fn onnx_create_tensor_float(List<long> shape, List<float> data, out NativePtr v) -> int;
+    fn onnx_create_tensor_double(List<long> shape, List<double> data, out NativePtr v) -> int;
+    fn onnx_create_tensor_i32(List<long> shape, List<int> data, out NativePtr v) -> int;
+    fn onnx_create_tensor_i64(List<long> shape, List<long> data, out NativePtr v) -> int;
+    fn onnx_create_tensor_byte(List<long> shape, List<byte> data, out NativePtr v) -> int;
+    fn onnx_release_value(NativePtr v);
+    fn onnx_tensor_read_float(NativePtr v, List<float> buf, out int len) -> int;
+    fn onnx_tensor_read_double(NativePtr v, List<double> buf, out int len) -> int;
+    fn onnx_tensor_read_i32(NativePtr v, List<int> buf, out int len) -> int;
+    fn onnx_tensor_read_i64(NativePtr v, List<long> buf, out int len) -> int;
+    fn onnx_tensor_read_byte(NativePtr v, List<byte> buf, out int len) -> int;
+    fn onnx_tensor_get_data(NativePtr v, List<byte> buf, out int len) -> int;
+    fn onnx_tensor_get_shape(NativePtr v, List<long> dims, out int dimCount) -> int;
+    fn onnx_tensor_get_elem_type(NativePtr v, out int elemType) -> int;
+    fn onnx_tensor_get_total(NativePtr v, out long total) -> int;
+
+    // ── 推理 ──
+    // inputNames: NUL 分隔 UTF-8 名字 blob；inputValues: nInputs 个 Value 句柄。
+    // outputNames 非空 → 产出命名的输出子集；为空 → 产出全部输出。
+    // outputValues 容量（元素数）须 >= 请求输出数；成功时写入产出句柄（调用方
+    // 所有，经 onnx_release_value 释放），outCount 为实际产出数。
+    fn onnx_run(NativePtr s, List<byte> inputNames, List<long> inputValues,
+                List<byte> outputNames, List<long> outputValues, out int outCount) -> int;
+}

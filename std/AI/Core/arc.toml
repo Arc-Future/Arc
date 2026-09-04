@@ -1,0 +1,9 @@
+[package]
+name = "Arc.AI"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.AI"
+
+[dependencies]
+Arc = { path = "../../Arc" }

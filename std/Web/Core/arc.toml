@@ -1,0 +1,11 @@
+[package]
+name = "Arc.Web"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Web"
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.DI" = { path = "../../DI" }
+"Arc.Net" = { path = "../../Net/Core" }

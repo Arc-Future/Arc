@@ -1,0 +1,37 @@
+---
+description: Workspace hygiene — never pollute the source tree with test/debug artifacts
+alwaysApply: true
+---
+
+# Arc 工作区卫生（G″）
+
+对标 MSBuild：**中间产物只在 `obj/<config>/`，最终产物只在 `bin/<config>/`**。测试/调试输出**不得**写入源码树。
+
+## 禁止
+
+- 仓库根或 `examples/`/`crates/`/`std/` 下写 `.tmp_*`、`target-*`、`obj-*`、`bin-*`
+- PowerShell `Tee-Object` / `*> .tmp_*.txt` 指向仓库内路径
+- 用 `.gitignore` 新增 `/.tmp_*`、`**/obj-*/` 等规则**掩盖**污染（治标不治本；根目录调试产物已不再被 `.gitignore` 掩盖）
+- `--obj-dir obj_lib` 等非规范旁路名
+
+## 允许
+
+- Cargo 标准 `target/`（含 `target/e2e/<name>/` 隔离夹具）
+- Agent/脚本日志：`$env:TEMP` 或 `target/scratch/`（已在 `.gitignore` 的 `/target/` 下）
+- 项目内固定 `obj/`、`bin/`（已在 `.gitignore`）
+
+## Agent 纪律
+
+1. 重定向/日志 → `$env:TEMP` 或 `target/scratch/`，禁止根目录 `.tmp_*`
+2. `arc build`/`test`/`run` 相对路径文件落在**项目根** CWD 下
+3. e2e 临时项目 → `target/e2e/<name>/`；`--obj-dir` 仅 `…/obj/<config>/` 或 `target/e2e/…/obj/`
+4. 发现污染 → 先停写入进程，再 `scripts/clean-debug-artifacts.ps1`
+
+> 治理机制（2026-08-10 收敛）：已移除 `beforeShellExecution` 拦截 hook 与 `.gitignore` 对根目录调试产物的掩盖段。污染不再被隐藏，由 `scripts/check-no-pollution.ps1`（CI gate）在干净/未忽略状态诚实暴露。
+
+## 脚本归属（2026-08-10 约束）
+
+- 所有 `.ps1`/`.cjs` 脚本**一律归入 `scripts/`**，按职责建子目录（如 `scripts/ui-debug/`）；**禁止散落在仓库根目录**。
+- 命名：`<域>-<用途>.ps1`（如 `arml-debug-shot.ps1`），kebab-case，语义清晰；禁止无描述性的裸名（`winscan.ps1` 等）。
+- 临时输出（截图/log/txt）一律落 `target/scratch/` 或 `$env:TEMP`，**禁止硬编码写入仓库根目录路径**（如 `d:\...\armhdemo_shot.png`）。
+- `.gitignore`：`*.ps1` 全局忽略，`!scripts/**/*.ps1` 白名单 `scripts/`（含子目录）；根目录散落脚本不被跟踪，且被 CI gate 标记为污染。

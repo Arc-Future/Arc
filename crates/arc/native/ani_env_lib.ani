@@ -1,0 +1,15 @@
+// RFC 103（用户裁决简化 2026-08-03）：`library` 环境变量形式（形态②）e2e 辅助契约。
+//
+// `load = "runtime"` + `library = Environment.GetEnvironmentVariable("ARC_ANI_RT_LIB")`：
+// 懒解析器在 `rt_library_load` 前经 `rt_env_get_var` 求值得到库**目录**，再追加
+// 平台库名（`ani_env_lib.dll` / `libani_env_lib.so` / `libani_env_lib.dylib`）。
+// 空串/未设置 → 候选缺失，优雅降级（`Native.IsAvailable=false` / 调用抛
+// `NativeLibraryNotFoundException`）；返回**相对路径**同样按执行程序根目录解析。
+//
+// C 实现原由 `ani_runtime_load_e2e`（arc-integration，已退场 a2627a0f）在测试时用
+// clang 编译为共享库（名 `ani_env_lib`），放置于环境变量指向的目录。
+native module ani_env_lib {
+    load = "runtime";
+    library = Environment.GetEnvironmentVariable("ARC_ANI_RT_LIB");
+    fn ani_env_magic() -> int;
+}

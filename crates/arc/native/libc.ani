@@ -1,0 +1,20 @@
+native module libc {
+    fn puts(string s) -> int;
+    fn getenv(string name) -> string?;
+    // RFC 027 M2: out 参数验证用例。frexp 将浮点数分解为尾数与指数，
+    // 指数通过 out 参数回写——调用方无需 unsafe 指针即可接收 C 函数输出。
+    fn frexp(double x, out int exp) -> double;
+    // RFC 030 v2 M2 / RFC 027 M3: void* 形参 FFI 装箱验证。
+    // memcmp/memcpy 接受 void* 参数，Arc 侧传入值类型实参时由 typeck
+    // 自动插入 Expr::Box → codegen 发射 rt_box_create + store。
+    // memcpy 返回 void*（dest），可用于拆箱往返测试（cast 为 int → rt_box_unbox）。
+    fn memcmp(object s1, object s2, long n) -> int;
+    fn memcpy(object dest, object src, long n) -> object;
+    // RFC 027 M3 §3.3: 契约 struct 按值传递验证用例。
+    // div 返回 struct div_t { int quot; int rem; }，是 libc 中
+    // 现成的"struct 返回"函数，用于验证 %struct.<Name> 类型定义 emit +
+    // native call 返回 struct 的 alloca+store marshal。
+    // 用 int 参数避免 (long) cast 的 pre-existing bug。
+    native type div_t { int quot; int rem; };
+    fn div(int numer, int denom) -> div_t;
+}

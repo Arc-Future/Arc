@@ -1,0 +1,10 @@
+[package]
+name = "Arc.Web.Grpc"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Web.Grpc"
+
+[dependencies]
+"Arc.Web" = { path = "../Core" }
+"Arc.Net.Grpc" = { path = "../../Net/Grpc" }

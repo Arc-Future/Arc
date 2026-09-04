@@ -1,0 +1,10 @@
+[package]
+name = "Arc.Orm"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Orm"
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.Data" = { path = "../../Data" }

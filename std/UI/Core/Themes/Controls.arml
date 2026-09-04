@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Built-in implicit control styles (UI-P2, fonts removed 2026-08-17).
+
+     Fonts are ambient inherited DPs (RFC 037 §4 property value inheritance):
+     FontFamily/FontSize/FontWeight/Foreground flow down the Parent chain — set once
+     on Window/root for a tree-wide font; per-control setters are redundant and
+     forbidden here. Global font default has a single source: the Control DP defaults.
+     This file carries chrome-only setters (Padding etc., UI-P5); theme colors still
+     resolve via VSM → theme tokens so SwitchTheme works (no static color baking). -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+    <Style TargetType="Window"/>
+</ResourceDictionary>

@@ -1,0 +1,10 @@
+[package]
+name = "Arc.Orm.Mongo"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Orm.Mongo"
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.Orm" = { path = "../Core" }

@@ -1,0 +1,54 @@
+[package]
+name = "arc"
+description = "Arc compiler CLI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "arc"
+path = "src/main.rs"
+
+# Windows PE 版本资源（作者/版权/产品信息编译进 arc.exe；build.rs 消费）。
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[dependencies]
+ast = { workspace = true }
+parse = { workspace = true }
+hir = { workspace = true }
+typeck = { workspace = true }
+mir = { workspace = true }
+codegen = { workspace = true }
+arc-ui = { workspace = true }
+arc-ssr = { path = "../arc-ssr" }
+arcgr = { workspace = true }
+reachability = { workspace = true }
+codespan-reporting = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+thiserror = { workspace = true }
+toml = { workspace = true }
+crc32fast = { workspace = true }
+sha2 = { workspace = true }
+zstd = { workspace = true }
+aes-gcm = { workspace = true }
+getrandom = { workspace = true }
+ed25519-dalek = { workspace = true }
+indexmap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# RFC 017 鍖呮簮璺敱 搂2 HTTP(S) mirror 瀹㈡埛绔紙blocking GET锛涙祴璇曚粎鐢?127.0.0.1锛?
+ureq = "2"
+# Phase 2 self-update 鍒嗗彂鍖?zip 瑙ｅ帇
+zip = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+
+# lint 基线统一由 workspace 管理（见根 Cargo.toml [workspace.lints]）
+[lints]
+workspace = true

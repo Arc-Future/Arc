@@ -1,0 +1,9 @@
+[package]
+name = "Arc.DI"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.DI"
+
+[dependencies]
+Arc = { path = "../Arc" }

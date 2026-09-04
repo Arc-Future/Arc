@@ -1,0 +1,105 @@
+﻿name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    # 标尺类检查与平台无关，单机单次执行；build-test 矩阵专注编译与测试。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml 锁定实际版本，rustup 自动对齐
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install LLVM (Linux)
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - name: Cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: Cargo clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang llvm libx11-dev
+
+      - name: Install LLVM (Windows)
+        if: runner.os == 'Windows'
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "15"
+
+      - name: Install LLVM (macOS)
+        if: runner.os == 'macOS'
+        run: brew install llvm@15
+
+      - name: Set LIBCLANG_PATH (Windows)
+        if: runner.os == 'Windows'
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+
+      - name: Set LIBCLANG_PATH (macOS)
+        if: runner.os == 'macOS'
+        run: echo "LIBCLANG_PATH=$(brew --prefix llvm@15)/lib" >> $env:GITHUB_ENV
+
+      - name: Lint no-pointer surface (RFC 095)
+        shell: pwsh
+        run: scripts/check-no-pointer.ps1
+
+      - name: Check source-tree pollution gate
+        shell: pwsh
+        run: scripts/check-no-pollution.ps1
+
+      - name: Check project artifact layout iron rule (bin/obj)
+        shell: pwsh
+        run: scripts/check-project-artifact-layout.ps1
+
+      - name: Check Arc spec guard (AGENTS.md conformance gate)
+        shell: pwsh
+        run: scripts/check-spec.ps1 -All
+
+      - name: Cargo build
+        run: cargo build --workspace
+
+      - name: Cargo test
+        run: cargo test --workspace
+
+      - name: Build CompilerSmoke example
+        run: cargo run -p arc -- build examples/CompilerSmoke/Program.as -o compiler_smoke${{ runner.os == 'Windows' && '.exe' || '' }}
+
+      - name: Run UnitTest suite
+        run: cargo run -p arc -- test examples/UnitTest
+
+  wasm32-hello-draft:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install LLVM
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+      - name: Cargo build arc
+        run: cargo build -p arc
+      - name: wasm32 gate + Hello artifact e2e
+        run: cargo test -p arc-tests

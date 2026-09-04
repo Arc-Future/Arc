@@ -1,0 +1,26 @@
+---
+description: 每次迭代必做清单——文档先行、验证矩阵、禁止双轨与占位
+alwaysApply: true
+---
+
+# 迭代纪律
+
+> **RFC 编号体系（2026-08-02 重构）**：RFC 已重排为新编号 001–042 + 091（[新 index](../../docs/rfc/index.md)：一主题一文档，编号按主题聚合）；旧编号为历史别名。新开发按新编号升序逐项验收完结。
+
+合入前须满足 **4.5 迭代纪律** 全部勾选项。
+
+## 五步循环
+
+1. **读** — `preface.md` → `docs/rfc/index.md` → 相关 RFC（语义变更必须先 RFC）
+2. **写** — 文档与代码同一变更集；外科手术式 diff；无 `todo!()`/双轨 API
+3. **验** — 按变更类型跑验证矩阵（crate / arc-tests / full-rt 门控 / workspace）
+4. **审** — 无 scope creep；不扩大「已知技术债」表内项
+5. **推** — 任务验收完结后**自动提交并推送远程主仓库**：`scripts/git-sync.ps1 -Message "<conventional commit>"`（幂等：无变更时跳过；消息必须显式提供；禁 `--force`/`--amend`/改 git config；失败即非零退出）
+
+## 速记禁止
+
+- 先代码后文档、占位实现、deprecated shim
+- `lib.rs` 堆实现（≤80 行门面）
+- 用户面 `match`/`let`/`expr`/`.arc`
+
+完成标准与推进裁决以本文档清单为准。**当前主线**（[RFC 036 §1](../../docs/rfc/036-maturity.md)）：**三硬要求**（底层彻底稳定 · 极致性能 · 高阶可编译；**H3 ✅** tip `e86c8d9f`（基 `b6e891e2`；历史签收 tip `c26fa966` · 证据 `e2b417fa`；`baa92700` codegen 红已消）；**H2 ✅** tip `2750dd6b`（gate=raw **0.58 / 0.62 / 0.56**）；**H1 ✅** tip `3028c539`；**三硬可靠签收 ✅** tip `3028c539`）→ **全力 L3**。**基础面默认冻结**（[RFC 036 §3](../../docs/rfc/036-maturity.md)）：语言核心 / `rt_*` / `std/Arc` Stable；破坏性变更须 RFC；禁顺手改；全力 L3 仍不得随意改 ABI。L1→L2/**std 完善门禁签收**（G9 ✅ · tip `10cf1a3`）已关；M4 **可排期**（单 M·子集边界；不自动开干；非现行主线全力项）。**L3 彻底进入已宣布**：可维持有边界单目标 Sprint；**允许全力 L3**；≠ 假开 Provider 全家桶；≠ 业界领先；禁领域倒逼语言洞。**底座可靠性 · RFC 099 / 102（旧编号）**（NLL 无条件启用 + 循环收集默认 always-on 立宪，见 [RFC 036 §5](../../docs/rfc/036-maturity.md) / [RFC 005](../../docs/rfc/005-memory-model.md)）：宣称纪律（未经验收不得宣称、验收通过后可声明）/ 热卸载必做闭环 / 性能基线升级（最新 .NET + Rust）/ 借用安全至少 Rust/C# 级；实现另排单目标 Sprint RFC。**F0–M3 ✅**（M3 = Step 0 资产，不回滚）。语言基础 / std 黄金准则见 [RFC 019](../../docs/rfc/019-self-hosting.md) 立宪公理。C# 品味边界见 [RFC 002](../../docs/rfc/002-surface-contract.md)（精华 / 糟粕 / 单一惯用法；文档不得暗示双轨）。

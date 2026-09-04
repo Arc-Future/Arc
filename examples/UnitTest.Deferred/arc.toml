@@ -1,0 +1,16 @@
+[package]
+name = "UnitTest.Deferred"
+edition = "1"
+namespace = "UnitTest"
+# L3 / 未达默认契约的测试暂存处（不随 examples/UnitTest 默认跑）。
+# 禁止用 [Fact(Skip)] 留在核心 UnitTest 里假装覆盖。
+# 分流见 README（L3 UI·Net·DI；Reflection M2 已迁回核心）。
+
+# RFC 025 M2：非 Arc 子库须显式声明。
+[dependencies]
+"Arc.QIF" = { path = "../../std/QIF" }
+"Arc.Net" = { path = "../../std/Net/Core" }
+"Arc.Net.P2P" = { path = "../../std/Net/P2P" }
+"Arc.Security" = { path = "../../std/Security" }
+"Arc.UI" = { path = "../../std/UI/Core" }
+"Arc.DI" = { path = "../../std/DI" }

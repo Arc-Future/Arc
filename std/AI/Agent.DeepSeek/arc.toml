@@ -1,0 +1,11 @@
+[package]
+name = "Arc.Agent.DeepSeek"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Agent.DeepSeek"
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.Agent" = { path = "../Agent" }
+"Arc.Net" = { path = "../../Net/Core" }

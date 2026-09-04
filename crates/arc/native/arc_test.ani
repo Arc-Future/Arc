@@ -1,0 +1,56 @@
+// RFC 027 M3 §3.3 List<T> marshal dogfood 测试辅助模块。
+//
+// 本模块非真实 libc 契约，而是为 List<T> 零拷贝 marshal e2e 测试提供的
+// 辅助 C 函数契约。函数实现位于 `crates/runtime/rt_native_test.c`，
+// 随 runtime 一起编译链接，无需额外的 C 文件链接配置。
+//
+// 设计意图：
+// - 验证 `List<T>` 形参在 codegen 层正确展开为 `ptr buffer, i32 size` 两个 LLVM 参数
+// - 验证 `rt_list_buffer_and_size` ABI 被正确调用，零拷贝传递内部 buffer
+// - 验证 C 函数接收到的 buffer 内容与 Arc 侧 List<T> 元素一致
+// - 与 RFC 029 M5 零分配热路径 + RFC 038 IO 吞吐 ≥20× 目标协同
+native module arc_test {
+    // 求和 List<int> 所有元素。
+    // C 签名：int rt_native_test_sum_list(const int* buf, int size)
+    // 验证 buffer 内容正确传递（求和结果与 Arc 侧预期一致）。
+    fn rt_native_test_sum_list(List<int> xs) -> int;
+
+    // 返回 List<int> 的元素数量（直接回传 size 参数）。
+    // C 签名：int rt_native_test_list_size(const int* buf, int size)
+    // 验证 size 参数正确传递（零拷贝展开的第二个参数）。
+    fn rt_native_test_list_size(List<int> xs) -> int;
+
+    // RFC 047 M1：native callback 类型声明。
+    // C 签名：int (*)(int a, int b)
+    // 用于验证无捕获 lambda → C 函数指针 trampoline 生成。
+    // trampoline 剥离 Arc lambda 的 env 参数，匹配 C ABI 函数指针签名。
+    native callback IntBinOp(int a, int b) -> int;
+
+    // RFC 047 M1：调用 callback 验证 trampoline 端到端通路。
+    // C 签名：int rt_native_test_call_cb(int (*cb)(int, int), int a, int b)
+    // 实现：直接调用 cb(a, b) 返回结果。
+    // Arc 侧传入无捕获 lambda → codegen 生成 trampoline → 传 trampoline 函数指针给 C。
+    fn rt_native_test_call_cb(IntBinOp cb, int a, int b) -> int;
+
+    // RFC 032 M3/M4：循环收集器测试钩子。
+    // C 实现：rt_native_test.c 的 rt_arc_collect() 转发到 rt_arc_collect_cycles()。
+    // 触发一次试删收集（默认关闭；须先 rt_arc_set_cycle_collection(1) 开启）。
+    fn rt_arc_collect() -> int;
+
+    // RFC 032 M3/M4：运行时开关。C 符号由 crates/runtime/rt_arc.c 直接提供，
+    // 返回先前状态（0=关闭 / 1=开启）。
+    fn rt_arc_set_cycle_collection(int enabled) -> int;
+
+    // RFC 100 §2.3：根扫描遍历测试钩子。
+    // C 签名：int rt_native_test_walk_count(void* root)
+    // 统计从 root 出发沿 strong class 字段（rt_arc_walk_fields，vtable slot 2
+    // walk）可达的 distinct 对象数（含 root 自身）。visited 集环防护——环/
+    // 共享节点不重复访问，遍历必然终止；超上限返回 -1。
+    // 调用方以 `(NativePtr)obj` 透传 class 对象指针（避免 object 形参自动装箱）。
+    // 验证运行时根扫描遍历语义：完整走图 + 环防护 + 热卸载代数一致性。
+    fn rt_native_test_walk_count(NativePtr root) -> int;
+
+    // RFC 043 P1：故意崩溃测试钩子——解引用空指针触发访问冲突（Windows 0xC0000005 /
+    // POSIX SIGSEGV），供性能采集 AIPerfAnomaly.Crash 分类 e2e 使用。
+    fn rt_native_test_crash() -> int;
+}

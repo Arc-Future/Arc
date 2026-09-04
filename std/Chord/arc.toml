@@ -1,0 +1,10 @@
+[package]
+name = "Arc.Chord"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Chord"
+
+[dependencies]
+Arc = { path = "../Arc" }
+"Arc.DI" = { path = "../DI" }

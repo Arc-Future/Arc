@@ -1,0 +1,4 @@
+[package]
+name = "WasmHello"
+edition = "1"
+kind = "binary"

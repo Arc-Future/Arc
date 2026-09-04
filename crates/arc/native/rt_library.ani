@@ -1,0 +1,78 @@
+native module rt_library {
+    /// 加载动态库；失败返回 null。
+    fn rt_library_load(string path) -> NativePtr;
+
+    /// 按符号名查找函数指针；失败返回 null。
+    fn rt_library_sym(NativePtr handle, string name) -> NativePtr;
+
+    /// 卸载动态库（冷卸载）；NULL 安全。
+    fn rt_library_unload(NativePtr handle);
+
+    /// 设置当前执行上下文对应的 Assembly（RFC 054 M1）。
+    fn rt_assembly_set_executing(NativePtr assembly_ptr);
+
+    /// 返回当前执行上下文对应的 Assembly*；未设置返回 null。
+    fn rt_assembly_get_executing() -> NativePtr;
+
+    /// RFC 053 M4: 读取动态库包元数据。
+    /// 返回 "name\0version\0edition\0" 格式字符串；无元数据时返回 null。
+    fn rt_library_get_meta(NativePtr handle) -> string;
+
+    /// RFC 053 M4 修复（additive ABI）：按索引读取包元数据字段。
+    /// 0=name、1=version、2=edition（未来依赖列表追加更高索引）；越界返回 null。
+    /// Arc `string` 为纯 C-string，`rt_library_get_meta` 返回的整串会在首个 NUL
+    /// 截断，无法经 `IndexOf('\0')` 读到 version/edition——本 ABI 规避该截断。
+    fn rt_library_get_meta_field(NativePtr handle, int index) -> string;
+
+    // ========== RFC 100 热卸载闭环 ABI ==========
+
+    /// 热卸载闭环（Freeze → 在途收敛 → 归零检测 → 释放根 → dlclose → tombstone）。
+    /// 返回 1=成功 0=悬挂拒载 -1=在途未收敛 -2=无效/已并发卸载。
+    fn rt_library_unload_hot(NativePtr handle) -> int;
+
+    /// 查询模块代数；tombstone/未知句柄返回 0。
+    fn rt_library_generation(NativePtr handle) -> int;
+
+    /// 登记跨模块外部强引用（ledger++）；无效代数返回 0。
+    fn rt_library_ref_register(int generation) -> int;
+
+    /// 释放跨模块外部强引用（ledger--）；已为 0 返回 0。
+    fn rt_library_ref_unregister(int generation) -> int;
+
+    /// 查询模块外部强引用计数（0 = 可卸载）。
+    fn rt_library_ref_count(int generation) -> int;
+
+    /// 模块代码在途调用进入 +1；Freeze/失效代数返回 0。
+    fn rt_library_call_enter(int generation) -> int;
+
+    /// 模块代码在途调用返回 -1（下限 0）。
+    fn rt_library_call_leave(int generation) -> int;
+
+    /// 登记模块根（模块静态持有的 class 引用）。
+    fn rt_library_root_add(int generation, object root) -> int;
+
+    /// 移除模块根；未登记返回 0。
+    fn rt_library_root_remove(int generation, object root) -> int;
+
+    /// ARC 根扫描：枚举已登记模块根 + 字段可达遍历 + ledger 一致性复核。
+    /// 返回 1=可卸载 0=外部引用非零/无效。
+    fn rt_library_root_scan(int generation) -> int;
+
+    // ========== RFC 100 §2.6 模块边界弱登记表（宿主侧） ==========
+
+    /// 登记模块边界弱槽位（宿主声明「该 Weak<T> 指向本模块对象」；卸载时
+    /// 被中和 → 卸载后 TryGet() 返回 null）。返回 1=成功。
+    fn rt_library_weak_register(int generation, NativePtr weakslot) -> int;
+
+    /// 移除模块边界弱槽位登记。返回 1=已解除。
+    fn rt_library_weak_unregister(int generation, NativePtr weakslot) -> int;
+
+    // ========== RFC 047 透明对象图迁移（热重载 L3） ==========
+
+    /// 透明对象图迁移：对 old_generation 的根可达闭包内、vtable 属于旧代
+    /// registry 的对象，按 new_generation registry 同名条目重绑（双重判定：
+    /// slot_count + shape_hash + layout_sig 全等，任一类型失败 → 整体拒绝）。
+    /// 迁移窗口须处于 Freeze（无在途调用）。返回迁移对象数；
+    /// -1=参数无效 -2=registry 缺失/形态非法 -3=存在不可迁移类型。
+    fn rt_library_migrate_instances(int old_generation, int new_generation) -> int;
+}

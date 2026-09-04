@@ -1,0 +1,19 @@
+# UI 域解决方案（嵌套于 std 根解决方案）：聚合 Arc.UI 域全部子库。
+# `arc build std/UI` 按依赖拓扑序一键构建本域；被 std 根解决方案递归展开。
+# 成员（Arc.UI 研发版图）：
+#   - Core      原 std/UI 核心库（Arc.UI 包：ARML 声明式框架 + wgpu 渲染）
+#   - Edit      Arc.UI.Edit 代码编辑组件库（CodeEditor 自 Core 迁移至此）
+#   - Md        Arc.UI.Md Markdown 组件库（实现待排期）
+#   - WebView   Arc.UI.WebView 浏览器组件库（设计权威 docs/rfc/037-ui/references/webview-surface.md）
+#   - WebWindow Arc.UI.WebWindow 效率开发框架（未来规划：Arc.UI.WebView + Arc.Web 装配，实现待 RFC/plan）
+#   - Simulator Arc.UI.Simulator 模拟器承载组件库（如 Android 模拟器核心界面集成，实现待排期）
+# 后续更多独立组件库在此追加。
+[workspace]
+members = [
+    "Core",
+    "Edit",
+    "Md",
+    "WebView",
+    "WebWindow",
+    "Simulator",
+]

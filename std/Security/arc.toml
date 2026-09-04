@@ -1,0 +1,9 @@
+[package]
+name = "Arc.Security"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Security"
+
+[dependencies]
+Arc = { path = "../Arc" }

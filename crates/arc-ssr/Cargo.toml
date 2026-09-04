@@ -1,0 +1,13 @@
+﻿[package]
+name = "arc-ssr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Arc.Web SSR 妯℃澘缂栬瘧锛圧FC 040 搂5锛夛細HTML 妯℃澘 + 涓夋爣璁扮粦瀹?-> 绫诲瀷瀹夊叏娓叉煋浠ｇ爜鐢熸垚"
+
+[dependencies]
+
+# lint 基线统一由 workspace 管理（见根 Cargo.toml [workspace.lints]）
+[lints]
+workspace = true

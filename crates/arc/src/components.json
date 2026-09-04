@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "components": {
+    "wgpu": {
+      "description": "wgpu-native 预构建二进制（Windows x86_64 msvc），启用 Arc.UI/wgpu 构建",
+      "version": "v29.0.1.1",
+      "url": "https://github.com/gfx-rs/wgpu-native/releases/download/{version}/wgpu-windows-x86_64-msvc-release.zip",
+      "sha256": "7e67d7445c42aeb85e30f88930fd8d7d83ee769e3390aeb1ada75ebf3cf78132",
+      "size": 17062968,
+      "platforms": ["x86_64-pc-windows-msvc"],
+      "builtin": false,
+      "default": false
+    },
+    "crypto": {
+      "description": "crypto_native（mbedTLS 底座）——随 SDK 捆绑，无需单独安装",
+      "builtin": true,
+      "default": true
+    }
+  }
+}

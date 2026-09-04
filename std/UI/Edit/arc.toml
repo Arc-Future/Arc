@@ -1,0 +1,16 @@
+[package]
+name = "Arc.UI.Edit"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.UI.Edit"
+
+# 代码编辑组件库：CodeEditor（大文档视口虚拟化 · mmap piece-table）及其编辑内核
+# （TextBuffer / LineIndex / EditorViewport / EditorInputRouter）。
+# 自 Arc.UI（std/UI/Core）迁移而来；命名空间保持不变（目录可解耦于命名空间，
+# RFC 037 §2）。TextBox 共用内核 PrefixWidthCache/TextBoxModel 留 Core。
+# 设计权威：RFC 037 §4 · docs/plan.md「CodeEditor 视口虚拟化」。
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.UI" = { path = "../Core" }

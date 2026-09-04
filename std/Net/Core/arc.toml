@@ -1,0 +1,15 @@
+[package]
+name = "Arc.Net"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Net"
+
+# RFC 025 M2+ InternalsVisibleTo（对标 C# `[assembly: InternalsVisibleTo]`）：
+# 放行 l2_http3_batch.rs 批测试（arc-tests 生成包名 = 批名下划线转连字符）
+# 访问 internal Qpack/QpackStaticTable，做 RFC 9204 Appendix B golden 向量验证。
+internals_visible_to = ["http3-qpack"]
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.Security" = { path = "../../Security" }

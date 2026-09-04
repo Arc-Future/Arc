@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- App.arml: RFC 026 标准 ARML 应用入口（对标 WPF App.xaml）。
+
+     本示例合并自以下旧案例（已删除，能力全部并入 ArmlDemo）：
+       - ArmlHello  / ArmlControls：应用入口 + 元素树 / 控件面
+       - XBindHello：x:Bind 绑定
+       - ArmlList  / ArmlImage / ArmlSlider / ArmlIme：List/Image/Slider/IME 分区
+       - ArmlStyle：默认观感演示
+       - ArmlVisualHost：隐式样式隔离（其 OnStartup 注册逻辑在 App.arml.as）
+       - ArmlCodeEditor：CodeEditor 视口虚拟化 smoke（转为 MainWindow 分区）
+
+     `<Application>` 根元素声明应用级 partial class `App`：
+       - `x:Class="ArmlDemo.App"` 指定 partial class 全名（末段为类名）
+       - `StartupUri="MainWindow.arml"` 指向启动窗口声明文件
+
+     codegen 生成 `App.g.as`：
+       partial class App : Application {
+           void InitializeComponent() {
+               var window = new MainWindow();
+               window.InitializeComponent();
+           }
+       }
+
+     `<Application.Resources>` 内的声明式 `<Style>` 由 `arc ui codegen`
+     等价生成运行期 `Resources.AddStyle` 注册（App.g.as 的
+     InitializeComponent 末尾）——原 ArmlVisualHost 的 OnStartup 命令式
+     Style 构造现以声明式呈现（隐式 Button 红样式 #FFCC2222）。
+-->
+<Application
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml"
+    x:Class="ArmlDemo.App"
+    StartupUri="MainWindow.arml">
+    <!-- 宿主隐式 Button 红样式（原 ArmlVisualHost/App.arml.as 的 OnStartup
+         命令式注册，现以声明式呈现）。无 x:Key → 隐式样式（Key = ""），
+         作用于宿主层全部 Button（分区 2 的 Controls 按钮会被染红，属预期）。 -->
+    <Application.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FFCC2222"/>
+        </Style>
+    </Application.Resources>
+</Application>

@@ -1,0 +1,80 @@
+---
+description: Rust 模块化铁律——lib.rs 禁堆码、单文件单职责、crates 布局
+globs: "**/*.rs,crates/**/Cargo.toml"
+alwaysApply: false
+---
+
+# Rust 模块化铁律
+
+`crates/` 内所有 Rust 代码**必须模块化、易维护**。违反下列规则的新增代码不得合入；触及已有大文件时须顺势拆分。
+
+## lib.rs：只做门面，禁止堆实现
+
+`lib.rs` **仅允许**：
+
+- `mod` 声明与 `pub use` 重导出
+- crate 级文档与极薄的门面函数（≤5 行，纯委托）
+
+`lib.rs` **禁止**：
+
+- 类型定义、算法、检查逻辑、代码生成
+- 超过 **80 行**（含空行与注释）
+- 多个不相关 `impl` 块共处一文件
+
+```rust
+// ✅ lib.rs — 门面
+mod parse;
+mod error;
+pub use parse::Parser;
+pub use error::ParseError;
+
+// ❌ lib.rs — 1288 行 Parser 实现全塞进来
+```
+
+**现有违规**（`parser`、`typeck` 等）为技术债；**新增逻辑不得写入 lib.rs**，修改时拆到子模块。
+
+## 单文件单职责
+
+| 文件 | 职责 | 禁止 |
+|------|------|------|
+| `lib.rs` | 模块树 + 公开 API 汇总 | 业务实现 |
+| `main.rs` | CLI 解析、调用 pipeline | typeck、codegen |
+| `ast/src/expr.rs` | 表达式 AST 定义 | 解析、类型推导 |
+| `typeck/check_fn.rs` | 函数体类型检查 | 借用检查、MIR |
+
+**规则**：新增逻辑先问「属于哪一层、哪个概念？」——不属于当前文件 → **新建模块**（`foo.rs` + `mod foo;`）或新 crate。
+
+## 模块拆分阈值
+
+- 单文件 **>200 行** 且含 ≥2 个独立概念 → **必须拆分**
+- 单文件 **>400 行** → 无论概念是否单一，**必须拆分**
+- 单函数 **>40 行** → 考虑提取（不为提取而提取）
+
+按**概念**拆，不按行数机械切：例如 `parser/expr.rs`、`parser/stmt.rs`、`parser/class.rs`。
+
+## Crate 布局
+
+```
+crates/
+├── arc/       # CLI 编排（pipeline 独立模块）
+├── lexer/ parser/ ast/   # 前端
+├── hir/ typeck/ borrowck/ # 中端
+├── mir/ linq/ codegen/    # 后端
+└── runtime/
+```
+
+新能力按**编译阶段**建 crate 或子模块，禁止「大杂烩」crate。依赖单向：`typeck → { ast, hir }`，禁止 `parser → typeck`、`ast → parser`。
+
+## 示例：正确的新增
+
+```
+crates/typeck/
+├── src/
+│   ├── lib.rs          # mod 声明 + pub use（<80 行）
+│   ├── checker.rs      # TypeChecker 主体
+│   ├── check_fn.rs     # 函数体检查
+│   ├── check_expr.rs   # 表达式检查
+│   └── error.rs        # 诊断类型
+```
+
+改 `typeck` 时若逻辑落入 `lib.rs`，**先拆文件再写功能**。

@@ -1,0 +1,10 @@
+[package]
+name = "LoggingDemo"
+version = "0.1.0"
+edition = "2026"
+namespace = "LoggingDemo"
+
+# 演示 Arc.Logging 基础设施：独立工厂 + 控制台 Provider + DI 集成。
+[dependencies]
+"Arc.Logging" = { path = "../../std/Logging" }
+"Arc.DI" = { path = "../../std/DI" }

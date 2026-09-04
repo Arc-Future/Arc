@@ -1,0 +1,39 @@
+// rt_process.ani — Process 体系 native 契约。
+// 跨平台子进程管理：spawn/wait/kill + 管道 I/O + PTY 终端。
+// C 实现位于 crates/runtime/rt_proc.c。
+
+native module rt_process {
+    // ── 进程生命周期 ──
+    fn rt_proc_spawn(string exe_path, string args, string? working_dir, int redirect_stdin, int redirect_stdout, int redirect_stderr, int create_no_window, out int stdin_fd, out int stdout_fd, out int stderr_fd) -> NativePtr;
+    fn rt_proc_wait(NativePtr handle, long timeout_ms) -> int;
+    fn rt_proc_kill(NativePtr handle) -> int;
+    fn rt_proc_close(NativePtr handle) -> int;
+    fn rt_proc_get_pid(NativePtr handle) -> int;
+    fn rt_proc_get_exit_code(NativePtr handle) -> int;
+    fn rt_proc_get_current_pid() -> int;
+    // 进程资源统计（RFC 043 性能采集 P1）：CPU 用户/内核时间（ms）、峰值内存（字节）、
+    // 退出形态（0=正常退出；>0=被信号终止的信号号；<0=尚未退出）。返回 0 成功、-1 句柄非法。
+    fn rt_proc_get_stats(NativePtr handle, out long user_ms, out long kernel_ms, out long peak_memory_bytes, out int exit_reason) -> int;
+
+    // ── 管道 I/O ──
+    fn rt_proc_pipe_read_byte(int fd) -> int;
+    fn rt_proc_pipe_write_byte(int fd, int b) -> int;
+    // std P2 批量 I/O：byte[] 经 RFC 025 S4 零拷贝 payload 指针传递。
+    // read 尽力而为：返回实际读入 [0..count]，0 = EOF，-1 = 错误；先消费 per-fd
+    // 块缓冲（与 read_byte/read_line 共享）再单次系统调用直读，混用不乱序。
+    fn rt_proc_pipe_read(int fd, byte[] data, int offset, int count) -> int;
+    // write 单次批量系统调用：返回实际写入字节数，-1 = 错误。
+    fn rt_proc_pipe_write(int fd, byte[] data, int offset, int count) -> int;
+    fn rt_proc_pipe_read_line(int fd) -> string?;
+    fn rt_proc_pipe_write_line(int fd, string data) -> int;
+    fn rt_proc_pipe_write_string(int fd, string data) -> int;
+    fn rt_proc_pipe_close(int fd) -> int;
+
+    // ── PTY 终端 ──
+    fn rt_pty_spawn(string exe_path, string args, string? working_dir, int cols, int rows, out int master_fd) -> NativePtr;
+    fn rt_pty_resize(NativePtr handle, int cols, int rows) -> int;
+    fn rt_pty_write_string(int master_fd, string data) -> int;
+    fn rt_pty_read_line(int master_fd) -> string?;
+    fn rt_pty_close(int master_fd) -> int;
+    fn rt_pty_send_signal(NativePtr handle, int signal) -> int;
+}

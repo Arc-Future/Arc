@@ -1,0 +1,18 @@
+// RFC 103 运行时库加载统一模型（`load` 声明）e2e 测试辅助契约（形态①：字面量相对路径）。
+//
+// 本模块以 `load = "runtime"` 声明：编译期**不**静态链接、**不**做符号验证，
+// 由 codegen 生成的懒解析器在运行时经 `rt_library_load` / `rt_library_sym` 解析。
+// 候选顺序（RFC 103 · 用户裁决简化 2026-08-03：单一 `.ani` 协议，无多层路径托底）：
+//   1. `library` 目录 —— `ani_runtime_lib/lib/<平台库名>`
+//   2. 系统路径。
+// `library` 相对路径基准 = **执行程序根目录**（`-o` 输出可执行文件所在目录）：
+//   e2e 可执行文件位于 `target/e2e/<app>.exe` → 库目录解析为 `target/e2e/ani_runtime_lib/lib`。
+//
+// C 实现原由 `ani_runtime_load_e2e`（arc-integration，已退场 a2627a0f）在测试时
+// 用 clang 编译为共享库，放置于候选路径。
+native module ani_runtime_probe {
+    load = "runtime";
+    library = "ani_runtime_lib/lib";
+    fn ani_runtime_magic() -> int;
+    fn ani_runtime_add(int a, int b) -> int;
+}

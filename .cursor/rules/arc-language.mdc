@@ -1,0 +1,405 @@
+﻿---
+description: Arc 表面语法与命名——C# 基准、.as 源码惯例
+globs: "crates/ast/**,crates/parse/**,crates/hir/**,examples/**,std/**,**/*.as"
+alwaysApply: false
+---
+
+# Arc 语言表面规范
+
+> 权威以项目根 `AGENTS.md` 为准，本文件为 IDE 辅助细则；与 AGENTS.md 冲突时以 AGENTS.md 为准。
+
+> **RFC 编号体系（2026-08-02 重构）**：RFC 已重排为新编号 001–042 + 091（[新 index](../../docs/rfc/index.md)：一主题一文档，编号按主题聚合）；旧编号为历史别名。语法/品味对应新 002/003。
+
+表面语法以 **C# 为约束基准**（实现与评审对照，公开文档用 Arc 自有术语）。已决事项见 [RFC 002](../../docs/rfc/002-surface-contract.md)。品味边界见 [RFC 002](../../docs/rfc/002-surface-contract.md)（取其精华、去其糟粕、单一惯用法；**文档不得暗示双轨**）。新增语法：查 C# 惯用法 → 写 Arc 差异（`docs/rfc/` 对应章节）→ 同步 `parse` → `ast`，不保留双轨。
+
+## 已锁定（RFC 002）
+
+| 决策 | 规范 |
+|------|------|
+| 扩展名 | **`.as`** 唯一 |
+| 声明 | 前导类型 `Type name` 或 `var`；**无** `let`/`mut` |
+| 路径 / 模块 | `.` 限定名；`namespace A.B.C` / file-scoped `namespace A.B.C;`；**拒绝** `namespace X; { }` |
+| `using` | 全面 C#：`using N;`、`using N.T;`、`using Alias = N.T;` |
+| 借用 | 用户面无 `&T`/`&mut T`；仅 MIR/borrowck |
+| 表达式树 | 类型 `Expression<Func<...>>` + Lambda `=>`；**无** `expression` 关键字（[RFC 002](../../docs/rfc/002-surface-contract.md)、[RFC 012](../../docs/rfc/012-compile-time-metaprogramming.md)） |
+| 包 | `[package].name` 与命名空间根不一致 → **编译错误** |
+
+## 应对齐
+
+| 领域 | 惯例 |
+|------|------|
+| 声明 | 前导类型 `Type name` |
+| 类型 | `class` / `struct` / `interface` / `enum` + 访问修饰符 |
+| 异步 | `async` / `await`，`Task<T>` |
+| 查询 | `from` / `where` / `select` |
+| 模块 | `namespace` / `using` |
+
+禁止后缀类型 `name: Type`、与 C# 主流相悖的平行语法、同一语义多种写法。
+
+## .as 命名（C# / .NET 惯例）
+
+| 类别 | 风格 | 示例 |
+|------|------|------|
+| 类型 / 方法 / 属性 | PascalCase | `User`, `GetUser` |
+| 接口 | `I` + PascalCase | `IRepository` |
+| 参数 / 局部变量 | camelCase | `userId` |
+| 私有字段 | `_` + camelCase | `_items` |
+| 文件 | 与主类型同名 | `User.as` |
+
+禁止匈牙利命名、C 风格 `MAX_SIZE` 常量、无意义缩写。`crates/` 内 Rust 标识符用 **Rust 惯例**（见 `arc-rust`）。
+
+```as
+// ✅
+public class UserStore : IUserStore {
+    private readonly string _connectionString;
+    public async Task<User?> FindById(int userId) { ... }
+}
+```
+
+## 实例字段访问规范（`this.` 规则）
+
+### 私有字段（`_camelCase`）—— 禁止 `this.`
+
+`_` 前缀的私有字段在构造器、方法和属性体内**直接引用，不带 `this.` 前缀**。编译器会自动将裸 `_field` 重写为 `this._field`。
+
+```as
+// ✅ 正确：裸 _field 访问
+public class Counter {
+    private int _count;
+
+    public Counter(int initial) {
+        _count = initial;          // ✅ 无 this.
+    }
+
+    public int Value {
+        get { return _count; }     // ✅ 无 this.
+        set { _count = value; }    // ✅ 无 this.
+    }
+
+    public void Increment() {
+        _count = _count + 1;       // ✅ 无 this.
+    }
+}
+```
+
+```as
+// ❌ 禁止：私有字段不应用 this.
+public class Counter {
+    private int _count;
+    public Counter(int initial) {
+        this._count = initial;     // ❌ 多余 this.
+    }
+}
+```
+
+### `this.` 仅用于消除歧义
+
+当 `_camelCase` 字段名与局部变量或参数冲突时，可使用 `this.` 消歧。
+
+```as
+// ✅ this. 消歧
+public class Person {
+    private string _name;
+    public Person(string name) {
+        this._name = name;         // 参数 name 遮蔽字段 _name
+    }
+}
+```
+
+但在无歧义场景中，优先使用不同命名的参数：
+
+```as
+// ✅ 更佳：参数名区分
+public class Person {
+    private string _name;
+    public Person(string initialName) {
+        _name = initialName;       // 无歧义，无需 this.
+    }
+}
+```
+
+### 公开成员仍用 `this.`
+
+公开字段、属性和方法调用**不**受此规则影响——保持现有 `this.Property` / `this.Method()` 写法不变。
+
+## 常量命名（PascalCase）
+
+Arc 常量使用 **PascalCase**，禁止 C 风格 `MAX_SIZE`：
+
+```as
+// ✅
+public const int MaxLength = 1024;
+public const string DefaultCulture = "en-US";
+private const double Pi = 3.14159;
+
+// ❌
+public const int MAX_LENGTH = 1024;    // 禁止 C 风格
+```
+
+## 属性声明规范
+
+### 首选自动属性
+
+无自定义逻辑时使用自动属性语法：
+
+```as
+// ✅ 自动属性
+public string Name { get; set; }
+public int Age { get; private set; }
+public string Id { get; }  // get-only 自动属性
+```
+
+### 访问器选择——getter-only `{ get; }` 默认
+
+构造期/初值即确定为只读的成员**必须**用 getter-only `{ get; }`（构造器内 `this.X = ...` 或 `= 初值`），禁止用公开 `set` / `{ get; private set; }` 掩盖只读语义。可变性最小化：
+
+| 语义 | 写法 |
+|------|------|
+| 构造后不可变 | `{ get; }`（ctor 内赋值 或 `= expr` 初值） |
+| 仅类内可变 | `{ get; private set; }` |
+| 仅对象初始化期可变（record/POCO） | `{ get; init; }` |
+| 外部可变 | `{ get; set; }` |
+
+```as
+// ✅ 构造期赋值：getter-only + ctor
+public class HtmlViewResult {
+    public string Html { get; }
+    public HtmlViewResult(string html) { this.Html = html; }
+}
+
+// ✅ 固定初值：getter-only + 初值
+public class FileResult {
+    public int StatusCode { get; } = 200;
+}
+
+// ❌ 只读却暴露公开 set（可变性失控）
+public string Html { get; set; }
+```
+
+### 初值 `= expr` —— 必须携带非默认信息（禁冗余初值）
+
+`T Prop { get; } = expr;` 仅当 `expr` 与类型默认值**不同**、表达明确语义时使用。初值等价于类型默认值（值类型 `default`＝`0`/`false`/`0.0`；引用类型＝`null`）是冗余表达，会掩盖「读 backing field 默认值」的语义，**一律省略**：
+
+```as
+// ✅ 有意义的初值（非默认）
+public int StatusCode { get; } = 200;          // 非 0
+public bool IsBinary { get; } = true;          // 非 false
+public string ContentType { get; } = "text/html";
+
+// ❌ 冗余初值（= 类型默认值，纯噪声）
+public bool IsBinary { get; } = false;         // bool 默认即 false
+public int TimeoutMs { get; set; } = 0;        // int 默认即 0
+```
+
+判别：删去 `= expr` 后行为不变即为冗余，删；**初值可能为非默认的「哨兵/空值」**（如 `= ""` 用于避免引用协商 null）属有语义，保留。
+
+### 自定义访问器用于复杂逻辑
+
+```as
+// ✅ 自定义 getter/setter
+private string _fullName;
+public string FullName {
+    get {
+        if (string.IsNullOrEmpty(_fullName)) {
+            return "Unknown";
+        }
+        return _fullName;
+    }
+    set {
+        _fullName = value.Trim();
+    }
+}
+```
+
+### `[Builtin]` 门面 stub —— 自动属性按 codegen 拦截能力有条件启用
+
+`[Builtin]` 属性（运行时透传门面）能否用自动属性 `{ get; }`，取决于 codegen 是否拦截其 getter：
+
+- **有拦截**（codegen 定义 `get_X` 或静态全名直射 `rt_*` ABI）→ 编译器把 `[Builtin]` 属性注册为 custom 访问器（无 backing field），访问降为 `get_X` 调用并被 codegen 拦截。**可用自动属性 `{ get; }`**。已实证：`Thread.IsAlive`（`get_IsAlive`→`rt_thread_is_alive`）、静态 `Thread.CurrentThread`/`ManagedThreadId` 均以自动属性书写且运行时正确。
+
+```as
+// ✅ codegen 拦截 get_X：可写自动属性（无 backing field）
+[Builtin(ABI = "rt_thread_is_alive")]
+public bool IsAlive { get; }
+```
+
+- **未拦截**（codegen 无 `get_X` 直射）→ **必须保留显式 getter 死代码体** `{ get { return 0; } }`。自动属性无 backing field，未拦截访问会读空场默认值，运行时常量恒错。已实证：`MemoryMappedFile.Length`（无 `get_Length` 直射，须显式体）。
+
+```as
+// ✅ codegen 未拦截：必须保留显式死代码体
+[Builtin(ABI = "rt_file_mmap_length")]
+public long Length { get { return 0; } }
+
+// ❌ 未拦截 [Builtin] 写成自动属性 → 读空 backing field 恒错
+[Builtin(ABI = "rt_file_mmap_length")]
+public long Length { get; }
+```
+
+> 判别法则：将 `[Builtin]` 属性改为自动属性后**必须经 e2e 运行时断言**验证 getter 返回真实运行时值；凡无对应 `get_X`/静态全名拦截、或未经验证的，一律保留显式死代码体。非 `[Builtin]` 的真实 backing-field 属性（`ColumnAttribute.Name`、DI 模型等）一律用自动属性。
+
+> **已知编译器缺口**：`override` 抽象属性的自动属性+初值形态（`public override string X { get; } = "…";`）暂不支持——ctor 初值注入会发射无定义的 `set_X`（LLVM undefined value），且虚槽无合成 getter。须用显式体 `{ get { return "…"; } }`（AIPlanTools 已实证）。
+
+## 控制流大括号（强制 · Allman 风格）
+
+`if` / `else` / `else if` / `switch` / `while` / `for` / `foreach` 等代码块**必须使用 `{}` 括起**，禁止省略大括号；并采用 C# 官方推荐的 **Allman 风格**——左花括号 `{` 独立成行。目的：迭代范围明确、diff 清晰、避免悬空 else。
+
+```as
+// ✅ Allman：{ 独立成行 + 必用大括号
+if (x > 0)
+{
+    DoA();
+}
+else
+{
+    DoB();
+}
+
+// ❌ 省略大括号（禁止）
+if (x > 0)
+    DoA();
+
+// ❌ K&R/同行花括号（非官方推荐）
+if (x > 0) {
+    DoA();
+}
+```
+
+> 说明：为与既有代码基线保持一致，`{` 与关键字同行（K&R）的历史写法在触及时可随重构逐步转为 Allman，不要求一次性全量改造；**新增代码一律 Allman**。
+
+## 注释规范（面向开发者 · 强制）
+
+Arc 注释**面向开发者编写**，说明「为什么」而非复述代码，禁止易失效、低价值、过期的内容：
+
+- **公开 API** 用 `///` 文档注释，注释独立成行（不在代码行尾），说明用途、参数、返回与 null 语义。
+- 行内注释解释**设计意图/权衡**，不复述实现细节（「遍历列表」这类废话注释无价值）。
+- **禁止**占位性、易失效注释：`TODO` / `FIXME` / `临时` / 「以后要改」/ 过时说明 / 已不匹配实现的注释。
+- 注释随代码同变更集维护；改实现必须同步改注释，发现过期注释即纠正（见 AGENTS.md「不标准即纠正」）。
+
+```as
+// ✅ 面向开发者：说明意图
+// 复用连接池连接，避免每次新建开销（IDbProvider 生命周期为 singleton）。
+public Task<List<User>> ToListAsync(CancellationToken cancellationToken) { ... }
+
+// ❌ 复述代码 / 无价值
+// 调用 ToListAsync 方法
+var users = await db.Users.ToListAsync();
+
+// ❌ 占位 / 易失效
+// TODO: 后续优化性能
+public List<User> ToList() { ... }
+```
+
+## 可空与 null 防御（强制）
+
+标准库**禁止不明确的可空风险**：
+
+- 可空类型必须显式用 `?` 标注：`string?` / `Type?` / `object?`。
+- 解引用可空值前必须判空或取默认，禁止未防御的 null 传递与静默解引用。
+- 返回可空引用/值类型时，文档须说明 null 语义；调用侧须处理 null。
+
+```as
+// ✅
+public string? FindName(int id) {
+    ...
+    return null;      // 显式可空
+}
+
+// ❌ 返回 string 却可能返回 null（不明确可空风险）
+public string FindName(int id) { ... return null; }
+```
+
+## 目录结构惯例
+
+### `Impl/` —— 接口实现类
+
+每个命名空间下的接口实现类放在 `Impl/` 子目录：
+
+```
+std/QIF/
+├── QIFResult.as          # 接口/公共类型
+├── QIFRunner.as          # 接口/公共类型
+└── Impl/
+    ├── QIFHost.as        # IQIFHost 实现
+    ├── QIFRunner.as      # QIFRunner 实现
+    └── QIFOutputHelper.as
+```
+
+### `Models/` —— 数据模型/POCO 类
+
+纯数据承载类放在 `Models/` 子目录：
+
+```
+std/Arc/Globalization/
+├── CultureInfo.as
+├── CultureData.as
+└── CultureHelper.as
+```
+
+### 文件与主类型同名
+
+每个 `.as` 文件包含且仅包含一个公开类型，文件名与类型名完全一致（含 PascalCase）。
+
+## 异步方法命名（Async 后缀 + CancellationToken）
+
+Arc **异步一体原则**：所有涉及 I/O 的方法仅提供异步签名，无同步副本。
+
+| 规则 | 规范 | 示例 |
+|------|------|------|
+| 返回 `Task`/`Task<T>` 的方法 | 必须以 `Async` 结尾 | `SaveChangesAsync`, `ToListAsync`, `ReadAsync` |
+| 无 I/O 的纯状态操作 | 同步命名，无 `Async` 后缀 | `Add(entity)`, `Remove(entity)` |
+| `CancellationToken` 参数 | 所有 async 方法必须提供 `CancellationToken` 重载（参数名 `cancellationToken`） | `ToListAsync()` + `ToListAsync(CancellationToken cancellationToken)` |
+| 默认取消令牌 | M1 阶段用重载模式（不支持 `= default`）；M2 后统一为 `CancellationToken cancellationToken = default` | 见下例 |
+
+```as
+// ✅ M1 重载模式
+public async Task<List<User>> ToListAsync() {
+    return await ToListAsync(new CancellationToken());
+}
+public async Task<List<User>> ToListAsync(CancellationToken cancellationToken) {
+    cancellationToken.ThrowIfCancellationRequested();
+    // ... I/O 操作
+}
+
+// ✅ M2 目标（default 参数值支持后）
+public async Task<List<User>> ToListAsync(CancellationToken cancellationToken = default) { ... }
+
+// ❌ 禁止：异步方法无 Async 后缀
+public Task<List<User>> ToList() { ... }
+
+// ❌ 禁止：同步 I/O 方法
+public List<User> ToList() { ... }  // 数据访问层
+```
+
+## 数据访问层规范（ORM / IDbProvider / DbContext）
+
+| 规则 | 规范 |
+|------|------|
+| 多后端抽象 | `IDbProvider` 接口统一关系型与文档型数据库 |
+| `DbContext` 生命周期 | **scoped**（每请求新建），非线程安全，`IDisposable` |
+| `IDbProvider` 生命周期 | **singleton**，线程安全，内部管理连接池 |
+| 查询构建 | 同步方法（`Where`/`Select`/`OrderBy`），纯表达式树组合，无 I/O |
+| 查询执行 | 异步方法（`ToListAsync`/`FirstAsync`/`CountAsync`），触发 I/O |
+| 数据库类型 | `DatabaseKind` 枚举：`Relational` / `Document` / `KeyValue` / `InMemory` |
+
+```as
+// ✅ DbContext 子类（EFCore 风格）
+public class AppDbContext : DbContext {
+    public AppDbContext(IDbProvider provider) {
+        SetProvider(provider);
+        SetContextTypeName("AppDbContext");
+    }
+    protected override FrozenModel OnModelCreating() {
+        FrozenModel model = new FrozenModel("AppDbContext");
+        model.AddEntityMap("User", "Users");
+        return model;
+    }
+    public DbSet<User> Users => new DbSet<User>(ChangeTracker, Provider, TableExpression("Users"), "User");
+}
+
+// ✅ 异步查询链
+var users = await db.Users.Where(u => u.Age >= 18).OrderBy(u => u.Name).ToListAsync();
+
+// ✅ 关系型 + 文档型共用核心接口
+IDbProvider sqlite = new SqliteProvider("Data Source=app.db");     // DatabaseKind.Relational
+IDbProvider mongo  = new MongoProvider("mongodb://localhost:27017"); // DatabaseKind.Document
+```

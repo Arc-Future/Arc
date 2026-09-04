@@ -1,0 +1,4 @@
+﻿# Rust 排版基线：排版权全权移交 rustfmt（AGENTS.md 编码契约管辖 .as/std 语义风格，与此无重叠）。
+# 全库首次收敛采用独立 fmt 提交 + .git-blame-ignore-revs 登记保护 blame。
+edition = "2021"
+max_width = 100

@@ -1,0 +1,21 @@
+# std 解决方案根（对标独立 `.sln`）：纯 [workspace] 聚合，无 [package]。
+# `arc build std` 按依赖拓扑序一键全量构建（30 个子库经嵌套域解决方案递归展开）；
+# `arc build std/AI`（等）单独构建某个域解决方案；`arc build std/<pkg>` 只构建
+# 该项目及其 ProjectReference 闭包（对标 `dotnet build <csproj>`）。构建顺序由
+# Workspace::build_order 依据各成员 [dependencies] path 边拓扑决定。
+[workspace]
+members = [
+    "Arc",
+    "Chord", # 插件内核（RFC 045；进程内作用域级可逆编排）
+    "AI",    # AI 域解决方案（AI/arc.toml 嵌套聚合 11 个子库）
+    "Data",
+    "DI",
+    "Drawing",
+    "Logging",
+    "QIF",
+    "UI",
+    "Security",
+    "Net",   # Net 域解决方案（Net/arc.toml）
+    "Orm",   # Orm 域解决方案（Orm/arc.toml）
+    "Web",   # Web 域解决方案（Web/arc.toml）
+]

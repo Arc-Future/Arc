@@ -1,0 +1,25 @@
+// RFC 036 M5：zxing-cpp 通用条码解码增强（`.ani` 可选加载 + 降级链）。
+//
+// `load = "auto"`：编译期库可定位（`resolve_native_lib` + 符号验证成功）→
+// static；否则（本仓库不 vendored zxing-cpp，库通常不在编译期搜索链）→
+// **确定性降级 runtime**。运行时经 `ARC_ZXING_LIB` 环境变量（library 形态②
+// `Environment.GetEnvironmentVariable` 表达式）求值库**目录**，再追加平台库名
+// （`zxing.dll` / `libzxing.so` / `libzxing.dylib`）懒加载；未设置 / 目录缺库 /
+// 符号缺失 → 模块 `unavailable`（`Native.IsAvailable("zxing")` == false），
+// 调用点优雅降级（RFC 034 §1.2.3 / §1.2.4；RFC 036 §1.6）。
+//
+// ABI 语义对齐 RFC 036 §1.5 `rt_barcode_zxing_decode`：输入 RGBA8 像素缓冲 +
+// 宽高；输出 NUL 终止文本缓冲 + 容量；返回 0 成功 / 非零失败。像素/文本缓冲
+// 走 `List<byte>` 零拷贝展开（RFC 027 M3 §3.3，`ptr buffer, i32 size`）。
+//
+// shim 符号由外部共享库导出：桥接源码 `crates/runtime-drawing/shim/zxing_shim.cpp`
+// （`extern "C"` 包 `ZXing::ReadBarcodes`），由
+// `scripts/fetch-zxing-native.ps1` 与 zxing-cpp reader-only 源码一起编译进
+// `target/zxing-native/zxing.dll|libzxing.so|libzxing.dylib`（不进仓库；
+// 工作区卫生 G″）。真实库语义验收原由 `zxing_decode_e2e` 承担（已随
+// arc-integration 退场，a2627a0f）。
+native module zxing {
+    load = "auto";
+    library = Environment.GetEnvironmentVariable("ARC_ZXING_LIB");
+    fn zxing_decode_c(List<byte> rgba, int w, int h, List<byte> textOut, int textCap) -> int;
+}

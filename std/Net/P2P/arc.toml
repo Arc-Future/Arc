@@ -1,0 +1,10 @@
+[package]
+name = "Arc.Net.P2P"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Net.P2P"
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.Net" = { path = "../Core" }

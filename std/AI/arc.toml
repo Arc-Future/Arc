@@ -1,0 +1,16 @@
+# AI 域解决方案（嵌套于 std 根解决方案）：聚合 AI 领域全部子库。
+# `arc build std/AI` 按依赖拓扑序一键构建本域；被 std 根解决方案递归展开。
+[workspace]
+members = [
+    "Core",
+    "Models",
+    "Onnx",
+    "Iree",
+    "Agent",
+    "Agent.OpenAI",
+    "Agent.Harness",
+    "Agent.Harness.Coding",
+    "Agent.Agnes",
+    "Agent.MCP",
+    "Agent.DeepSeek",
+]

@@ -1,0 +1,20 @@
+﻿[package]
+name = "arc-ui"
+description = "Declarative UI framework for Arc (.arml parser, type checker, inspect/verify)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+smol_str = { workspace = true }
+indexmap = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+naga = { workspace = true, features = ["wgsl-in"] }
+
+# lint 基线统一由 workspace 管理（见根 Cargo.toml [workspace.lints]）
+[lints]
+workspace = true

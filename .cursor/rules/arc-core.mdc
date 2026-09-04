@@ -1,0 +1,56 @@
+---
+description: Arc 项目核心契约——原则、纪律、文档驱动、扩展性与验证
+alwaysApply: true
+---
+
+# Arc 项目核心契约
+
+> **RFC 编号体系（2026-08-02 重构）**：RFC 已重排为新编号 001–042 + 091（[新 index](../../docs/rfc/index.md)：一主题一文档，编号按主题聚合）；旧编号为历史别名。新开发按新编号升序逐项验收完结。
+
+Arc 无历史负担。所有决策从零设计出发，**文档为唯一权威**（`docs/`），实现与 RFC 冲突时先对齐文档。
+
+## 语言定位（简要）
+
+- **编译优先**：AOT 编译型语言；Queryable/Expression/LINQ 在构建期展开，非运行时 AST 解释（[RFC 012](../../docs/rfc/012-compile-time-metaprogramming.md)）。
+- **C# 表面**：强类型、前导类型、`namespace`/`using`、Query/`async` 等以 C# 惯用法为约束基准（[RFC 002](../../docs/rfc/002-surface-contract.md)）；**取其精华、去其糟粕、单一惯用法**（[RFC 002](../../docs/rfc/002-surface-contract.md)；文档不得暗示双轨）；完成标准内已承诺/关账面 + 自举最小子集，**不**宣称 C# 完备对等（[RFC 019](../../docs/rfc/019-self-hosting.md)）。
+- **当前活跃工作（[RFC 036](../../docs/rfc/036-maturity.md)）**：L1+L2 关账；**成熟度主标尺 = std 完善**（门禁 G9 ✅ · tip `10cf1a3`；G8 对照 ✅）。**当前主线 = 三硬要求**（[§1](../../docs/rfc/036-maturity.md)：底层彻底稳定 · 极致性能 · 高阶可编译；**H3 ✅** tip `e86c8d9f`（基 `b6e891e2`；历史签收 tip `c26fa966` · 证据 `e2b417fa`；`baa92700` codegen 红已消）；**H2 ✅** tip `2750dd6b`（gate=raw **0.58 / 0.62 / 0.56**）；**H1 ✅** tip `3028c539`；**三硬可靠签收 ✅** tip `3028c539`）。**基础面默认冻结**（[§3](../../docs/rfc/036-maturity.md)：语言核心 / `rt_*` / `std/Arc` Stable；破坏性变更须 RFC；禁顺手改；H1–H3 齐后仍守 ABI）。M4 **可排期**（[RFC 019 §3](../../docs/rfc/019-self-hosting.md) 单 M·子集边界；不自动开干；非现行主线全力项；其立宪公理（语言基础优先）为语言/std 共同前置；**F0–M3 ✅ 资产**）。**L3 彻底进入已宣布**：可维持有边界单目标 Sprint；**允许全力 L3**；**≠** M4；**≠** 假开 Provider 全家桶；禁业界领先空话 / 领域倒逼语言洞。**底座可靠性 · RFC 099 / 102（旧编号）**（NLL 无条件启用 + 循环收集默认 always-on 立宪，见 [RFC 036 §5](../../docs/rfc/036-maturity.md) / [RFC 005](../../docs/rfc/005-memory-model.md)）：宣称纪律（未经验收不得宣称、验收通过后可声明）/ 热卸载必做闭环（类 .NET 可回收 ALC + 根扫描 + 代数计数）/ 性能基线升级（最新 .NET + Rust）/ 借用安全至少 Rust/C# 级；实现另排单目标 Sprint RFC。不得为赶自举掩盖语言/std 债；不得删 Rust 词法或切默认 CLI（直至 Mn）。
+- **编译期展开 > Rust 式宏**：远期宏须语义/类型感知、与 Expression/LINQ 统一 IR 管线；不复制 `macro_rules!`/proc-macro token 模型为终态。
+
+## 禁止
+
+- 兼容性分支、deprecated 路径、迁移 shim、双轨 API
+- **顺手改稳定面**（语言核心 / `rt_*` ABI / `std/Arc` Stable；破坏性变更须 RFC，见 [RFC 036 §3](../../docs/rfc/036-maturity.md)）
+- 无调用方的抽象、占位实现、`todo!()` 半成品
+- 文档未描述的行为；「先合代码后补文档」
+- 模糊交付（仅解析无 typeck、仅测试无文档等）
+
+## 开发纪律
+
+1. **先想清楚**：读 `docs/rfc/index.md` 与相关 RFC；声明假设，不确定则提问
+2. **极简**：只实现当前请求；10 行能解决的不用 20 行；不为单次使用造抽象
+3. **外科手术式改动**：不「顺手」改相邻代码；每行 diff 须能追溯到当前任务
+4. **目标驱动**：先定义「怎样算通过」，再动手
+
+## 扩展性（动手前必答）
+
+| 维度 | 须明确 |
+|------|--------|
+| 编译阶段 | 落在哪个 `crates/*`？上下游类型？ |
+| 语法 | 新 token/产生式？脱糖规则？ |
+| 运行时 | 新 `rt_*`？ABI？ |
+| 标准库 | `std/` 公开 API 边界？ |
+
+一项答不出 → 先补 `docs/rfc/` 或 RFC，再写代码。语义级扩展**必须先 RFC**。
+
+## 验证
+
+| 任务 | 最低验证 |
+|------|----------|
+| 编译器 crate | `cargo test -p <crate>` |
+| 管线变更 | `cargo test -p arc-tests` |
+| 端到端 | `cargo run -p arc -- build examples/CompilerSmoke/Program.as` |
+| 语义/文档 | 同变更集更新 `docs/rfc/` 或 RFC |
+
+## 架构方向
+
+`arc`（CLI）→ 各阶段 crate → `ast` / 基础类型，**不可逆、无循环依赖**。高内聚、低耦合、窄接口。

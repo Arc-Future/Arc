@@ -1,0 +1,10 @@
+[package]
+name = "Arc.Logging"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Logging"
+
+[dependencies]
+Arc = { path = "../Arc" }
+"Arc.DI" = { path = "../DI" }

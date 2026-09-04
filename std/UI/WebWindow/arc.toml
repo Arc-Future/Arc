@@ -1,0 +1,17 @@
+[package]
+name = "Arc.UI.WebWindow"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.UI.WebWindow"
+
+# 效率开发框架（未来规划）：类似 Tauri 的桌面应用框架，基于
+# Arc.UI.WebView（系统 WebView 表面）+ Arc.Web（后端 Web 框架）装配，
+# 注入脚本 + 自定义协议 + [WebCommand] 编译期聚合 + 能力门闩（RFC 015）。
+# 实现未开工（单 M · 子集边界 · 不自动开干）；本库当前仅注册命名空间与依赖拓扑。
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.UI" = { path = "../Core" }
+"Arc.UI.WebView" = { path = "../WebView" }
+"Arc.Web" = { path = "../../Web/Core" }

@@ -1,0 +1,13 @@
+[package]
+name = "Arc.UI.Md"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.UI.Md"
+
+# Markdown 组件库：Markdown 解析/渲染组件（独立组件库，Arc.UI 研发版图成员）。
+# 实现未开工（单 M · 子集边界 · 不自动开干）；本库当前仅注册命名空间与依赖拓扑。
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.UI" = { path = "../Core" }

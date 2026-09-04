@@ -1,0 +1,31 @@
+// RFC 054 M1: localization & resources runtime ABI.
+//
+// 仅保留 OS API。资源查找已由 ResX CodeGen（RFC 027 强类型访问器）在
+// 编译期内联为字面量，运行时零解析零查找；Culture 数据与字符串处理
+// 已完全迁移至 Arc 语言实现（std/Arc/Globalization/ 下纯 Arc 实现）。
+// Implemented in crates/runtime/rt_resources.c.
+native module rt_resources {
+    /// 返回 OS UI 区域 BCP 47 名称（malloc'd）。
+    fn rt_os_current_uilocale() -> string?;
+
+    /// 返回 OS 格式区域 BCP 47 名称（malloc'd）。
+    fn rt_os_current_locale() -> string?;
+
+    /// 返回当前本地时间 ticks（100ns 单位，自 0001-01-01 起）。
+    fn rt_os_now_ticks() -> long;
+
+    /// 返回当前 UTC 时间 ticks。
+    fn rt_os_now_utc_ticks() -> long;
+
+    /// 生成 UUID v4 并返回 RFC 9562 格式字符串（malloc'd）。
+    fn rt_guid_new_string() -> string;
+
+    /// 高精度计时器当前时间戳（Stopwatch.GetTimestamp）。
+    fn rt_stopwatch_get_timestamp() -> long;
+
+    /// 高精度计时器频率（每秒 ticks；Stopwatch.Frequency）。
+    fn rt_stopwatch_frequency() -> long;
+
+    /// 1 = 高精度可用（Stopwatch.IsHighResolution）；当前实现恒为 1。
+    fn rt_stopwatch_is_high_resolution() -> int;
+}

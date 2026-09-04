@@ -1,0 +1,21 @@
+﻿[package]
+name = "arcgr"
+description = ".arcgr semantic index binary format (RFC 034 / RFC 033 M2)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+crc32fast = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+
+# lint 基线统一由 workspace 管理（见根 Cargo.toml [workspace.lints]）
+[lints]
+workspace = true

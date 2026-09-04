@@ -1,0 +1,19 @@
+[package]
+name = "ReviewAgent"
+version = "0.1.0"
+edition = "1"
+namespace = "ReviewAgent"
+
+# 领域二样例（RFC 043 P5）：数据/文档审查型 Harness。
+# 复用纪律验证：仅组装 Arc.Agent（宿主）+ Arc.Agent.Harness（基座）即建成新领域，
+# 不依赖 Arc.Agent.Harness.Coding —— 证明基座跨领域复用、不反向依赖领域。
+# 目录结构（namespace 即目录，根命名空间 = package.name）：
+#   Program.as            —— 入口（无 namespace，C# Program.cs 惯例）
+#   ReviewAgent/Host/     —— 组合根：class ReviewHost（Provider + 会话选项）
+#   ReviewAgent/Tools/    —— 领域工具：声明式 [AITool]（review_file / check_consistency）
+#   ReviewAgent/DoD/      —— 领域判定：class ReviewDoDGateEvaluator（IAIDoDGateEvaluator）
+#   ReviewAgent/Repl/     —— 控制台交互（薄壳，方向环经 AIHarnessSession 走基座）
+[dependencies]
+"Arc.Agent" = { path = "../../std/AI/Agent" }
+"Arc.Agent.DeepSeek" = { path = "../../std/AI/Agent.DeepSeek" }
+"Arc.Agent.Harness" = { path = "../../std/AI/Agent.Harness" }

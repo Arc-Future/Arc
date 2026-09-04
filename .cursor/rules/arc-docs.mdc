@@ -1,0 +1,33 @@
+---
+description: Arc 语言之书——文档驱动流程与中文写作规范
+globs: "docs/**/*.md"
+alwaysApply: false
+---
+
+# 文档规范
+
+## 文档驱动（编辑 docs 时）
+
+1. 语义变更 → 先 RFC（`docs/rfc/`）或规范章节，再改 `crates/`
+2. 同一变更集同步代码与文档；冲突时以**已接受 RFC**（`docs/rfc/`）> `docs/user-guide/` 为准
+3. 禁止在 `docs/domain/`、`docs/user-guide/`、`docs/white-paper/` 等平行目录重复维护设计决策
+
+## 结构
+
+```
+docs/
+├── preface.md  manifesto.md  SUMMARY.md  plan.md
+├── rfc/        # 已接受设计决策（001–042 + 091，一主题一文档）
+│   └── index.md
+├── user-guide/ # 用户文档（01–18 + 附录）
+├── domain/     # 领域库
+└── white-paper/
+```
+
+## 写作
+
+- **全文中文**（标识符、`Arc`、`.as`、代码块除外）
+- `index.md` 渐进式披露：目标、收获、目录表、上下章链接
+- 小节：先结论后细节；示例路径用 `crates/`、`std/`、`examples/`
+- 交叉引用用相对路径；**不以 C#/Rust 等外部语言为设计依据**
+- 变更时同步 `SUMMARY.md` 与各目录 `index.md`（`docs/rfc/`、`docs/user-guide/`）

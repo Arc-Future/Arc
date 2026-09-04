@@ -1,0 +1,3 @@
+[package]
+name = "CompilerSmoke"
+edition = "1"

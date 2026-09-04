@@ -1,0 +1,10 @@
+[package]
+name = "Arc.Illusory"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Illusory"
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.DI" = { path = "../../DI" }

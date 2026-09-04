@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- MainWindow.arml: ArmlDemo 主窗口——单 Window + ScrollView 内分区堆叠。
+     RFC 026 能力约束：Application.Run() 是单主窗口阻塞入口，无导航 /
+     TabControl / Element.Visibility，故以 ScrollView 纵向滚动承载 9 个分区。
+
+     本示例合并自旧案例（已删除）：
+       1. Hello 元素树与事件    ← ArmlHello
+       2. Controls 控件面        ← ArmlControls + ArmlStyle（默认观感）
+       3. x:Bind 绑定            ← XBindHello
+       4. ListView / ItemsControl ← ArmlList
+       5. Image                  ← ArmlImage（WIC 解码 + rt_ui_blit_bitmap）
+       6. Slider                 ← ArmlSlider
+       7. IME / Input            ← ArmlIme
+       8. Style & Isolation      ← ArmlVisualHost（宿主红 / VisualHost 蓝）
+       9. CodeEditor 视口虚拟化  ← ArmlCodeEditor（M-CE1 语义保留）
+      10. DataGrid 行虚拟化表格  ← RFC 037 §4 M-VZ4（固定表头 + 斑马纹 + 行选中）
+
+     x:Name 命名：`ItemsList` / `EditorView` 等命名元素经 codegen 在
+     InitializeComponent 中赋值为私有命名字段（RFC 042 命名查找），code-behind
+     可直接通过 `this.ItemsList` / `this.EditorView` 引用（见 MainWindow.arml.as）。
+-->
+<Window
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml"
+    x:Class="ArmlDemo.MainWindow"
+    Title="ARML Demo — 10 分区编码模型"
+    Background="#FFF5F5F5"
+    Width="720"
+    Height="640">
+    <ScrollView VerticalScrollBarVisibility="Visible" Background="#FFFFFFFF">
+        <StackPanel Orientation="Vertical" Spacing="14">
+
+            <!-- ============ 1 · Hello 元素树与事件（原 ArmlHello） ============ -->
+            <TextBlock Text="1 · Hello 元素树与事件（原 ArmlHello）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <StackPanel Orientation="Vertical" Spacing="8">
+                <TextBlock Text="Hello, ARML!&#10;嵌套元素树 demo." FontSize="14" Foreground="#333333"/>
+                <TextBlock Text="Custom FontFamily=AppSans (Fonts.RegisterFamily)"
+                      FontFamily="AppSans" FontSize="14" Foreground="#333333"/>
+                <TextBlock Text="AppSans Bold (FontWeight=Bold → weight 1)"
+                      FontFamily="AppSans" FontWeight="Bold" FontSize="14" Foreground="#333333"/>
+                <Button Content="Click Me" IsEnabled="true" Click="OnClickHello"/>
+            </StackPanel>
+
+            <!-- ============ 2 · Controls 控件面（原 ArmlControls + ArmlStyle 默认观感） ============ -->
+            <TextBlock Text="2 · Controls 控件面（原 ArmlControls + ArmlStyle 默认观感）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <TextBlock Text="注意：宿主隐式红样式作用于全局 Button（见分区 8 Style & Isolation）。"
+                  FontSize="12" Foreground="#B00020"/>
+            <StackPanel Orientation="Vertical" Spacing="8">
+                <TextBlock Text="Rectangle + Button 视觉态（Hover/Pressed/Disabled · 软件路径）"
+                      FontSize="12" Foreground="#444444"/>
+                <Rectangle Width="120" Height="8" Fill="#0078D4" Stroke="#005A9E" StrokeThickness="1"/>
+                <Button Content="Primary action (hover me)"
+                        Background="#0078D4"
+                        Foreground="#FFFFFF"
+                        FontSize="14"
+                        IsEnabled="true"
+                        Click="OnPrimaryClick"/>
+                <Button Content="Secondary action"
+                        Background="#107C10"
+                        Foreground="#FFFFFF"
+                        FontSize="14"
+                        IsEnabled="true"
+                        Click="OnSecondaryClick"/>
+                <Button Content="Disabled" IsEnabled="false"/>
+                <TextBlock Text="ScrollView 纵向滚动条（滚轮 + 拖 thumb / track 点击）："
+                      FontSize="12" Foreground="#444444"/>
+                <ScrollView Height="120" VerticalScrollBarVisibility="Visible" Background="#FFFFFFFF">
+                    <StackPanel Orientation="Vertical" Spacing="6">
+                        <TextBlock Text="Row 01 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 02 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 03 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 04 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 05 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 06 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 07 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 08 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 09 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 10 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 11 — scroll me" FontSize="12"/>
+                        <TextBlock Text="Row 12 — scroll me" FontSize="12"/>
+                    </StackPanel>
+                </ScrollView>
+                <TextBlock Text="RFC 037 Light Theme 默认观感（原 ArmlStyle）：Surface 底 TextBox"
+                      FontSize="12" Foreground="#444444"/>
+                <TextBox Placeholder="Type here…"/>
+            </StackPanel>
+
+            <!-- ============ 3 · x:Bind 绑定（原 XBindHello） ============ -->
+            <TextBlock Text="3 · x:Bind 绑定（原 XBindHello）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <StackPanel Orientation="Vertical" Spacing="8">
+                <TextBlock Text="{x:Bind Message, Mode=OneWay}" FontSize="14" Foreground="#333333"/>
+                <Button Content="Change Message" Click="OnChangeMessage"/>
+            </StackPanel>
+
+            <!-- ============ 4 · ListView / ItemsControl（原 ArmlList） ============ -->
+            <TextBlock Text="4 · ListView / ItemsControl（原 ArmlList）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <TextBlock Text="ItemContainerGenerator 把 List&lt;string&gt; 物化为 TextBlock 项（ItemsSource 由 code-behind 赋值）。"
+                  FontSize="12" Foreground="#444444"/>
+            <ListView x:Name="ItemsList"/>
+
+            <!-- ============ 5 · Image（原 ArmlImage） ============ -->
+            <TextBlock Text="5 · Image（原 ArmlImage）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <TextBlock Text="Win32 WIC 解码 PNG/BMP + rt_ui_blit_bitmap 软件 blit（Source/Stretch/Width/Height）。"
+                  FontSize="12" Foreground="#444444"/>
+            <StackPanel Orientation="Vertical" Spacing="8">
+                <Image Source="assets/logo.png" Width="128" Height="128" Stretch="Uniform"/>
+                <!-- DIAG-TEMP: 临时显式宽高验证布局 1e9 根因，实验后回滚 -->
+                <Image Source="assets/logo.bmp" Stretch="None" Width="128" Height="128"/>
+                <Image Source="assets/missing.png" Width="64" Height="64"/>
+            </StackPanel>
+
+            <!-- ============ 6 · Slider（原 ArmlSlider） ============ -->
+            <TextBlock Text="6 · Slider（原 ArmlSlider）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <StackPanel Orientation="Vertical" Spacing="8">
+                <Slider Minimum="0" Maximum="100" Value="25" Width="320" Height="24"/>
+                <Slider Minimum="0" Maximum="100" Value="50" Width="320" Foreground="#0078D4"/>
+                <Slider Minimum="0" Maximum="100" Value="75" Width="320" IsEnabled="false"/>
+            </StackPanel>
+
+            <!-- ============ 7 · IME / TextBox（原 ArmlIme） ============ -->
+            <TextBlock Text="7 · IME / TextBox（原 ArmlIme）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <TextBlock Text="点击输入框：英文直输 / 中文 IME（M-ime1 + caret · Draft）"
+                  FontSize="12" Foreground="#444444"/>
+            <TextBox x:Name="NameInput"
+                   Placeholder="Type hello or 中文…"
+                   Width="360"
+                   Height="32"
+                   FontSize="14"/>
+
+            <!-- ============ 8 · Style & Isolation（原 ArmlVisualHost） ============ -->
+            <TextBlock Text="8 · Style & Isolation（原 ArmlVisualHost）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <TextBlock Text="宿主隐式 Button 样式 → 红（#CC2222）/ VisualHost 内层 RFC 037 Light Primary 蓝（#1677FF）。"
+                  FontSize="12" Foreground="#444444"/>
+            <StackPanel Orientation="Vertical" Spacing="8">
+                <TextBlock Text="Host: Application.Resources implicit Button → red (#CC2222)"
+                      FontSize="13" Foreground="#333333"/>
+                <Button Content="Host Button (expect red)"/>
+                <TextBlock Text="VisualHost: RFC 037 Light Theme Button → Primary blue (#1677FF)"
+                      FontSize="13" Foreground="#333333"/>
+                <VisualHost Background="#FFFFFFFF" Height="120">
+                    <StackPanel Orientation="Vertical" Spacing="8">
+                        <TextBlock Text="Inside VisualHost (isolated resources)" FontSize="12"/>
+                        <Button Content="Preview Button (expect Primary blue)"/>
+                    </StackPanel>
+                </VisualHost>
+            </StackPanel>
+
+            <!-- ============ 9 · CodeEditor 视口虚拟化（原 ArmlCodeEditor） ============ -->
+            <TextBlock Text="9 · CodeEditor 视口虚拟化（原 ArmlCodeEditor · M-CE1）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <TextBlock Text="mmap piece-table 打开 + RenderVirtualizedLines 只物化可见行（详见 README）。"
+                  FontSize="12" Foreground="#444444"/>
+            <CodeEditor x:Name="EditorView" Width="640" Height="140"/>
+
+            <!-- ============ 10 · DataGrid 行虚拟化表格（RFC 037 §4 M-VZ4） ============ -->
+            <TextBlock Text="10 · DataGrid 行虚拟化表格（RFC 037 §4 M-VZ4）"
+                  FontSize="15" Foreground="#0066CC"/>
+            <TextBlock Text="固定表头 + 斑马纹 + 行选中（Accent 高亮）；只物化可见窗口行（列/行由 code-behind 声明式 API 填充）。"
+                  FontSize="12" Foreground="#444444"/>
+            <DataGrid x:Name="BooksGrid" Width="640" Height="176"/>
+
+        </StackPanel>
+    </ScrollView>
+</Window>

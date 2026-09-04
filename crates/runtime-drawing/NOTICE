@@ -1,0 +1,137 @@
+# NOTICE — Third-party licenses (RFC 036 · crates/runtime-drawing)
+
+本目录的 vendored 单文件 C 库许可登记（对齐 RFC 036 §1.7 / 035 §1.4）。
+
+## stb single-file libraries
+
+- 来源：https://github.com/nothings/stb
+- 版本：`stb_image.h` v2.30 · `stb_image_write.h` v1.16 · `stb_truetype.h` v1.26（commit `2c980bb59875b0d32144a71867fbdebb2f77cd20`）
+- 作者：Sean Barrett 等
+- 许可：**公有领域（Unlicense）+ MIT 双许可**（以任一为准）。
+
+`stb_truetype.h`（M6 字体光栅化）与 M1 的 `stb_image.h` / `stb_image_write.h`
+同为**公有领域 + MIT 双许可**（作者 Sean Barrett / RAD Game Tools；2009–2021）。
+其头部另含安全声明：`NO SECURITY GUARANTEE — DO NOT USE THIS ON UNTRUSTED FONT FILES`
+（不做字体文件偏移范围检查；M6 仅消费可信本地 TTF，见 VENDOR.md M6 注记）。
+
+stb 头文件内声明的许可全文（节选自 stb_image.h / stb_image_write.h 尾部）：
+
+```
+This software is dual-licensed to the public domain and under the following
+license: you are granted a perpetual, irrevocable license to copy, modify,
+publish, and distribute this file as you see fit.
+
+ALTERNATIVE A - MIT License
+Copyright (c) 2017 Sean Barrett
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+ALTERNATIVE B - Public Domain (www.unlicense.org)
+This is free and unencumbered software released into the public domain.
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute
+this software, either in source code form or as a compiled binary, for any
+purpose, commercial or non-commercial, and by any means.
+```
+
+## 后置里程碑（M2+ 入库时补登）
+
+- `qrcodegen.{c,h}`（Nayuki）— MIT
+- zxing-cpp — Apache-2.0（`.ani` 运行时加载，**不 vendored、不进仓库**）
+
+## quirc
+
+- 来源：https://github.com/dlbeer/quirc
+- 版本：v1.0（master，commit `927d680904dc95fdff4cd9d022eb374b438ff8f2`，2026-08-04）
+- 作者：Daniel Beer <dlbeer@gmail.com>
+- 许可：**ISC**。
+- 文件：`quirc.c` / `quirc.h` / `quirc_internal.h` / `decode.c` / `identify.c` / `version_db.c`（上游 `lib/` 全部按原样入库；`rt_barcode.c` 以 `#include` 合并进单 TU）。
+
+quirc 头部声明的许可全文（节选自 quirc.c / quirc.h 顶部）：
+
+```
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+```
+
+## qrcodegen
+
+- 来源：https://github.com/nayuki/QR-Code-generator
+- 版本：master（commit `8329a7108fc22be3e1eec0a9f9318978579e3621`，2026-08-04）
+- 作者：Project Nayuki
+- 许可：**MIT**。
+- 文件：`qrcodegen.c` / `qrcodegen.h`（上游 `c/` 目录原样入库；`rt_qrcode.c` 封装，独立 TU 编译）。
+
+qrcodegen 头部声明的许可全文（节选自 qrcodegen.c / qrcodegen.h 顶部）：
+
+```
+Copyright (c) Project Nayuki. (MIT License)
+https://www.nayuki.io/page/qr-code-generator-library
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+- The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+- The Software is provided "as is", without warranty of any kind, express or
+  implied, including but not limited to the warranties of merchantability,
+  fitness for a particular purpose and noninfringement. In no event shall the
+  authors or copyright holders be liable for any claim, damages or other
+  liability, whether in an action of contract, tort or otherwise, arising from,
+  out of or in connection with the Software or the use or other dealings in the
+  Software.
+```
+
+## nanosvg
+
+- 来源：https://github.com/memononen/nanosvg
+- 版本：master（commit `239e102ec2c691f2902e20ace2ed36ee4a35cfe6`，2026-08-19）
+- 作者：Mikko Mononen <memon@inside.org>
+- 许可：**zlib**（Altered source versions must be plainly marked as such — 本目录原样入库不修改）。
+- 文件：`nanosvg.h` / `nanosvgrast.h`（`rt_image.c` 内 `NANOSVG_IMPLEMENTATION` / `NANOSVGRAST_IMPLEMENTATION` 合并进单 TU）。
+
+nanosvg 头部声明的许可全文（节选自 nanosvg.h / nanosvgrast.h 顶部）：
+
+```
+Copyright (c) 2013-14 Mikko Mononen memon@inside.org
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+claim that you wrote the original software. If you use this software
+in a product, an acknowledgment in the product documentation would be
+appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+```

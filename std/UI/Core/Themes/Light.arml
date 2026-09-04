@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Built-in Light theme color tokens (UI-P2). Single source of truth for hex values.
+     Keys must match BuiltInTheme const strings exactly. Geometry/motion stay in AS. -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+    <Color x:Key="Color.Background" Value="#FFFAFAFA"/>
+    <Color x:Key="Color.Surface" Value="#FFFFFFFF"/>
+    <Color x:Key="Color.Border" Value="#FFE6E6EC"/>
+    <Color x:Key="Color.Text.Primary" Value="#FF1A1A1A"/>
+    <Color x:Key="Color.Text.Secondary" Value="#FF8A8A93"/>
+    <Color x:Key="Color.Primary" Value="#FF4F46E5"/>
+    <Color x:Key="Color.Primary.Hover" Value="#FF6366F1"/>
+    <Color x:Key="Color.Primary.Pressed" Value="#FF4338CA"/>
+    <Color x:Key="Color.Focus.Ring" Value="#734F46E5"/>
+    <Color x:Key="Color.Disabled.Fill" Value="#FFF3F3F6"/>
+    <Color x:Key="Color.Disabled.Text" Value="#FFB8B8C0"/>
+    <Color x:Key="Color.Text.OnAccent" Value="#FFFFFFFF"/>
+    <Color x:Key="Color.Transparent" Value="#00000000"/>
+    <Color x:Key="Color.Surface.Hover" Value="#FFF4F4FF"/>
+    <Color x:Key="Color.Surface.Stripe" Value="#FFF7F7FA"/>
+    <Color x:Key="Color.Slider.Track" Value="#FFE0E0E6"/>
+    <Color x:Key="Color.Scroll.Track" Value="#FFF0F0F0"/>
+    <Color x:Key="Color.Scroll.Thumb" Value="#FF8A8A93"/>
+    <Color x:Key="Color.Scroll.Thumb.Hover" Value="#FF6E6E7A"/>
+    <Color x:Key="Color.Scroll.Thumb.Active" Value="#FF4A4A55"/>
+    <Color x:Key="Color.Placeholder" Value="#FFB0B0BA"/>
+    <Color x:Key="Color.Overlay" Value="#661A1A1A"/>
+    <Color x:Key="Color.Negative" Value="#FFEF4444"/>
+    <Color x:Key="Color.Accent.Gradient.A" Value="#FF4F46E5"/>
+    <Color x:Key="Color.Accent.Gradient.B" Value="#FF7C3AED"/>
+</ResourceDictionary>

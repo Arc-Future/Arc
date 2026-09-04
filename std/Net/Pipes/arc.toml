@@ -1,0 +1,9 @@
+[package]
+name = "Arc.Net.Pipes"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.Net.Pipes"
+
+[dependencies]
+Arc = { path = "../../Arc" }

@@ -1,0 +1,80 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/arc",
+    "crates/parse",
+    "crates/ast",
+    "crates/hir",
+    "crates/typeck",
+    "crates/mir",
+    "crates/codegen",
+    "crates/arc-ui",
+    "crates/arc-server",
+    "crates/arcgr",
+    "crates/arc-ssr",
+    "crates/reachability",
+    "crates/arc-tests",
+]
+default-members = ["crates/arc"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+authors = ["LUSIDA (Start) <474309146@qq.com>"]
+homepage = "https://www.lusida.net"
+
+[workspace.dependencies]
+logos = "0.15"
+thiserror = "2"
+codespan-reporting = "0.11"
+smol_str = "0.3"
+indexmap = "2"
+insta = { version = "1", features = ["yaml"] }
+toml = "0.8"
+crc32fast = "1"
+sha2 = "0.10"
+zstd = "0.13"
+aes-gcm = "0.10"
+getrandom = "0.3"
+ed25519-dalek = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
+naga = "22"
+# Phase 2 发布基础设施：self-update 分发包 zip 解压（仅 deflate，标准 zip）
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+
+ast = { path = "crates/ast" }
+parse = { path = "crates/parse" }
+hir = { path = "crates/hir" }
+typeck = { path = "crates/typeck" }
+mir = { path = "crates/mir" }
+codegen = { path = "crates/codegen" }
+arc-ui = { path = "crates/arc-ui" }
+arc-server = { path = "crates/arc-server" }
+arcgr = { path = "crates/arcgr" }
+reachability = { path = "crates/reachability" }
+
+# 发布构建调优：性能导向编译器的标准配置（thin LTO + 单 codegen unit）。
+# 禁止 panic = "abort"：phase_guard（arc/src/pipeline.rs）依赖 catch_unwind
+# 将编译阶段 panic 转为 ICE 诊断，abort 会使兜底失效、进程直接崩溃。
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# 统一 lint 基线——各 crate 经 [lints] workspace = true 继承，
+# CI 以 clippy -D warnings 闸门收口（.github/workflows/ci.yml）。
+[workspace.lints.rust]
+# 全库零 unsafe（结构性审计确认），作为架构不变量锁死。
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# 编译器 IR/AST 节点类型与编译管线函数签名天然复杂：
+# 重构 60+ 处签名/类型别名无行为收益且高风险，显式豁免
+# （rustc / rust-analyzer 同款实践，豁免集中于此处管理）。
+type_complexity = "allow"
+too_many_arguments = "allow"
+large_enum_variant = "allow"

@@ -1,0 +1,10 @@
+[package]
+name = "Arc.AI.Onnx"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.AI.Onnx"
+
+[dependencies]
+Arc = { path = "../../Arc" }
+"Arc.AI" = { path = "../Core" }

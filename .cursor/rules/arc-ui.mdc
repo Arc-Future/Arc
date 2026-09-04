@@ -1,0 +1,31 @@
+---
+description: Arc.UI 最高优先级规矩——渲染唯一对接 wgpu，禁止降级方案
+globs: "std/UI/**", "crates/runtime-ui/**", "crates/arc-ui/**", "crates/runtime-drawing/**", "**/*.arml"
+alwaysApply: true
+---
+
+# Arc.UI 最高优先级规矩：渲染唯一对接 wgpu
+
+> 立宪依据：RFC 026 / 037 / 038（wgpu 唯一后端 · 统一 wgpu 目标）。2026-08-15 立规。
+
+## 铁律
+
+1. **渲染唯一后端 = wgpu**。Arc.UI 一切上屏渲染（窗口、控件、文本、动画、合成）必须经由 `WgpuRender`（`std/UI/Rendering/Wgpu/`）与 `rt_wgpu_native` 完成。
+2. **禁止降级方案出现在代码中**。下列任一形式即违规，一律不得新增、不得恢复、须限期清除：
+   - 软件光栅回退路径（`rt_ui_render_to_buffer` 等 `rt_ui_raster` 系）
+   - Win32 GDI 文本 overlay（`text_gdi.c` 等）
+   - 伪实现占位 stub（`*_stub.c` 冒充真实渲染实现；跨平台缺分支可用 stub，但**禁止**作为渲染实现载体）
+   - 渲染逻辑分支里残留的"软件路径 / wgpu 路径"双轨 if-else
+3. **文档口径必须与代码同步**。README / COMPONENTS / 依赖接口表一律以 wgpu 唯一后端为口径，禁止出现"软件光栅主路径 / wgpu 骨架未接入 / 降级可用"等过时表述。
+
+## 裁决细则（跨会话 / 多人必守）
+
+- 新增渲染能力（渐变、圆角、AA、文本、阴影）→ 唯一实现落点在 wgpu 管线（WGSL shader / WgpuRender），禁止旁路实现。
+- 缺平台能力（如某平台无 GPU）→ 走 wgpu 后端对应的降级语义（仍在 wgpu 层内处理），禁止退回 CPU 软件光栅。
+- 与代码冲突的旧文档 → 以本规矩为准同步文档，禁止保留双轨口径。
+
+## 验证
+
+- 新代码：grep 不得命中 `rt_ui_render_to_buffer` / `text_gdi` / 软件光栅双轨分支。
+- 文档：COMPONENTS 依赖接口表无软件光栅条目。
+- 管线：`cargo test --workspace`；UI 变更 `cargo test -p arc-ui`、`cargo test -p arc-tests`。

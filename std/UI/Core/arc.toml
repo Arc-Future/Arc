@@ -1,0 +1,34 @@
+[package]
+name = "Arc.UI"
+edition = "1"
+version = "1.0.0"
+kind = "library"
+namespace = "Arc.UI"
+
+# RFC 020 M2+ InternalsVisibleTo（对标 C# `[assembly: InternalsVisibleTo]`）：
+# 允许指定包访问 Arc.UI 的 `internal` 成员/类型；未列出的包仍被 typeck 硬拒绝。
+#   - "App"：无 arc.toml 测试入口的默认包名（原 arc-integration e2e 约定，该 crate 已退场）
+#   - ARML 示例项目：`build_ui_project` 合并 std/UI 框架源码进用户编译单元，
+#     被合并框架文件（归用户包）访问未合并的 internal 类型（如 DesignTokens）需要放行
+#   - Arc.UI 组件库（Edit/Md/WebView/WebWindow/Simulator）：构建于 Core 之上的一等
+#     组件库，允许消费 Core 内部面（如 Edit 的 EditorViewport 依赖 LayoutHelper 布局核心）
+# 2026-08-04：ARML 示例已合并为单一 `examples/ArmlDemo`（旧 Arml* / XBindHello
+# 示例目录删除），故列表收敛为 ["App", "ArmlDemo"]。
+# 2026-08-20：std/UI 拆分为解决方案 workspace，组件库成员加入放行列表。
+internals_visible_to = [
+    "App",
+    "ArmlDemo",
+    "Arc.UI.Edit",
+    "Arc.UI.Md",
+    "Arc.UI.WebView",
+    "Arc.UI.WebWindow",
+    "Arc.UI.Simulator",
+]
+
+[dependencies]
+Arc = { path = "../../Arc" }
+# RFC 029 M2：Image 组件多格式（GIF/SVG/静态位图）解码经 Arc.Drawing 静态门面
+# （ImageDecoder.Decode/DecodeGif/DecodeSvg + Bitmap/AnimatedGif 像素句柄）。
+# 引号键：点分包名需以引号显式键写入——裸 `Arc.Drawing` 会被 TOML 当作对
+# 上面 `Arc` 内联表的点分扩展而报错（dotted key 不可扩展 inline table）。
+"Arc.Drawing" = { path = "../../Drawing" }

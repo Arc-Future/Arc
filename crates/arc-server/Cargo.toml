@@ -1,0 +1,30 @@
+﻿[package]
+name = "arc-server"
+description = "Arc LSP server (RFC 048)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "arc-server"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+arcgr = { path = "../arcgr" }
+parse = { path = "../parse" }
+
+[dev-dependencies]
+insta = { workspace = true }
+
+# lint 基线统一由 workspace 管理（见根 Cargo.toml [workspace.lints]）
+[lints]
+workspace = true
