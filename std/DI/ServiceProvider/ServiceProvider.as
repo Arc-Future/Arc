@@ -70,12 +70,7 @@ internal class ServiceProvider : IServiceProvider, IServiceScopeFactory, IDispos
             sortedIds.Add(descriptors[j].ServiceType.TypeId);
         }
         int[] localTypeIds = sortedIds.ToArray();
-        // 空数组边界：runtime Array.Sort 对空缓冲（null 哨兵）直接崩溃，空时跳过
-        // 归一化排序（空排序语义上即无操作）；无注册的 Provider 亦不触发后续查找。
-        if (sortedIds.Count > 0)
-        {
-            Array.Sort(localTypeIds);
-        }
+        Array.Sort(localTypeIds);
         List<int> uniqueIds = new List<int>();
         _indexLists = new List<List<int>>();
         for (int s = 0; s < localTypeIds.Length; s++)
@@ -189,12 +184,6 @@ internal class ServiceProvider : IServiceProvider, IServiceScopeFactory, IDispos
     /// <returns>该类型按注册顺序的索引列表；未注册返回 null。</returns>
     private List<int>? FindIndices(int typeId)
     {
-        // 空容器守卫：无注册时 _typeIds 为空（长度 0 或 null 哨兵），直接判未注册，
-        // 不进入 Array.BinarySearch，保证空 Provider 解析语义正确（返回 null、不崩溃）。
-        if (_typeIds == null || _typeIds.Length == 0)
-        {
-            return null;
-        }
         int pos = Array.BinarySearch(_typeIds, typeId);
         if (pos < 0)
         {

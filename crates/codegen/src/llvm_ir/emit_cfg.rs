@@ -1618,7 +1618,9 @@ impl<'a> FnEmitter<'a> {
         }
         // Milestone ⑥ removed the legacy try-stack pattern; POSIX
         // zero-cost EH (Itanium personality + landingpad) is milestone ⑨
-        // (1.1+, 非 1.0 门槛). Hard error rather than silent misbehavior.
+        // (1.1+, 非 1.0 门槛). 可达函数集在 `ModuleEmitter::emit_module`
+        // 入口已被 `reject_try_catch_outside_windows`（arc-eh-001）结构化
+        // 拦截——此处 panic 仅为防御性 ICE（防未来新发射路径绕过该门）。
         // 里程碑⑨ 需同时落地 codegen（landingpad/resume + __gxx_personality_v0/
         // uwtable）与 POSIX 运行时（rt_throw 改 _Unwind_RaiseException，见
         // crates/runtime/rt_exc.c），且须在 Linux/macOS 环境验收（见
@@ -2072,12 +2074,20 @@ impl<'a> FnEmitter<'a> {
     /// (represented as a `ptr` slot, mirroring the existing retain path).
     pub(super) fn arc_class_place(ty: &TypeId, layouts: &typeck::ProgramLayouts) -> bool {
         match ty {
+            // Object / Nullable{Object} 槽位**不**按 class 计 ARC：object 槽可持
+            // raw string（raw/λ 降级路径缺 typeck 的 string→object Box 插入，
+            // 直存 rodata 裸串——无 ArcHeader，inc/dec 会把字符串内容当 refcount
+            // 原子写 → 写代码段/只读段 0xC0000005，Reload 实测）。该异构性解除前
+            // 不得对 Object 计数；typed-inject over-dec 的根治路径见 CHANGELOG
+            //（补齐 raw 路径装箱后 object 槽才可安全纳入 ARC）。
+            TypeId::Object => false,
             TypeId::Named(n) => {
                 layouts.classes.contains_key(n.as_str())
                     && !is_opaque_runtime_handle(n.as_str())
                     && !is_generic_template_name(n.as_str())
             }
             TypeId::Nullable { inner } => match inner.as_ref() {
+                TypeId::Object => false,
                 TypeId::Named(n) => {
                     layouts.classes.contains_key(n.as_str())
                         && !is_opaque_runtime_handle(n.as_str())
@@ -2576,6 +2586,62 @@ fn observable_eq_compare(field_ty: &str) -> Option<&'static str> {
     }
 }
 
+/// POSIX try/catch 编译门（`arc-eh-001`）。
+///
+/// Windows SEH 是 1.0 唯一实现的 zero-cost EH 面；非 Windows 目标上
+/// MIR 中出现的任何 `try/catch`——无论嵌套位置——都应在此给出结构化
+/// 编译错误，而不是落到 [`FnEmitter::emit_try_catch`] 深处 ICE。本门由
+/// `ModuleEmitter::emit_module` 在发射任何函数体前调用：作用域与触发面
+/// 完全一致（发射即可达），Windows 目标行为不变（零路径开销）。
+pub(super) fn reject_try_catch_outside_windows(
+    fns: &[(String, MirCfgBody)],
+    is_windows: bool,
+    file_path: &str,
+) -> Result<(), crate::CodegenError> {
+    if is_windows {
+        return Ok(());
+    }
+    if let Some((name, body)) = fns.iter().find(|(_, b)| body_contains_try_catch(b)) {
+        let display = match &body.owner {
+            Some(owner) => format!("{owner}::{name}"),
+            None => name.clone(),
+        };
+        return Err(crate::CodegenError::UnsupportedTryCatch(format!(
+            "arc-eh-001: 非 Windows 目标不支持 try/catch——Windows SEH 是 1.0 唯一 \
+             zero-cost EH 实现面，POSIX Itanium 属里程碑⑨（1.1+，RFC 010）；函数 \
+             `{display}`（{file_path}）含 try/catch，请改在 Windows 目标构建或移除该构造"
+        )));
+    }
+    Ok(())
+}
+
+/// 递归扫描语句树是否含 `TryCatch`（穿透 `If`/`While`/`LinqForeach`/
+/// `TryFinally` 的嵌套体；`TryCatch` 本身恒为命中）。
+fn statements_contain_try_catch(stmts: &[MirStatement]) -> bool {
+    stmts.iter().any(|s| match s {
+        MirStatement::TryCatch { .. } => true,
+        MirStatement::If {
+            then_body,
+            else_body,
+            ..
+        } => statements_contain_try_catch(then_body) || statements_contain_try_catch(else_body),
+        MirStatement::While { body, .. } | MirStatement::LinqForeach { body, .. } => {
+            statements_contain_try_catch(body)
+        }
+        MirStatement::TryFinally { body, finally } => {
+            statements_contain_try_catch(body) || statements_contain_try_catch(finally)
+        }
+        _ => false,
+    })
+}
+
+/// 函数体（全 CFG 块）是否含 `try/catch`。
+fn body_contains_try_catch(body: &MirCfgBody) -> bool {
+    body.blocks
+        .values()
+        .any(|b| statements_contain_try_catch(&b.statements))
+}
+
 #[cfg(test)]
 mod observable_synth_tests {
     use super::*;
@@ -2744,6 +2810,125 @@ mod observable_synth_tests {
         }
     }
 
+    /// try/catch 门测试体：`blocks[0]` 内含深嵌套 try/catch
+    /// （While → TryFinally → If → TryCatch），覆盖递归扫描路径。
+    fn try_catch_body() -> MirCfgBody {
+        let mut blocks = IndexMap::new();
+        blocks.insert(
+            BlockId(0),
+            MirBlock {
+                id: BlockId(0),
+                statements: vec![MirStatement::While {
+                    cond: MirRvalue::Use(MirOperand::ConstInt(0)),
+                    body: vec![MirStatement::TryFinally {
+                        body: vec![MirStatement::If {
+                            cond: MirOperand::ConstInt(0),
+                            then_body: vec![MirStatement::TryCatch {
+                                try_body: vec![],
+                                catch_var: LocalId(0),
+                                catch_ty: ast::TypeId::Void,
+                                catch_body: vec![],
+                            }],
+                            else_body: vec![],
+                        }],
+                        finally: vec![],
+                    }],
+                    foreach_source: None,
+                }],
+                terminator: MirTerminator::Return(None),
+            },
+        );
+        MirCfgBody {
+            params: vec![],
+            ret: ast::TypeId::Void,
+            param_count: 0,
+            locals: IndexMap::new(),
+            entry: BlockId(0),
+            blocks,
+            is_async: false,
+            owner: Some("C".into()),
+            class_fields: vec![],
+            is_ctor: false,
+            is_static: false,
+            captures: vec![],
+            linkage: mir::Linkage::External,
+            parallelize: false,
+            loop_backedges: std::collections::HashSet::new(),
+            foreach_loops: Vec::new(),
+            spill_set: typeck::SpillSet::empty(),
+        }
+    }
+
+    /// 无 try/catch 的普通函数体（门放行基线）。
+    fn plain_body() -> MirCfgBody {
+        let mut blocks = IndexMap::new();
+        blocks.insert(
+            BlockId(0),
+            MirBlock {
+                id: BlockId(0),
+                statements: vec![],
+                terminator: MirTerminator::Return(None),
+            },
+        );
+        MirCfgBody {
+            params: vec![],
+            ret: ast::TypeId::Void,
+            param_count: 0,
+            locals: IndexMap::new(),
+            entry: BlockId(0),
+            blocks,
+            is_async: false,
+            owner: None,
+            class_fields: vec![],
+            is_ctor: false,
+            is_static: false,
+            captures: vec![],
+            linkage: mir::Linkage::External,
+            parallelize: false,
+            loop_backedges: std::collections::HashSet::new(),
+            foreach_loops: Vec::new(),
+            spill_set: typeck::SpillSet::empty(),
+        }
+    }
+
+    #[test]
+    fn try_catch_gate_allows_windows_target() {
+        let fns = vec![("Main".to_string(), try_catch_body())];
+        assert!(reject_try_catch_outside_windows(&fns, true, "t.as").is_ok());
+    }
+
+    #[test]
+    fn try_catch_gate_allows_posix_without_try() {
+        let fns = vec![("Main".to_string(), plain_body())];
+        assert!(reject_try_catch_outside_windows(&fns, false, "t.as").is_ok());
+    }
+
+    #[test]
+    fn try_catch_gate_rejects_nested_try_on_posix() {
+        let fns = vec![("Main".to_string(), try_catch_body())];
+        let msg = reject_try_catch_outside_windows(&fns, false, "src/prog.as")
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("arc-eh-001"), "unexpected msg: {msg}");
+        assert!(msg.contains("C::Main"), "function name missing: {msg}");
+        assert!(msg.contains("src/prog.as"), "source file missing: {msg}");
+    }
+
+    #[test]
+    fn try_catch_scan_reaches_finally_and_ignores_plain() {
+        let in_finally = vec![MirStatement::TryFinally {
+            body: vec![],
+            finally: vec![MirStatement::TryCatch {
+                try_body: vec![],
+                catch_var: LocalId(0),
+                catch_ty: ast::TypeId::Void,
+                catch_body: vec![],
+            }],
+        }];
+        assert!(statements_contain_try_catch(&in_finally));
+        assert!(!statements_contain_try_catch(&[MirStatement::Return(None)]));
+    }
+
     /// 双属性 FieldSet 测试体：`new VM()` 后分别 `vm.Count = 42`（int 短路路径）
     /// 与 `vm.Name = "x"`（string 无条件通知路径）。
     fn multi_field_set_body() -> MirCfgBody {
@@ -2830,7 +3015,7 @@ mod observable_synth_tests {
             None,
             &empty_rt,
         );
-        emitter.emit_module(&fns).0
+        emitter.emit_module(&fns).unwrap().0
     }
 
     #[test]

@@ -55,7 +55,7 @@ arc check examples/CompilerSmoke/Program.as
 # Debug 构建（默认）
 arc build examples/CompilerSmoke/Program.as -o hello.exe
 
-# Release 构建 + 指定运行时
+# Release 构建 + 指定运行时（示例三元组 = Linux 宿主）
 arc build examples/CompilerSmoke/Program.as -c Release -r x86_64-unknown-linux-gnu -o hello
 
 # 项目目录模式（自动查找 arc.toml 和入口文件）
@@ -64,6 +64,8 @@ arc build .
 # 项目目录模式 + --project 显式指定
 arc build --project ./examples/CompilerSmoke
 ```
+
+> `-r/--target` 目标三元组须为宿主桌面平台（win/linux/mac）；交叉编译管线未实现（现状见 [11 编译模型](11-compilation-model.md)）。
 
 ### `arc run [PROJECT]`
 
@@ -206,7 +208,7 @@ arc toolchain status            # 工具根 / 活动版本 / clang 解析
 # CompilerSmoke（Debug）
 arc build examples/CompilerSmoke/Program.as -o smoke.exe
 
-# CompilerSmoke（Release + Linux 交叉编译）
+# CompilerSmoke（Release + 指定运行时——示例为 Linux 宿主目标）
 arc build examples/CompilerSmoke -c Release -r x86_64-unknown-linux-gnu -o smoke
 
 # ARML 窗口示例

@@ -1,30 +1,38 @@
-# scripts/packaging/arc-pack.ps1 — Phase 1/3：Arc SDK 分发包打包（Windows zip）
+# scripts/packaging/arc-pack.ps1 — Phase 1/3：Arc SDK 分发包打包（宿主感知）
 #
 # 演进自 scripts/sdk-stage.ps1（Phase 0 判别性 staging）：release 构建 → 打安装态
-# 目录（bin/ + lib/{std,rt,native}）→ 产出 zip + SHA256 → 判别验收（解包异地
+# 目录（bin/ + lib/{std,rt,native}）→ 产出容器 + SHA256 → 判别验收（解包异地
 # 冷构建，离线、无仓库依赖）。
 #
 # 产物（默认 $repo/target/dist，已在 /target/ 忽略下，不污染源码树）：
-#   arc-<ver>-<triple>.zip
-#   arc-<ver>-<triple>.zip.sha256
+#   Windows 宿主：arc-<ver>-<triple>.zip
+#   Unix 宿主（Linux/macOS，pwsh core）：arc-<ver>-<triple>.tar.xz
+#   均附 .sha256 清单。
 #
-# zip 内布局（安装态 SDK，与 codegen::sdk_layout 契约一致）：
+# 容器内布局（安装态 SDK，与 codegen::sdk_layout 契约一致；exe 名随平台）：
 #   arc-<ver>-<triple>/
-#   ├── bin/arc.exe
+#   ├── bin/arc[.exe]
 #   ├── lib/std/                     ← 标准库源码树
 #   ├── lib/rt/runtime/ … runtime-ui/ runtime-drawing/ runtime-sqlite/ runtime-crypto/
 #   │                                 ← runtime C 源码 + vendored native DLL
 #   ├── lib/native/                  ← 内置 .ani 契约
 #   ├── lib/llvm/                    ← 仅 -BundleLlm：瘦身版 LLVM（clang + lld 子集）
+#   ├── install.ps1 / install.sh     ← 就地安装器（随宿主；仓库脚本同源嵌入）
 #   ├── version.txt                  ← 版本/目标/提交
 #   └── arc.env                      ← 环境变量说明模板
 #
-# 用法（仓库根）：
+# Unix 说明：tar.xz 需系统 `tar`（含 xz 支持；macOS 需自装 xz：brew install xz）；
+# bin/arc、lib/llvm/bin/* 与 install.sh 在归档前显式 chmod +x（tar 保留权限位，
+# 解压即得可执行 SDK）。产线应在目标宿主上执行（或 CI 对应 OS job）。
+#
+# 用法（仓库根；PowerShell 5.1 / pwsh core）：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\packaging\arc-pack.ps1
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\packaging\arc-pack.ps1 -SkipBuild
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\packaging\arc-pack.ps1 -SkipVerify -OutDir D:\dist
 #   # Phase 3：捆绑瘦身版 LLVM（clang + lld 子集，供离线用户）到 lib/llvm/
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\packaging\arc-pack.ps1 -BundleLlm
+#   # Unix 宿主（Linux/macOS）示例：
+#   pwsh -NoProfile -File scripts/packaging/arc-pack.ps1 -SkipVerify
 #   # Phase 2：同时产出签名发布清单（需 $env:ARC_RELEASE_SIGNING_KEY = 64 hex seed）
 #   $env:ARC_RELEASE_SIGNING_KEY = "<seed>"
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\packaging\arc-pack.ps1 -Manifest -ReleaseUrlPrefix https://static.arc.dev/dist
@@ -49,6 +57,13 @@ $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 if (-not $OutDir) { $OutDir = Join-Path $repo "target\dist" }
 
+# 宿主判定（PS 5.1 无 $IsLinux/$IsMacOS——求值得 $null → Windows 语义，安全）。
+$isUnixHost = ($IsLinux -or $IsMacOS) -eq $true
+$exeName = if ($isUnixHost) { "arc" } else { "arc.exe" }
+$exeSuffix = if ($isUnixHost) { "" } else { ".exe" }
+$containerExt = if ($isUnixHost) { "tar.xz" } else { "zip" }
+$installScriptName = if ($isUnixHost) { "install.sh" } else { "install.ps1" }
+
 # PowerShell 5.1 的 Set-Content -Encoding UTF8 会写 BOM，而 Arc 词法器不接受 BOM；
 # 所有源码/清单文件统一用无 BOM UTF-8 写入。
 function Write-Utf8NoBom([string]$Path, [string]$Content) {
@@ -60,7 +75,7 @@ function Write-Utf8NoBom([string]$Path, [string]$Content) {
 # 链接器族），不包含 clangd/lldb/Flang/OpenMP 等扩展工具，避免 SDK 包体膨胀
 # 数十倍（LLVM 官方 Windows 安装器 ~455 MB）。clang.exe 在官方 Windows 发行中
 # 为自包含单文件（无运行时 DLL 依赖），与本机 lld 工具同目录即可完成编译+链接。
-# 定位链：`ARC_CLANG` 环境变量 → 标准 LLVM 安装位 → PATH 上 `clang`。
+# 定位链：`ARC_CLANG` 环境变量 → 标准安装位（随宿主）→ PATH 上 `clang`。
 function Find-ClangBinary {
     if ($env:ARC_CLANG) {
         $p = $env:ARC_CLANG.Trim()
@@ -68,10 +83,21 @@ function Find-ClangBinary {
         if ($p -eq "clang") { return "clang" }
         Write-Warning "ARC_CLANG=$p does not exist; falling back to standard install locations"
     }
-    foreach ($cand in @(
-        "C:\Program Files\LLVM\bin\clang.exe",
-        "C:\Program Files (x86)\LLVM\bin\clang.exe"
-    )) {
+    $candidates = if ($isUnixHost) {
+        @(
+            "/usr/local/opt/llvm/bin/clang",          # Homebrew（macOS / Linux）
+            "/opt/homebrew/opt/llvm/bin/clang",        # Apple Silicon Homebrew
+            "/usr/lib/llvm-18/bin/clang",
+            "/usr/lib/llvm-17/bin/clang",
+            "/usr/bin/clang"
+        )
+    } else {
+        @(
+            "C:\Program Files\LLVM\bin\clang.exe",
+            "C:\Program Files (x86)\LLVM\bin\clang.exe"
+        )
+    }
+    foreach ($cand in $candidates) {
         if (Test-Path $cand) { return $cand }
     }
     $onPath = Get-Command clang -ErrorAction SilentlyContinue
@@ -81,20 +107,17 @@ function Find-ClangBinary {
 
 # 从 LLVM bin 目录复制瘦身子集到 `<pkgDir>/lib/llvm/`。
 # 设计原则（RFC 031 §13.2）：仅 `arc build` 链路必需工具——clang 驱动 + lld
-# 链接器族 + Windows 资源编译器 + clang 资源目录（头文件/内建库）。clang-cl/
-# clang++（C++/MSVC 兼容驱动）、ld.lld/ld64.lld（ELF/Mach-O 别名，由 lld.exe
-# 多调用分派覆盖）、clangd/lldb/Flang/OpenMP 等扩展工具均不打包（LLVM 官方
-# Windows 安装器 ~455 MB，全量安装 ~1.5 GB）。
-# clang.exe 在官方发行中自包含（无运行时 DLL）；但其资源目录 `lib/clang/<ver>/`
-# 缺失会导致 SIMD 头（emmintrin.h 等）回退到 MSVC 头而产出外部 `_mm_*` 符号，
-# 故**必须**捆绑 `include/`（头文件）与 `clang_rt.builtins-*.lib`（compiler-rt）。
+# 链接器族 + clang 资源目录（头文件/内建库）。工具名单随宿主：
+#   Windows：clang.exe + lld-link.exe + lld.exe + llvm-rc.exe（.rc 资源编译）
+#   Unix：clang + lld（多调用分派）+ ld.lld（ELF `-fuse-ld=lld` 查找名）+
+#         ld64.lld（macOS；缺失仅提示，可回落系统 ld64）
+# clang-cl/clang++（C++/MSVC 兼容驱动）、clangd/lldb/Flang/OpenMP 等扩展工具
+# 均不打包。clang 资源目录 `lib/clang/<ver>/` 缺失会导致 SIMD 头（emmintrin.h
+# 等）回退到系统头而产出外部 `_mm_*` 符号，故**必须**捆绑 `include/`（头文件）
+# 与 compiler-rt 内建库（Windows `lib/windows/clang_rt.builtins-*.lib`，
+# Unix `lib/**/libclang_rt.builtins-*`——保留相对布局供 clang 自定位）。
 function Copy-LlvmSlimSubset([string]$LlvmBin, [string]$DestBin) {
-    $required = @(
-        "clang.exe",           # 编译器驱动（arc build 恒用，Debug/Release）
-        "lld-link.exe",        # MSVC 目标 Release 链接（-fuse-ld=lld-link）
-        "lld.exe",             # lld 多调用分派（ELF/COFF/Mach-O 通用）
-        "llvm-rc.exe"          # Windows 资源编译（clang 处理 .rc 时调用）
-    )
+    $required = if ($isUnixHost) { @("clang", "lld", "ld.lld") } else { @("clang.exe", "lld-link.exe", "lld.exe", "llvm-rc.exe") }
     New-Item -ItemType Directory -Force -Path $DestBin | Out-Null
     $copied = @()
     $missing = @()
@@ -107,10 +130,20 @@ function Copy-LlvmSlimSubset([string]$LlvmBin, [string]$DestBin) {
             $missing += $name
         }
     }
-    # clang.exe / lld-link.exe 属硬依赖；其余缺失（如 LLVM 无 llvm-rc）仅提示。
-    foreach ($hard in @("clang.exe", "lld-link.exe")) {
-        if (-not (Test-Path (Join-Path $DestBin $hard))) {
-            throw "$hard not found in $LlvmBin (bundle aborted)"
+    # clang / lld 属硬依赖（Windows：clang.exe / lld-link.exe）；其余缺失仅提示。
+    $hard = if ($isUnixHost) { @("clang", "lld") } else { @("clang.exe", "lld-link.exe") }
+    foreach ($h in $hard) {
+        if (-not (Test-Path (Join-Path $DestBin $h))) {
+            throw "$h not found in $LlvmBin (bundle aborted)"
+        }
+    }
+    # macOS 额外查找 ld64.lld（多调用别名；官方发行通常随 lld 提供）。
+    if ($isUnixHost -and $IsMacOS) {
+        if (Test-Path (Join-Path $LlvmBin "ld64.lld")) {
+            Copy-Item (Join-Path $LlvmBin "ld64.lld") (Join-Path $DestBin "ld64.lld") -Force
+            $copied += "ld64.lld"
+        } else {
+            $missing += "ld64.lld"
         }
     }
     Write-Host "==> bundled LLVM subset ($($copied.Count) tools): $($copied -join ', ')"
@@ -118,10 +151,8 @@ function Copy-LlvmSlimSubset([string]$LlvmBin, [string]$DestBin) {
         Write-Warning "LLVM bin missing optional tools: $($missing -join ', ')"
     }
 
-    # clang 资源目录：`<LLVM_ROOT>/lib/clang/<ver>/`。clang.exe 按相对自身路径
-    # `../lib/clang/<ver>` 自定位，复制后无需任何配置。只取 `include/`（头文件）
-    # 与 `clang_rt.builtins-*.lib`（compiler-rt 内建库）；asan/ubsan 等 sanitizer
-    # 库不打包（仅 `-fsanitize=` 构建需要，可后续按需）。
+    # clang 资源目录：`<LLVM_ROOT>/lib/clang/<ver>/`。clang 按相对自身路径
+    # `../lib/clang/<ver>` 自定位，复制后无需任何配置。
     $llvmRoot = Split-Path $LlvmBin -Parent
     $clangRes = Join-Path $llvmRoot "lib\clang"
     if (Test-Path $clangRes) {
@@ -130,53 +161,79 @@ function Copy-LlvmSlimSubset([string]$LlvmBin, [string]$DestBin) {
             if (Test-Path (Join-Path $vdir.FullName "include")) {
                 Copy-Item (Join-Path $vdir.FullName "include") (Join-Path $destVer "include") -Recurse -Force
             }
-            $winLib = Join-Path $vdir.FullName "lib\windows"
-            if (Test-Path $winLib) {
-                foreach ($b in (Get-ChildItem $winLib -Filter "clang_rt.builtins-*.lib" -ErrorAction SilentlyContinue)) {
-                    $dst = Join-Path (Join-Path $destVer "lib\windows") $b.Name
-                    New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
-                    Copy-Item $b.FullName $dst -Force
+            if ($isUnixHost) {
+                # Unix compiler-rt 内建库：`lib/<triple>/libclang_rt.builtins-*`
+                #（保留相对布局；asan/ubsan 等 sanitizer 库不打包）。
+                $unixLib = Join-Path $vdir.FullName "lib"
+                if (Test-Path $unixLib) {
+                    foreach ($b in (Get-ChildItem $unixLib -Recurse -Filter "libclang_rt.builtins-*" -ErrorAction SilentlyContinue)) {
+                        $rel = $b.FullName.Substring($unixLib.Length).TrimStart("\", "/")
+                        $dst = Join-Path (Join-Path $destVer "lib") $rel
+                        New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+                        Copy-Item $b.FullName $dst -Force
+                    }
+                }
+            } else {
+                $winLib = Join-Path $vdir.FullName "lib\windows"
+                if (Test-Path $winLib) {
+                    foreach ($b in (Get-ChildItem $winLib -Filter "clang_rt.builtins-*.lib" -ErrorAction SilentlyContinue)) {
+                        $dst = Join-Path (Join-Path $destVer "lib\windows") $b.Name
+                        New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+                        Copy-Item $b.FullName $dst -Force
+                    }
                 }
             }
             Write-Host "==> bundled clang resource dir: lib\llvm\lib\clang\$($vdir.Name) (headers + builtins)"
         }
     }
 
-    # 探测：自包含则停；失败则复制 *.dll 兼容（非官方发行）。
-    & (Join-Path $DestBin "clang.exe") --version | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        $dlls = Get-ChildItem $LlvmBin -Filter "*.dll" -ErrorAction SilentlyContinue
-        foreach ($dll in $dlls) {
-            Copy-Item $dll.FullName (Join-Path $DestBin $dll.Name) -Force
+    if ($isUnixHost) {
+        # Copy-Item 不保留源权限位：捆绑工具统一恢复可执行位后探测。
+        foreach ($f in (Get-ChildItem $DestBin -File)) {
+            & chmod +x $f.FullName
         }
-        if ($dlls) {
-            Write-Warning "clang needs runtime DLLs (non-official build); copied $(@($dlls).Count) DLL(s)"
+        & (Join-Path $DestBin "clang") --version | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "bundled clang failed its --version probe: $DestBin/clang (Unix 发行须自包含；无 DLL 兼容路径)"
         }
     } else {
-        Write-Host "==> bundled clang is self-contained (no runtime DLLs copied)"
+        # 探测：自包含则停；失败则复制 *.dll 兼容（非官方发行）。
+        & (Join-Path $DestBin "clang.exe") --version | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $dlls = Get-ChildItem $LlvmBin -Filter "*.dll" -ErrorAction SilentlyContinue
+            foreach ($dll in $dlls) {
+                Copy-Item $dll.FullName (Join-Path $DestBin $dll.Name) -Force
+            }
+            if ($dlls) {
+                Write-Warning "clang needs runtime DLLs (non-official build); copied $(@($dlls).Count) DLL(s)"
+            }
+        } else {
+            Write-Host "==> bundled clang is self-contained (no runtime DLLs copied)"
+        }
     }
 }
 
 function Write-EnvTemplate([string]$Path, [string]$SdkRootHint, [bool]$Bundled) {
+    $clangName = if ($isUnixHost) { "clang" } else { "clang.exe" }
     $llvmSection = if ($Bundled) {
         @"
 
 # Bundled LLVM (Phase 3, -BundleLlm): 瘦身版 clang + lld 子集位于 SDK 内
 # `<sdk-root>/lib/llvm/bin`。把 `ARC_CLANG` 指向其 clang 即可完全离线构建：
-#   ARC_CLANG=$SdkRootHint/lib/llvm/bin/clang.exe
+#   ARC_CLANG=$SdkRootHint/lib/llvm/bin/$clangName
 "@
     } else { "" }
     $content = @"
 # Arc SDK environment — reference template.
 #
-# The SDK self-locates via arc.exe (current_exe() walk-up), so nothing here is
+# The SDK self-locates via arc$exeSuffix (current_exe() walk-up), so nothing here is
 # required for 'arc build' to work. These knobs exist for explicit overrides
 # (see docs/rfc/031-compiler-cli.md §10 环境变量清单).
 #
 #   ARC_SDK_ROOT=<sdk-root>    explicit SDK root (highest priority)
 #   ARC_STD_ROOT=<dir>         explicit std library root (development override)
 #   ARC_HOME=<dir>             user toolchain home (cache / rt_cache / keys)
-#   ARC_CLANG=<clang.exe>      explicit clang binary$llvmSection
+#   ARC_CLANG=<clang(.exe)>    explicit clang binary$llvmSection
 #   PATH=<sdk-root>/bin;...    PATH entry for this SDK's bin directory
 "@
     Write-Utf8NoBom $Path $content
@@ -189,8 +246,8 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw "cargo build --release -p arc failed" }
 }
 
-$binary = Join-Path $repo "target\release\arc.exe"
-if (-not (Test-Path $binary)) { throw "arc.exe not found: $binary (run without -SkipBuild first)" }
+$binary = Join-Path $repo ("target/release/" + $exeName)
+if (-not (Test-Path $binary)) { throw "$exeName not found: $binary (run without -SkipBuild first)" }
 
 # --- 2. 版本 / 目标三元组 ---
 $version = (& $binary --version) -replace "^arc ", ""
@@ -210,7 +267,9 @@ if (Test-Path $pkgDir) { Remove-Item $pkgDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $pkgDir "bin")  | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $pkgDir "lib")  | Out-Null
 
-Copy-Item $binary (Join-Path $pkgDir "bin\arc.exe")
+$binTarget = Join-Path $pkgDir ("bin/" + $exeName)
+Copy-Item $binary $binTarget
+if ($isUnixHost) { & chmod +x $binTarget }
 # std
 Copy-Item (Join-Path $repo "std") (Join-Path $pkgDir "lib\std") -Recurse
 # runtime C 源码 + vendored 底座（crypto_native / wgpu_native DLL 随包）
@@ -221,6 +280,15 @@ Copy-Item (Join-Path $repo "crates\runtime-sqlite")  (Join-Path $pkgDir "lib\rt\
 Copy-Item (Join-Path $repo "crates\runtime-crypto")  (Join-Path $pkgDir "lib\rt\runtime-crypto") -Recurse
 # 内置 native 契约
 Copy-Item (Join-Path $repo "crates\arc\native")      (Join-Path $pkgDir "lib\native") -Recurse
+# 就地安装器：SDK 根嵌入安装脚本（随宿主——解压后无参运行即就地安装：
+# 指针布局 + PATH + doctor；与仓库 scripts/packaging/{install.ps1,arc-install.sh} 同源）。
+if ($isUnixHost) {
+    $unixInstaller = Join-Path $pkgDir "install.sh"
+    Copy-Item (Join-Path $repo "scripts/packaging/arc-install.sh") $unixInstaller
+    & chmod +x $unixInstaller
+} else {
+    Copy-Item (Join-Path $repo "scripts\packaging\install.ps1") (Join-Path $pkgDir "install.ps1")
+}
 
 # --- 3b. -BundleLlm：瘦身版 LLVM（clang + lld 子集）→ lib/llvm/ ---
 $bundledLlvm = $false
@@ -234,7 +302,8 @@ if ($BundleLlm) {
         if ($LASTEXITCODE -ne 0) { throw "bundled clang failed its --version probe: $clang" }
         Copy-LlvmSlimSubset $clangBin (Join-Path $pkgDir "lib\llvm\bin")
         $bundledLlvm = $true
-        Write-Host "==> llvm bundled: $(Join-Path $pkgDir "lib\llvm\bin\clang.exe")"
+        $clangTool = if ($isUnixHost) { "clang" } else { "clang.exe" }
+        Write-Host "==> llvm bundled: $(Join-Path $pkgDir ("lib\llvm\bin\" + $clangTool))"
     }
 }
 
@@ -257,6 +326,7 @@ Write-Utf8NoBom (Join-Path $pkgDir "version.txt") $versionContent
 # 的字节即已含签名）。正式发布请使用 CA 签发的 OV/EV 证书；本地测试可用
 # New-SelfSignedCertificate -Type CodeSigningCert（验证链须入受信任存储）。
 if ($SignThumbprint) {
+    if ($isUnixHost) { throw "-SignThumbprint (Authenticode 签名) 仅支持 Windows 宿主" }
     $signtool = $null
     $kits = 'C:\Program Files (x86)\Windows Kits\10\bin'
     if (Test-Path $kits) {
@@ -276,16 +346,54 @@ if ($SignThumbprint) {
 
 Write-EnvTemplate (Join-Path $pkgDir "arc.env") "<sdk-root>" $bundledLlvm
 
-# --- 5. zip + SHA256 ---
-$zipPath = Join-Path $OutDir "${pkgName}.zip"
+# --- 5. 容器 + SHA256（Windows zip / Unix tar.xz，随宿主）---
+$artifactName = "$pkgName.$containerExt"
+$artifactPath = Join-Path $OutDir $artifactName
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
-if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Write-Host "==> Compress-Archive -> $zipPath"
-Compress-Archive -Path $pkgDir -DestinationPath $zipPath -CompressionLevel Optimal
-$hash = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-"${hash}  ${pkgName}.zip" | Set-Content -Encoding ASCII (Join-Path $OutDir "${pkgName}.zip.sha256")
+if (Test-Path $artifactPath) { Remove-Item $artifactPath -Force }
+
+if ($isUnixHost) {
+    # tar.xz 容器：归档前恢复 SDK 内可执行位（tar 保留权限位，解压即得可执行
+    # SDK——bin/arc 启动器、install.sh、捆绑 LLVM 工具）。
+    foreach ($x in @((Join-Path $pkgDir ("bin/" + $exeName)), (Join-Path $pkgDir "install.sh"))) {
+        if (Test-Path $x) { & chmod +x $x }
+    }
+    $llvmBinDir = Join-Path $pkgDir "lib\llvm\bin"
+    if (Test-Path $llvmBinDir) {
+        foreach ($f in (Get-ChildItem $llvmBinDir -File)) { & chmod +x $f.FullName }
+    }
+    if (-not (Get-Command xz -ErrorAction SilentlyContinue)) {
+        throw "tar.xz 容器需要系统 xz (Linux: xz-utils; macOS: brew install xz)"
+    }
+    Write-Host "==> tar -cJf -> $artifactPath"
+    & tar -cJf $artifactPath -C $stageRoot $pkgName
+    if ($LASTEXITCODE -ne 0) { throw "tar -cJf failed (exit $LASTEXITCODE)" }
+} else {
+    # Defender 实时扫描会短暂独占新拷贝的大文件（如捆绑 clang.exe），导致
+    # Compress-Archive 报 "being used by another process"；先全量读一遍触发
+    # 扫描完成，压缩失败则带退避重试（观察类瞬态错误，非逻辑缺陷）。
+    if ($bundledLlvm) {
+        $warm = Get-ChildItem $pkgDir -Recurse -File -Include clang.exe,lld-link.exe,arc.exe -ErrorAction SilentlyContinue
+        foreach ($wf in $warm) { $null = [System.IO.File]::ReadAllBytes($wf.FullName) }
+    }
+    Write-Host "==> Compress-Archive -> $artifactPath"
+    $compressed = $false
+    for ($attempt = 1; $attempt -le 6 -and -not $compressed; $attempt++) {
+        try {
+            Compress-Archive -Path $pkgDir -DestinationPath $artifactPath -CompressionLevel Optimal -ErrorAction Stop
+            $compressed = $true
+        } catch {
+            if ($attempt -ge 6) { throw }
+            Write-Host "==> compress attempt $attempt hit a transient file lock; retrying in 5s"
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+$shaName = "$artifactName.sha256"
+$hash = (Get-FileHash $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+"$hash  $artifactName" | Set-Content -Encoding ASCII (Join-Path $OutDir $shaName)
 Write-Host "==> sha256: $hash"
-Write-Host "==> package size: $((Get-Item $zipPath).Length) bytes"
+Write-Host "==> package size: $((Get-Item $artifactPath).Length) bytes"
 
 # --- 5b. Phase 2：签名发布清单（manifest.json + manifest.json.sig）---
 # 需 $env:ARC_RELEASE_SIGNING_KEY（64 hex seed，`arc release keygen` 生成）。
@@ -294,7 +402,7 @@ if ($Manifest) {
         Write-Error "arc-pack.ps1: -Manifest requires `$env:ARC_RELEASE_SIGNING_KEY (64 hex seed; generate via `arc release keygen`)"
         exit 1
     }
-    $manifestArgs = @("release", "manifest", "--version", $version, "--triple", $triple, "--archive", $zipPath, "--output", $OutDir)
+    $manifestArgs = @("release", "manifest", "--version", $version, "--triple", $triple, "--archive", $artifactPath, "--output", $OutDir)
     if ($ReleaseUrlPrefix) { $manifestArgs += @("--url-prefix", $ReleaseUrlPrefix) }
     Write-Host "==> generating signed manifest -> $OutDir"
     & $binary @manifestArgs
@@ -307,9 +415,14 @@ if (-not $SkipVerify) {    Write-Host "==> verify: extract to temp + offline col
     $verifyRoot = Join-Path $env:TEMP "arc-pack-verify-$PID"
     if (Test-Path $verifyRoot) { Remove-Item $verifyRoot -Recurse -Force }
     New-Item -ItemType Directory -Force -Path $verifyRoot | Out-Null
-    Expand-Archive -Path $zipPath -DestinationPath $verifyRoot -Force
+    if ($isUnixHost) {
+        & tar -xJf $artifactPath -C $verifyRoot
+        if ($LASTEXITCODE -ne 0) { throw "verify failed: tar -xJf failed (exit $LASTEXITCODE)" }
+    } else {
+        Expand-Archive -Path $artifactPath -DestinationPath $verifyRoot -Force
+    }
     $sdkDir = Join-Path $verifyRoot $pkgName
-    $arc = Join-Path $sdkDir "bin\arc.exe"
+    $arc = Join-Path $sdkDir ("bin/" + $exeName)
 
     # 判别环境隔离：清 ARC_SDK_ROOT（自定位必须权威）、ARC_HOME 指向 verifyRoot
     # 下的临时域（不触碰用户真实 ~/.arc），ARC_CLANG 仅在 bundle 判别内临时设置。
@@ -323,7 +436,8 @@ if (-not $SkipVerify) {    Write-Host "==> verify: extract to temp + offline col
     # 满足离线用户」——设了 ARC_CLANG 指向 lib/llvm 即可完全离线 build。
     # 非 bundle 时 ARC_CLANG 保持未设，冷构建走 codegen 标准解析序（系统 clang）。
     if ($bundledLlvm) {
-        $env:ARC_CLANG = Join-Path $sdkDir "lib\llvm\bin\clang.exe"
+        $bundledClangName = if ($isUnixHost) { "clang" } else { "clang.exe" }
+        $env:ARC_CLANG = Join-Path $sdkDir ("lib\llvm\bin\" + $bundledClangName)
     }
     try {
 
@@ -340,22 +454,41 @@ if (-not $SkipVerify) {    Write-Host "==> verify: extract to temp + offline col
         & $arc doctor 2>&1 | ForEach-Object { Write-Host "    $_" }
         if ($LASTEXITCODE -ne 0) { throw "verify failed: arc doctor FAIL with bundled clang" }
         Write-Host "    ok: arc doctor passes with bundled LLVM"
-        # 编译 + 链接探测：证明捆绑 lld-link 能完成 Release 式 `-fuse-ld=lld-link` 链路。
+        # 编译 + 链接探测：证明捆绑链接器能完成 Release 式 `-fuse-ld` 链路
+        #（Windows: lld-link；Linux: ld.lld；macOS: 先试 lld，失败回落系统 ld64）。
         $probeC = Join-Path $verifyRoot "bundle_probe.c"
-        $probeExe = Join-Path $verifyRoot "bundle_probe.exe"
+        $probeExe = Join-Path $verifyRoot ("bundle_probe" + $(if ($isUnixHost) { "" } else { ".exe" }))
         Set-Content -Path $probeC -Value "int main(void) { return 0; }"
         $prevEap = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
+        $prevPath = $env:PATH
+        if ($isUnixHost) {
+            # clang 按 PATH 查找 `ld.lld`/`ld64.lld`：探测期前置捆绑 bin。
+            $env:PATH = (Join-Path $sdkDir "lib\llvm\bin") + [System.IO.Path]::PathSeparator + $env:PATH
+        }
         try {
-            & $bundleClang $probeC -o $probeExe -fuse-ld=lld-link 2>&1 | ForEach-Object { Write-Host "    $_" }
+            $probeArgs = @($probeC, "-o", $probeExe)
+            if ($isUnixHost) {
+                $probeArgs += @("-fuse-ld=lld")
+            } else {
+                $probeArgs += @("-fuse-ld=lld-link")
+            }
+            & $bundleClang @probeArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
             $probeExit = $LASTEXITCODE
+            if ($probeExit -ne 0 -and $IsMacOS) {
+                # macOS：无 lld/ld64.lld 时回落系统默认链接器（仍验证捆绑 clang 驱动）。
+                Write-Host "    note: -fuse-ld=lld failed on macOS; retrying with system linker"
+                & $bundleClang $probeC -o $probeExe 2>&1 | ForEach-Object { Write-Host "    $_" }
+                $probeExit = $LASTEXITCODE
+            }
         } finally {
             $ErrorActionPreference = $prevEap
+            if ($isUnixHost) { $env:PATH = $prevPath }
         }
         if ($probeExit -ne 0 -or -not (Test-Path $probeExe)) {
-            throw "verify failed: bundled clang + lld-link compile/link probe failed"
+            throw "verify failed: bundled clang compile/link probe failed"
         }
-        Write-Host "    ok: bundled clang + lld-link compile+link probe passed"
+        Write-Host "    ok: bundled clang compile+link probe passed"
     }
 
     # 1. 自定位正确（SDK_LAYOUT=installed，且 ARC_SDK_ROOT 解析到解包目录）
@@ -392,11 +525,16 @@ void Main() {
         }
         $buildOut | ForEach-Object { Write-Host "    $_" }
         if ($buildExit -ne 0) { throw "verify failed: arc build in extracted SDK failed (exit $buildExit)" }
-        $exe = Join-Path $proj "bin\Debug\hello.exe"
+        $projExeSuffix = if ($isUnixHost) { "" } else { ".exe" }
+        $exe = Join-Path $proj ("bin\Debug\hello" + $projExeSuffix)
         if (-not (Test-Path $exe)) { throw "verify failed: expected binary $exe" }
-        # PS 5.1 对经 WriteFile(GetStdHandle) 输出的原生程序捕获不可靠（cmd/.NET
-        # 管道均正常），故用 cmd /c 运行并捕获 stdout。
-        $runOut = (cmd /c "`"$exe`"") -join "`n"
+        # stdout 捕获：Unix 走 pwsh 直接调用；PS 5.1（Windows）对经
+        # WriteFile(GetStdHandle) 输出的原生程序捕获不可靠，用 cmd /c 运行。
+        if ($isUnixHost) {
+            $runOut = (& $exe) -join "`n"
+        } else {
+            $runOut = (cmd /c "`"$exe`"") -join "`n"
+        }
         if ($runOut.Trim() -ne "hello from packaged SDK") { throw "verify failed: binary output '$runOut'" }
         Write-Host "    ok: offline cold build + run succeeded in extracted SDK"
     } finally {
@@ -438,9 +576,13 @@ void Main() {
         }
         $buildOut2 | ForEach-Object { Write-Host "    $_" }
         if ($buildExit2 -ne 0) { throw "verify failed: std-consuming build failed (exit $buildExit2)" }
-        $exe2 = Join-Path $projStd "bin\Debug\stdapp.exe"
+        $exe2 = Join-Path $projStd ("bin\Debug\stdapp" + $projExeSuffix)
         if (-not (Test-Path $exe2)) { throw "verify failed: expected stdapp binary $exe2" }
-        $runOut2 = (cmd /c "`"$exe2`"") -join "`n"
+        if ($isUnixHost) {
+            $runOut2 = (& $exe2) -join "`n"
+        } else {
+            $runOut2 = (cmd /c "`"$exe2`"") -join "`n"
+        }
         if ($runOut2.Trim() -ne "std:ok 42") { throw "verify failed: stdapp output '$runOut2'" }
         Write-Host "    ok: installed SDK builds a std-consuming project (Arc.Collections)"
     } finally {
@@ -455,4 +597,4 @@ void Main() {
     Remove-Item $verifyRoot -Recurse -Force
 }
 
-Write-Host "==> done: $zipPath"
+Write-Host "==> done: $artifactPath"

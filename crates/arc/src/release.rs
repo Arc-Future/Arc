@@ -55,7 +55,7 @@ pub const DEFAULT_RELEASE_BASE: &str = "https://static.arc.dev/dist";
 /// 泄露即重新 `arc release keygen` 轮换并同步替换本常量。`$ARC_RELEASE_PUBKEY`
 /// 可显式覆盖信任锚（测试 / 轮换迁移期）。
 pub const RELEASE_PUBLIC_KEY_HEX: &str =
-    "3b0902759df2adc1428b8ded2ef65f8aaaf8ed860d3a0493af1e6e1921f9d5fa";
+    "0b2bd06a9a75dad24d809eb574ee23d23fb71a8477a44fc71d16ea531628db25";
 
 /// 发布源：HTTP(S) 基址或本地目录（`file://` / 裸路径）。
 #[derive(Debug, Clone, PartialEq, Eq)]

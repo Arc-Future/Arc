@@ -433,9 +433,13 @@ public class TreeDrawListBuilder {
             switch (content)
             {
                 case Content.Text(s):
+                {
                     return s;
+                }
                 default:
+                {
                     break;
+                }
             }
             // MirrorContent 回退（平台同步路径）
             if (cc.MirrorContent != null && cc.MirrorContent.Length > 0) {

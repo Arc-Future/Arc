@@ -631,10 +631,7 @@ fn emit_child_elements(
                                 pad, list_var
                             ));
                             for style_var in vars {
-                                out.push_str(&format!(
-                                    "{}{}.Add({});\n",
-                                    pad, list_var, style_var
-                                ));
+                                out.push_str(&format!("{}{}.Add({});\n", pad, list_var, style_var));
                             }
                             out.push_str(&format!("{}{}.Style = {};\n", pad, var, list_var));
                         }
@@ -1489,7 +1486,10 @@ fn emit_style_registration(
             pad, style_var, setter_var
         ));
     }
-    out.push_str(&format!("{}{}.AddStyle({});\n", pad, dict_target, style_var));
+    out.push_str(&format!(
+        "{}{}.AddStyle({});\n",
+        pad, dict_target, style_var
+    ));
     *style_index += 1;
     Ok(())
 }

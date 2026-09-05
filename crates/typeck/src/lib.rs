@@ -43,13 +43,13 @@ pub use attr_table::{
     ResolvedAttribute, BUILTIN_ATTR_TYPE,
 };
 pub use borrow::{BorrowChecker, BorrowError};
-/// 委托 mangle 名的递归 demangle（与 `mangle_type_suffix` 互逆）——mir/codegen
-/// 侧委托形参/返回类型解析复用（嵌套 `Func_`/`Action_` 组单一事实源）。
-pub use check_expr::{demangle_func_type_depth, demangle_func_type_with};
 pub use builtin_facade::{
     classify_builtin_facade, codegen_handler_hint, is_builtin_facade, split_qualified_method,
     BuiltinFacadeKind,
 };
+/// 委托 mangle 名的递归 demangle（与 `mangle_type_suffix` 互逆）——mir/codegen
+/// 侧委托形参/返回类型解析复用（嵌套 `Func_`/`Action_` 组单一事实源）。
+pub use check_expr::{demangle_func_type_depth, demangle_func_type_with};
 pub use checker::check_async_spill::{analyze_spill_candidates, SpillSet};
 pub use checker::type_size_table::{TypeSizeTable, SPILL_THRESHOLD};
 /// RFC 009 M4-7: typeck Pass 模式（Skeleton = Pass 2 骨架，Full = Pass 4 完整）。

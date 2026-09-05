@@ -7,9 +7,7 @@
 
 #![cfg(feature = "full-rt")]
 
-use arc_tests::batch::{
-    batch_case_result, build_and_run_batch_with_deps, BatchCase,
-};
+use arc_tests::batch::{batch_case_result, build_and_run_batch_with_deps, BatchCase};
 
 #[test]
 fn illusory_simulation_batch() {
@@ -82,14 +80,25 @@ void Main() {
     );
 
     for res in &results {
-        eprintln!("=== {} passed={:?} err={:?}\n{}", res.name, res.passed, res.error, res.stdout);
+        eprintln!(
+            "=== {} passed={:?} err={:?}\n{}",
+            res.name, res.passed, res.error, res.stdout
+        );
     }
 
     let r = batch_case_result(&results, "sim_fixed_step");
-    assert!(r.passed, "sim_fixed_step failed: {:?} stdout: {}", r.error, r.stdout);
+    assert!(
+        r.passed,
+        "sim_fixed_step failed: {:?} stdout: {}",
+        r.error, r.stdout
+    );
 
     let r = batch_case_result(&results, "sim_monotonic");
-    assert!(r.passed, "sim_monotonic failed: {:?} stdout: {}", r.error, r.stdout);
+    assert!(
+        r.passed,
+        "sim_monotonic failed: {:?} stdout: {}",
+        r.error, r.stdout
+    );
 }
 
 #[test]
@@ -149,14 +158,25 @@ void Main() {
     );
 
     for res in &results {
-        eprintln!("=== {} passed={:?} err={:?}\n{}", res.name, res.passed, res.error, res.stdout);
+        eprintln!(
+            "=== {} passed={:?} err={:?}\n{}",
+            res.name, res.passed, res.error, res.stdout
+        );
     }
 
     let r = batch_case_result(&results, "actor_lifecycle");
-    assert!(r.passed, "actor_lifecycle failed: {:?} stdout: {}", r.error, r.stdout);
+    assert!(
+        r.passed,
+        "actor_lifecycle failed: {:?} stdout: {}",
+        r.error, r.stdout
+    );
 
     let r = batch_case_result(&results, "component_store");
-    assert!(r.passed, "component_store failed: {:?} stdout: {}", r.error, r.stdout);
+    assert!(
+        r.passed,
+        "component_store failed: {:?} stdout: {}",
+        r.error, r.stdout
+    );
 }
 
 #[test]
@@ -164,10 +184,9 @@ fn illusory_gameplay_tags_batch() {
     // GameplayTags：不可变值语义——Add/Remove 返回新实例，原实例不变；Overlaps 判交。
     let results = build_and_run_batch_with_deps(
         "illusory_gameplay_tags",
-        &[
-            BatchCase {
-                name: "tags_immutable",
-                src: r#"using Arc;
+        &[BatchCase {
+            name: "tags_immutable",
+            src: r#"using Arc;
 using Arc.Illusory;
 
 void Main() {
@@ -187,11 +206,14 @@ void Main() {
     Console.WriteLine("ARC_CASE:tags_immutable:PASS");
 }
 "#,
-            },
-        ],
+        }],
         &[("Arc.Illusory", "Illusory/Core")],
     );
 
     let r = batch_case_result(&results, "tags_immutable");
-    assert!(r.passed, "tags_immutable failed: {:?} stdout: {}", r.error, r.stdout);
+    assert!(
+        r.passed,
+        "tags_immutable failed: {:?} stdout: {}",
+        r.error, r.stdout
+    );
 }

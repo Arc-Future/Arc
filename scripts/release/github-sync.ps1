@@ -39,23 +39,16 @@ function Test-Excluded([string]$f) {
 }
 
 # --- 1. clone (first run) or refresh the public clone ---
-# PS 5.1: git writes progress to stderr; under EAP=Stop that becomes a
-# terminating NativeCommandError even on success - quiet flags + Continue
-# locally, with explicit $LASTEXITCODE checks.
-$prevEap = $ErrorActionPreference
-$ErrorActionPreference = 'Continue'
 if (-not (Test-Path (Join-Path $SyncDir ".git"))) {
     if (Test-Path $SyncDir) { Remove-Item $SyncDir -Recurse -Force }
-    git clone -q "https://github.com/$Repo.git" $SyncDir 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = $prevEap; throw "clone https://github.com/$Repo.git failed" }
+    git clone "https://github.com/$Repo.git" $SyncDir
+    if ($LASTEXITCODE -ne 0) { throw "clone https://github.com/$Repo.git failed" }
 }
-git -C $SyncDir fetch -q origin 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = $prevEap; throw "git fetch failed in $SyncDir" }
-git -C $SyncDir reset -q --hard origin/main 2>&1 | Out-Null
-git -C $SyncDir clean -q -fd 2>&1 | Out-Null
+git -C $SyncDir fetch origin 2>&1 | Out-Null
+git -C $SyncDir reset --hard origin/main | Out-Null
+git -C $SyncDir clean -fd | Out-Null
 git -C $SyncDir config user.name $AuthorName
 git -C $SyncDir config user.email $AuthorEmail
-$ErrorActionPreference = $prevEap
 
 # --- 2. materialize internal tracked files (minus exclusions) ---
 $wanted = @()
@@ -85,11 +78,9 @@ if (-not $dirty) {
     return
 }
 if (-not $Message) { $Message = "sync: internal snapshot $(Get-Date -Format 'yyyy-MM-dd HH:mm')" }
-$ErrorActionPreference = 'Continue'
-git -C $SyncDir commit -q -m $Message 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = 'Stop'; throw "git commit failed in $SyncDir" }
+git -C $SyncDir commit -q -m $Message
+if ($LASTEXITCODE -ne 0) { throw "git commit failed in $SyncDir" }
 $pushOut = git -C $SyncDir push origin main 2>&1
-if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = 'Stop'; throw "git push failed: $pushOut" }
-$ErrorActionPreference = 'Stop'
+if ($LASTEXITCODE -ne 0) { throw "git push failed: $pushOut" }
 $hash = git -C $SyncDir rev-parse --short HEAD
 Write-Host "==> synced to github.com/$Repo (main @ $hash)"

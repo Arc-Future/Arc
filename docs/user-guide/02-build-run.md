@@ -2,6 +2,8 @@
 
 本章介绍 Arc 项目的构建与运行：`arc build` / `arc run` 的用法、输出目录约定与项目结构。
 
+> 前置：已安装 `arc` 且 clang/LLVM 可用（见 [01 安装与快速开始](01-getting-started.md)；编译器按解析序自动发现，无需手工配置）。
+
 ## 项目结构与目录约定
 
 Arc 编译器使用两个固定目录承载产物，不提供配置项：
@@ -30,6 +32,8 @@ arc build .
 # 项目目录模式 + --project 显式指定
 arc build --project ./examples/CompilerSmoke
 ```
+
+> `-r/--target` 指定目标三元组（桌面平台 win/linux/mac）；目标须为宿主桌面或具备完整工具链的环境——交叉编译管线未实现（现状见 [11 编译模型](11-compilation-model.md)）。
 
 常用选项：
 

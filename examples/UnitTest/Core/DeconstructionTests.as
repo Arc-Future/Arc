@@ -257,11 +257,15 @@ public class DeconstructionTests
         int sum = 0;
         switch (p) {
             case (var u, var v):
+            {
                 sum = u + v;
                 break;
+            }
             default:
+            {
                 sum = -1;
                 break;
+            }
         }
         Assert.Equal(7, sum);
     }

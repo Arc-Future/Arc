@@ -385,12 +385,51 @@ impl TypeRegistry {
                     .all(|(param, found)| {
                         let substituted =
                             substitute_generic_in_ty_name(&param.ty, &sig.generics, type_args);
-                        self.param_assignable(&substituted.into(), found)
+                        // typeck 已完成绑定校验；MIR 侧仅命名所需——未绑定 lambda
+                        // 实参（`Func_Infer_*`，替换后 `Func_Greeter` 与其元数
+                        // 兼容）亦按 λ 软兼容放行，保证模板唯一命中回填占位符
+                        // 基底（否则回退替换后基底 → mono 名分叉 arc-prune-001）。
+                        let sub_ident: Ident = substituted.clone().into();
+                        self.param_assignable(&sub_ident, found)
+                            || func_name_infer_compatible(substituted.as_str(), found.as_str())
                     })
             })
             .collect();
         match matching.as_slice() {
             [(_, template)] => Some(self.method_link_name_for(ty, template)),
+            _ => None,
+        }
+    }
+
+    /// [`method_generic_template_link_name`] 的窄匹配退化版：仅按「泛型参数
+    /// 个数 + 值实参个数」在方法表中筛模板，**不做**替换后形参与实参的类型
+    /// 比对（调用点可能携带未绑定 lambda——`Func_Infer_*` 与替换后 mangle
+    /// 名不严格相等，类型比对恒失配）。唯一命中返回模板的**占位符** link
+    /// 基底（`Provide_Func_T`），供 MIR 拼 `__{type_args}` 后缀——避免回退
+    /// 到替换后签名基底（`Provide_Func_Greeter`）与 mono body 命名分叉
+    ///（模板克隆名 `Provide_Func_T__Greeter` 对不上调用点
+    /// `Provide_Func_Greeter__Greeter` → arc-prune-001）。
+    ///
+    /// 类型比对仍由 typeck 在解析阶段完成（本函数只服务 MIR 目标命名，
+    /// 不改变 typeck 已校验的绑定）。
+    pub fn method_generic_template_link_name_by_arity(
+        &self,
+        ty: &Ident,
+        method: &Ident,
+        arg_count: usize,
+        type_arg_count: usize,
+        ctx: &AccessContext,
+    ) -> Option<String> {
+        let candidates = self.collect_method_overloads(ty, method, ctx).ok()?;
+        let matching: Vec<_> = candidates
+            .iter()
+            .filter(|(_, sig)| {
+                sig.generics.len() == type_arg_count && sig.params.len() == arg_count
+            })
+            .map(|(_, sig)| sig)
+            .collect();
+        match matching.as_slice() {
+            [template] => Some(self.method_link_name_for(ty, template)),
             _ => None,
         }
     }
@@ -855,11 +894,10 @@ fn func_name_infer_compatible(expected: &str, found: &str) -> bool {
     // （`Func_Infer_Infer_Infer`，4 原子）间恒不等 → 软匹配零候选 →
     // 回退首签名 → arity 错绑（expected 2 / found 3）。
     let demangled_arity = |name: &str| -> Option<usize> {
-        crate::check_expr::demangle_func_type_depth(name, None, 0, &|_| false).and_then(|f| {
-            match f {
-                TypeId::Func { params, .. } => Some(params.len()),
-                _ => None,
-            }
+        crate::check_expr::demangle_func_type_depth(name, None, 0, &|_| false).and_then(|f| match f
+        {
+            TypeId::Func { params, .. } => Some(params.len()),
+            _ => None,
         })
     };
     if let (Some(e_arity), Some(f_arity)) = (demangled_arity(expected_norm), demangled_arity(found))
@@ -867,7 +905,25 @@ fn func_name_infer_compatible(expected: &str, found: &str) -> bool {
         if e_arity == f_arity {
             return true;
         }
+        // arity=None 回溯按 count 升序取首解：嵌套形参（如
+        // `Func_object_Func_object_object_object`）在低 count 处被误切成
+        // 「内层 Func 作 ret」的次优解（arity 1 ≠ 实际 2），直接返回 false。
+        // 实参 λ 元数 f_arity 已知——以 `Some(f_arity)` 显式重解析期望签名
+        // （count = f_arity + 1 的唯一切分），命中即兼容（具体参数类型由选中
+        // 候选后的 λ 定向校验把关，此处只需元数对齐即可放行候选）。
+        if crate::check_expr::demangle_func_type_depth(expected_norm, Some(f_arity), 0, &|_| false)
+            .is_some()
+        {
+            return true;
+        }
         return false;
+    }
+    if let Some(f_arity) = demangled_arity(found) {
+        if crate::check_expr::demangle_func_type_depth(expected_norm, Some(f_arity), 0, &|_| false)
+            .is_some()
+        {
+            return true;
+        }
     }
     let e_parts: Vec<&str> = expected_norm.split('_').collect();
     let f_parts: Vec<&str> = found.split('_').collect();

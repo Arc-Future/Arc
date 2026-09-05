@@ -71,8 +71,11 @@ class WriteOnceLabel {
 }
 
 // ── 表达式体方法 ──
+// 注：类名避开 `Greeter`——与 UnitTest.Chord 的同名 internal 类在同一编译
+// 单元会产生 registry 短名遮蔽（跨命名空间同名类 FQN 影子化仅覆盖部分路径），
+// 使后者属性 getter 的 `_name` 等私有字段解析落空（MIR unresolved ident）。
 
-class Greeter {
+class ExprGreeter {
     public string Hi() => "hi";
     public int Square(int n) => n * n;
     public string Dup(string s) => s + s;
@@ -257,7 +260,7 @@ public class ModernTypeTests
     [Fact]
     public void ExprBodied_Methods()
     {
-        Greeter g = new Greeter();
+        ExprGreeter g = new ExprGreeter();
         Assert.True(g.Hi() == "hi");
         Assert.Equal(9, g.Square(3));
         Assert.True(g.Dup("ab") == "abab");

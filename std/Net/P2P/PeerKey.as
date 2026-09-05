@@ -2,9 +2,10 @@
 //
 // RFC 026 M3 P0-1 假面清除：原 [Builtin] 公开方法为假接线（Generate 返回裸 pk
 // 指针冒充对象、Sign 产出未初始化缓冲、Verify 传 msg_len=0/pk=null）。现改
-// AesGcm 模式（regular class）：私有 [Builtin] `_Xxx` 经 codegen 拦截直射
-// vendored crypto_native.dll 的 `rt_crypto_ed25519_*_arr` ABI（byte[] 语义见
-// rt_abi.h）；公开方法为真实体，负责参数校验与对象语义。
+// regular class：私有 [Builtin] `_Xxx` 经 codegen 拦截直射**原生 runtime** 的
+// `rt_crypto_ed25519_*_arr` ABI——crates/runtime/rt_ed25519.c 随程序编译、
+// 跨平台可移植，不经 vendored crypto_native.dll（byte[] 语义见 rt_abi.h）；
+// 公开方法为真实体，负责参数校验与对象语义。
 //
 // 密钥布局：keygen_arr 返回 byte[64] = seed(32)‖pk(32)；构造器切分存储，
 // Sign 直传 seed（sign_arr 要求 byte[32]），PublicKey 由 pk 小写 hex 编码。

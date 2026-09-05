@@ -120,8 +120,8 @@ impl<'a> FnEmitter<'a> {
         // 查询——数据符号跨共享库映像引用会别名导入 thunk（指向 GOT 槽的
         // 指针）而非数据本身。
         if let Some(prim) = boxed_primitive_name(src_ty) {
-            let prim_id = primitive_typeinfo_id(prim)
-                .expect("boxed primitive must have a typeinfo id");
+            let prim_id =
+                primitive_typeinfo_id(prim).expect("boxed primitive must have a typeinfo id");
             let vtable_addr = self.fresh_temp();
             self.emit(&format!(
                 "{vtable_addr} = getelementptr inbounds i8, ptr {box_ptr}, i32 8"

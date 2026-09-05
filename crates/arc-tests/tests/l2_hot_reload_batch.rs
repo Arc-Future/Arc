@@ -1,4 +1,4 @@
-﻿//! 热重载组合序列 L2 测试批（RFC 045 D8.1）。
+//! 热重载组合序列 L2 测试批（RFC 045 D8.1）。
 //!
 //! 内核 Reload（先装新后卸旧）与 ALC 二进制代数（RFC 017）正交组合的
 //! ALC 侧语义验证：多代共存、Entry 烟测门禁（布局指纹）、正序卸载、
@@ -492,8 +492,14 @@ fn runs_hot_reload_batch() {
             ("hr_fingerprint_gate_rollback", &gate_rollback_case(&dir)),
             ("hr_orchestrated_swap", &orchestrated_swap_case(&dir)),
             ("hr_state_handover", &state_handover_case(&dir)),
-            ("hr_transparent_migration", &transparent_migration_case(&dir)),
-            ("hr_virtual_dispatch_after_migration", &virtual_dispatch_case(&dir)),
+            (
+                "hr_transparent_migration",
+                &transparent_migration_case(&dir),
+            ),
+            (
+                "hr_virtual_dispatch_after_migration",
+                &virtual_dispatch_case(&dir),
+            ),
         ],
     );
     assert_all_passed(batch, &results);

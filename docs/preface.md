@@ -18,10 +18,8 @@
 
 1. **白皮书** — Arc 定位、哲学、架构与差异化
 2. **用户手册** — 快速上手、语言规范、编译与运行时、工具链
-3. **领域库** — UI / AI / ORM / Web / 网络 / DI / 游戏引擎的使用手册
-4. **RFC** — 已接受的设计决策（[编排指南](rfc/index.md)）；待裁决草案见 [proposals 索引](rfc/proposals/index.md)
-
-**研发视角补充**：实现规划与当前里程碑进度见 [实现规划](plan.md)；LLVM 后端实现结论见 [discuss.md](discuss.md)；各轮专项评审见 [reviews 索引](reviews/index.md)。
+3. **领域库** — UI / AI / ORM / Web / 网络 / DI 的使用手册
+4. **RFC** — 已接受的设计决策
 
 ## 约定
 

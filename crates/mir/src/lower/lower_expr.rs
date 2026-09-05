@@ -214,7 +214,7 @@ pub(super) fn lower_expr_to_rvalue_with_binary(
     // RFC 006 G2：Lambda 作为通用右值（字段/局部直接赋值 `_cb = () => this.OnX()`）
     // 走闭包物化，避免落入 operand_from_expr 的 `Discriminant(Lambda)` panic。
     if let Expr::Lambda(l) = expr {
-        let op = builder.lower_lambda_to_fnptr(l, ctx, None);
+        let op = builder.lower_lambda_to_fnptr(l, ctx, None, None);
         return (vec![], MirRvalue::Use(op));
     }
     // RFC 004 M4：表达式块（位置模式 switch 臂脱糖体）——先降级 stmts，再取 tail 为值。
@@ -676,7 +676,8 @@ pub(super) fn lower_expr_to_rvalue_with_binary(
             }
             // 实例委托字段（`_f(x)` 裸调用）→ IndirectCall；禁止自由函数 Call("_f")。
             // 与 lower.rs 语句上下文对称，见 lower_call::try_lower_delegate_invoke。
-            if let Some((dprep, drv)) = try_lower_delegate_invoke(builder, func, args, ctx) {
+            if let Some((dprep, drv, _ret_ty)) = try_lower_delegate_invoke(builder, func, args, ctx)
+            {
                 return (dprep, drv);
             }
             let func_name = if !type_args.is_empty() {
@@ -722,7 +723,7 @@ pub(super) fn lower_expr_to_rvalue_with_binary(
         // 回退——否则实例局部 `g` 会被视作类型名，mangle 出 `g::Convert` →
         // 未定义符号 `@g_Convert`（arc-prune-001）。与语句级路径 `lower.rs`
         // `Expr::Call`（`try_lower_delegate_invoke`）对称。
-        if let Some((dprep, drv)) = try_lower_delegate_invoke(builder, func, args, ctx) {
+        if let Some((dprep, drv, _ret_ty)) = try_lower_delegate_invoke(builder, func, args, ctx) {
             return (dprep, drv);
         }
         if let Expr::Field { receiver, field } = &func.node {
@@ -797,7 +798,14 @@ pub(super) fn lower_expr_to_rvalue_with_binary(
         if lower_type::is_delegate_type(&lower_type_name(&ty.node)) {
             if let [arg] = args.as_slice() {
                 if let Expr::Lambda(l) = &arg.node {
-                    let op = builder.lower_lambda_to_fnptr(l, ctx, None);
+                    // 委托契约返回类型（`new Func<IDisposable>(() => ...)` 的
+                    // ty 即 Func_<R> mangle 名）：接口 R 时闭包须产出 fat
+                    // pointer（见 lower_lambda_to_fnptr）。
+                    let dty = lower_type::lower_type_name(&ty.node);
+                    let er = lower_type::delegate_return_type(&dty, &|s| {
+                        ctx.registry.types.contains_key(s)
+                    });
+                    let op = builder.lower_lambda_to_fnptr(l, ctx, None, er.as_ref());
                     return (vec![], MirRvalue::Use(op));
                 }
             }
@@ -1626,13 +1634,21 @@ fn lower_expr_to_rvalue_simple(
         }
         Expr::New { ty, args, obj_init } => {
             // 委托实例化与 with_binary 层同语义：lambda 闭包值即委托值。
-            if obj_init.is_none()
-                && lower_type::is_delegate_type(&lower_type_name(&ty.node))
-            {
+            if obj_init.is_none() && lower_type::is_delegate_type(&lower_type_name(&ty.node)) {
                 if let [arg] = args.as_slice() {
                     if let Expr::Lambda(l) = &arg.node {
-                        let op = builder
-                            .lower_lambda_to_fnptr(l, ctx, lambda_expected_params(ctx, arg.span));
+                        // 委托契约返回类型（`new Func<R>(lambda)` 的 ty 即 mangle
+                        // 名）：接口 R 时闭包须产出 fat pointer（lower_lambda_to_fnptr）。
+                        let dty = lower_type::lower_type_name(&ty.node);
+                        let er = lower_type::delegate_return_type(&dty, &|s| {
+                            ctx.registry.types.contains_key(s)
+                        });
+                        let op = builder.lower_lambda_to_fnptr(
+                            l,
+                            ctx,
+                            lambda_expected_params(ctx, arg.span),
+                            er.as_ref(),
+                        );
                         return MirRvalue::Use(op);
                     }
                 }

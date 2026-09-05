@@ -102,7 +102,10 @@ public class VirtualizingStackPanel : Panel {
         } else if (action == CollectionChangeAction.Remove) {
             this.Generator.ApplyRemove(args.Index, itemDefaults);
         } else if (action == CollectionChangeAction.Update) {
-            this.Generator.ApplyUpdate(args.Index, args.NewItem, itemDefaults);
+            // 视图（ItemSourceView）已先行同步，容器按 index 直读新值重绑
+            //（RFC 037 M-VZ1 重构后 generator 按索引取 `ItemAt/DisplayAt`，
+            // 不再接收变更项本体——`args.NewItem` 为旧直绑 API 残留）。
+            this.Generator.ApplyUpdate(args.Index, itemDefaults);
         } else if (action == CollectionChangeAction.Move) {
             this.Generator.ApplyMove(args.OldIndex, args.Index, itemDefaults);
         } else if (action == CollectionChangeAction.Clear) {

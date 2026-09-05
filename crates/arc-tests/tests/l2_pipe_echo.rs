@@ -15,10 +15,9 @@ use arc_tests::assert_compiles_and_runs_batch_with_deps;
 fn runs_pipe_echo_batch() {
     let results = assert_compiles_and_runs_batch_with_deps(
         "pipe_echo",
-        &[
-            (
-                "pipe_echo_cross_process",
-                r#"using Arc;
+        &[(
+            "pipe_echo_cross_process",
+            r#"using Arc;
 using Arc.IO;
 using Arc.Net.Pipes;
 using Arc.Threading;
@@ -100,8 +99,7 @@ async Task<void> Main() {
     Console.WriteLine("ARC_CASE:pipe_echo_cross_process:PASS");
 }
 "#,
-            ),
-        ],
+        )],
         &[("Arc.Net.Pipes", "Net/Pipes")],
     );
     for r in &results {

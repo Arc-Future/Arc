@@ -34,12 +34,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-sync.
 ```powershell
 # 1. 构建发布版编译器
 cargo build --release -p arc
-# 2. 打安装包：zip + sha256 + 捆绑 LLVM + 签名 manifest + 解包异地冷构建验收
+# 2. 打安装包：容器随宿主——Windows zip（-BundleLlm 捆绑 LLVM + -Manifest 签名清单 + 验收）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\packaging\arc-pack.ps1 -BundleLlm -Manifest
-# 3. 发布 GitHub Release（重签 manifest 至真实下载地址 + 幂等上传资产）
+# 3. 多平台收口：把各宿主包（Windows zip / Linux·macOS tar.xz）+ .sha256 汇入同一
+#    DistDir，单次发布（github-release.ps1 自动发现全部包、单次重签多 triple manifest、上传全部资产）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-release.ps1 -Version 1.0.0
 # 4. 同步脚本/文档变更到公开仓
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-sync.ps1
+```
+
+Unix 宿主打 tar.xz 包（Linux/macOS，pwsh core；先 `cargo build --release -p arc`）：
+
+```bash
+pwsh -NoProfile -File scripts/packaging/arc-pack.ps1 -BundleLlm
 ```
 
 `github-release.ps1` 的签名密钥解析顺序：`$env:ARC_RELEASE_SIGNING_KEY` → `~/.arc/keys/release-signing-key-<版本>.txt`（离线文件，**永不提交**）。

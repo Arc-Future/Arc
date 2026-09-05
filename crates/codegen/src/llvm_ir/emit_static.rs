@@ -161,8 +161,9 @@ impl<'a> ModuleEmitter<'a> {
         // COFF 链接器整段丢弃（lld-link: undefined symbol 实测），故 DynamicLibrary
         // 角色发射 external 强定义；主程序保留 linkonce_odr（main 入口有引用 +
         // 跨 TU 去重）。
-        let mut out =
-            String::from("; ---- RFC 006 M4: @__arc_module_init (no static fields, empty stub) ----\n");
+        let mut out = String::from(
+            "; ---- RFC 006 M4: @__arc_module_init (no static fields, empty stub) ----\n",
+        );
         if matches!(self.emit_role, crate::EmitRole::DynamicLibrary) {
             out.push_str("define void @__arc_module_init() {\n");
         } else {

@@ -1,29 +1,18 @@
 namespace Arc.Illusory;
 
-using Arc.Collections;
 using Arc.Math;
 
-/// <summary>IWorld 实现——组合固定步长仿真与有序系统注册表，对外提供统一入口。</summary>
+/// <summary>IWorld 实现——组合固定步长仿真与 Actor 注册表，对外提供统一入口。</summary>
 /// <remarks>
 /// <see cref="World"/> 为 internal 编排，不暴露其状态机；开发者仅经 <see cref="IWorld"/>
-/// 门面交互。创建入口见 <see cref="Worlds"/>。固定步进驱动 <see cref="SystemRegistry"/>，
-/// 由其按确定性阶段序三相驱动全部注册系统（含 Actor 注册表）。
+/// 门面交互。创建入口见 <see cref="Worlds"/>。
 /// </remarks>
 internal class World : IWorld {
     private readonly Simulation _simulation;
     private readonly ActorRegistry _registry;
-    private readonly SystemRegistry _systemRegistry;
 
     internal World(WorldOptions options) {
         _registry = new ActorRegistry();
-        _systemRegistry = new SystemRegistry();
-        _systemRegistry.Register(_registry, SystemPhase.Zero);
-        IReadOnlyList<SystemRegistration> systems = options.Systems;
-        for (int i = 0; i < systems.Count; i++)
-        {
-            _systemRegistry.Register(systems[i].System, systems[i].Phase);
-        }
-        _systemRegistry.Build();
         _simulation = new Simulation(options);
     }
 
@@ -32,7 +21,7 @@ internal class World : IWorld {
     }
 
     public void Update(float frameDeltaMilliseconds) {
-        _simulation.Update(frameDeltaMilliseconds, _systemRegistry);
+        _simulation.Update(frameDeltaMilliseconds, _registry);
     }
 
     public Actor SpawnActor(Transform initial) {

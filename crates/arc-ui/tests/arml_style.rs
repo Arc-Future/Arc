@@ -298,9 +298,8 @@ fn codegen_window_resource_entries_and_merged() {
 
     // 扁平条目直发窗口字典；嵌套 <ResourceDictionary> 为 merged 子字典
     assert!(code.contains("_resources.Add(\"CardRadius\", ResourceValue.Number(12.0));"));
-    assert!(code.contains(
-        "_merged_0.Add(\"Accent\", ResourceValue.Brush(Brushes.Parse(\"#0044FF\")));"
-    ));
+    assert!(code
+        .contains("_merged_0.Add(\"Accent\", ResourceValue.Brush(Brushes.Parse(\"#0044FF\")));"));
     assert!(code.contains("_resources.MergedDictionaries.Add(_merged_0);"));
     assert!(!code.contains("new Resources();"));
 }

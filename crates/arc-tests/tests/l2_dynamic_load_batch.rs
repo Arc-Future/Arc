@@ -210,7 +210,9 @@ fn plugin_artifact_is_import_reference_only() {
     if cfg!(target_os = "windows") {
         let imports = pe_import_dll_names(&dll);
         assert!(
-            imports.iter().any(|n| n.eq_ignore_ascii_case("arc_runtime.dll")),
+            imports
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case("arc_runtime.dll")),
             "plugin must import the shared runtime, got imports: {imports:?}"
         );
         let symbols = pe_import_symbol_names(&dll);
@@ -254,12 +256,7 @@ fn runs_dynamic_load_batch() {
     compile_plugin_library(batch, "plugin_u5_weak", PLUGIN_BODY, &[]);
     compile_plugin_library(batch, "plugin_u5_cancel", PLUGIN_BODY, &[]);
     compile_plugin_library(batch, "plugin_u5_dep_a", PLUGIN_BODY, &[]);
-    compile_plugin_library(
-        batch,
-        "plugin_u5_dep_b",
-        PLUGIN_BODY,
-        &["plugin_u5_dep_a"],
-    );
+    compile_plugin_library(batch, "plugin_u5_dep_b", PLUGIN_BODY, &["plugin_u5_dep_a"]);
     compile_plugin_library(batch, "plugin_u5_hang", PLUGIN_BODY, &[]);
     compile_plugin_library(batch, "plugin_u5_entry", PLUGIN_ENTRY_BODY, &[]);
     compile_plugin_library(batch, "plugin_u5_mutant", PLUGIN_MUTANT_BODY, &[]);

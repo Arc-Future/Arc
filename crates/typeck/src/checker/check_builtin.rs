@@ -1126,43 +1126,14 @@ impl TypeChecker {
                     }),
                 }
             }
-            // Arc.Security crypto facades (RFC 026 M3): MD5/SHA1/SHA256/SHA512/HMACSHA256/CSPRNG.
-            // Method bodies are empty stubs — typeck validates argument shapes here so
-            // the call can lower to a direct @rt_crypto_* ABI emission in codegen.
-            (
-                "MD5" | "SHA1" | "SHA256" | "SHA512" | "SHA384" | "SHA3_256" | "SHA3_512",
-                "ComputeHash",
-            ) => {
-                if args.len() != 1 {
-                    return Err(TypeError::Mismatch {
-                        expected: "1 argument".into(),
-                        found: format!("{} arguments", args.len()),
-                    });
-                }
-                self.require_string_arg(&args[..], 0)?;
-                Ok(Some(TypeId::String))
-            }
-            ("HMACSHA256" | "HMACSHA384" | "HMACSHA512", "ComputeHash") => {
-                if args.len() != 2 {
-                    return Err(TypeError::Mismatch {
-                        expected: "2 arguments".into(),
-                        found: format!("{} arguments", args.len()),
-                    });
-                }
-                self.require_string_arg(&args[..], 0)?;
-                self.require_string_arg(&args[..], 1)?;
-                Ok(Some(TypeId::String))
-            }
-            ("CSPRNG", "GetBytes") => {
-                if args.len() != 1 {
-                    return Err(TypeError::Mismatch {
-                        expected: "1 argument".into(),
-                        found: format!("{} arguments", args.len()),
-                    });
-                }
-                self.require_int_arg(&args[..], 0)?;
-                Ok(Some(TypeId::String))
-            }
+            // Arc.Security crypto facades（RFC 026 M3 现代形态）：公开方法（ComputeHash/
+            // ToHex/GetBytes）为**真实 .as 体**（null 判空 + CryptographicException），
+            // 仅私有 `_ComputeHash`/`_GetBytes` 为 `[Builtin(ABI)]` stub——codegen 按
+            // `SHA256::_ComputeHash` 等发射 `@rt_crypto_*_arr`。故公开调用**不得**在此
+            // 硬编码拦截（旧表按 string 时代签名 `ComputeHash(string)->string` 校验，
+            // 与现行 `byte[]` API 冲突，曾致所有 `ComputeHash(byte[])` 调用点报
+            // `expected string, found byte[]`），一律回落 registry 按真实签名解析。
+            // 私有 ABI stub 的拦截与类型校验见 builtin_registry 属性路径（无需此处）。
             // Arc.Net network facade (RFC 025 M4): Dns 静态方法。
             ("Dns", "Resolve") | ("Dns", "GetHostAddresses") => {
                 self.require_arg_count(&args[..], 1, method)?;

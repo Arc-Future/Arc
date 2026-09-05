@@ -678,18 +678,24 @@ impl TypeChecker {
             // 判定：demangle 名义名（Nullable 已在 mangle 侧归一，段切分无歧义）
             // 后逐位比较——结构侧 Infer 通配（未类型化 lambda 形参）。
             // demangle 失败（嵌套 Func_ 段）回退：结构侧重 mangle 严格比对。
-            (TypeId::Named(n), TypeId::Func { params: fp, ret: fr })
-                if n.starts_with("Func_") || n.starts_with("Action_") =>
-            {
-                if let Some(TypeId::Func { params: ep, ret: er }) =
-                    crate::check_expr::demangle_func_type_with(
-                        n,
-                        fp.len(),
-                        &|s| self.registry.types.contains_key(s),
-                    )
-                {
+            (
+                TypeId::Named(n),
+                TypeId::Func {
+                    params: fp,
+                    ret: fr,
+                },
+            ) if n.starts_with("Func_") || n.starts_with("Action_") => {
+                if let Some(TypeId::Func {
+                    params: ep,
+                    ret: er,
+                }) = crate::check_expr::demangle_func_type_with(n, fp.len(), &|s| {
+                    self.registry.types.contains_key(s)
+                }) {
                     return ep.len() == fp.len()
-                        && ep.iter().zip(fp.iter()).all(|(e, f)| self.types_compatible(e, f))
+                        && ep
+                            .iter()
+                            .zip(fp.iter())
+                            .all(|(e, f)| self.types_compatible(e, f))
                         && self.types_compatible(&er, fr);
                 }
                 let canonical_func = TypeId::Func {
@@ -698,19 +704,25 @@ impl TypeChecker {
                 };
                 return crate::generics::mangle_type_suffix(&canonical_func) == n.as_str();
             }
-            (TypeId::Func { params: ep, ret: er }, TypeId::Named(n))
-                if n.starts_with("Func_") || n.starts_with("Action_") =>
-            {
-                if let Some(TypeId::Func { params: fp, ret: fr }) =
-                    crate::check_expr::demangle_func_type_with(
-                        n,
-                        ep.len(),
-                        &|s| self.registry.types.contains_key(s),
-                    )
-                {
+            (
+                TypeId::Func {
+                    params: ep,
+                    ret: er,
+                },
+                TypeId::Named(n),
+            ) if n.starts_with("Func_") || n.starts_with("Action_") => {
+                if let Some(TypeId::Func {
+                    params: fp,
+                    ret: fr,
+                }) = crate::check_expr::demangle_func_type_with(n, ep.len(), &|s| {
+                    self.registry.types.contains_key(s)
+                }) {
                     return ep.len() == fp.len()
-                        && fp.iter().zip(ep.iter()).all(|(f, e)| self.types_compatible(e, f))
-                        && self.types_compatible(&er, &fr);
+                        && fp
+                            .iter()
+                            .zip(ep.iter())
+                            .all(|(f, e)| self.types_compatible(e, f))
+                        && self.types_compatible(er.as_ref(), fr.as_ref());
                 }
                 let canonical_func = TypeId::Func {
                     params: ep.iter().map(|p| self.canonical_type(p)).collect(),

@@ -199,6 +199,23 @@ fn effective_native_lib_paths(
     paths
 }
 
+/// 两文件内容是否逐字节一致（len 相等的快速前置由调用方完成）。
+///
+/// stage_vendored_dll 的落位判定不得以 len 相等替代内容一致：runtime 重编后
+/// dll 长度可能恰好不变（改动仅数行时高概率），len 判定会让产物目录继续服役
+/// 旧 runtime——批测取证实证：rt_task.c 加桩重链后批目录 dll 未更新，新桩
+/// 静默（arc-runtime 单副本共享契约下这是所有产物的正确性问题，不只是取证）。
+fn staged_dll_matches(src_dll: &Path, candidate: &Path) -> bool {
+    if fs::metadata(candidate).map(|d| d.len()).ok() != fs::metadata(src_dll).map(|m| m.len()).ok()
+    {
+        return false;
+    }
+    match (fs::read(candidate), fs::read(src_dll)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// RFC 017 产物域（U3 dll 单副本，UX 迭代评审 §2.3）：vendored native dll 落位。
 ///
 /// 旧机制把 ~75 MB 运行时 dll 逐项目复制进每个 bin/（examples 实测 dll 占中间
@@ -213,25 +230,6 @@ fn effective_native_lib_paths(
 /// 数行级改动重编后 dll 长度可恰好不变，len 命中会让产物静默服役旧 runtime；
 /// mtime 不参与（`fs::copy` 是否保留修改时间平台相关，引入 mtime 会让部分平台
 /// 每次构建都重建缓存）。
-
-/// 两文件内容是否逐字节一致（len 相等的快速前置由调用方完成）。
-///
-/// stage_vendored_dll 的落位判定不得以 len 相等替代内容一致：runtime 重编后
-/// dll 长度可能恰好不变（改动仅数行时高概率），len 判定会让产物目录继续服役
-/// 旧 runtime——批测取证实证：rt_task.c 加桩重链后批目录 dll 未更新，新桩
-/// 静默（arc-runtime 单副本共享契约下这是所有产物的正确性问题，不只是取证）。
-fn staged_dll_matches(src_dll: &Path, candidate: &Path) -> bool {
-    if fs::metadata(candidate).map(|d| d.len()).ok()
-        != fs::metadata(src_dll).map(|m| m.len()).ok()
-    {
-        return false;
-    }
-    match (fs::read(candidate), fs::read(src_dll)) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
-    }
-}
-
 fn stage_vendored_dll(src_dll: &Path, dest: &Path) {
     let Some(file_name) = src_dll.file_name() else {
         return;
@@ -447,7 +445,7 @@ pub fn compile_via_llvm_ir(
             None,
             &runtime_native,
         );
-        let (ir, diags) = emitter.emit_module(fns);
+        let (ir, diags) = emitter.emit_module(fns)?;
         ir_text = ir;
         sinit_diags = diags;
     }
@@ -469,9 +467,13 @@ pub fn compile_via_llvm_ir(
         let mut patched = false;
         // 模板 body：stub 发射不消费 MIR body（try_emit_stub 提前返回），
         // 借用任一既有 stub-handled 条目的 body 克隆占位即可通过类型检查。
+        // 若模块内尚无任何 stub 条目（如 --dynamic UI 库首度补发
+        // `TextBuffer_get_LineCount` 等 custom-accessor stub），退化为取
+        // 任一既有 body 占位——stub 发射按名查 `try_emit_stub`，不读 body。
         let template_body = fns_vec
             .iter()
             .find(|(n, _)| crate::is_builtin_stub_fn(n))
+            .or_else(|| fns_vec.first())
             .map(|(_, b)| b.clone());
         for (sym, _line) in &missing {
             let bare = sym.split('@').next().unwrap_or(sym).to_string();
@@ -489,7 +491,14 @@ pub fn compile_via_llvm_ir(
             patched = true;
         }
         if !patched {
-            completeness::check_ir_complete(&ir_text)?;
+            if let Err(e) = completeness::check_ir_complete(&ir_text) {
+                if std::env::var("ARC_DEBUG_PRUNE").is_ok() {
+                    let _ = std::fs::create_dir_all("target/scratch");
+                    let _ = std::fs::write("target/scratch/prune-ir.ll", &ir_text);
+                    eprintln!("[prune] IR dumped");
+                }
+                return Err(e);
+            }
             break;
         }
         let emitter = ModuleEmitter::new(
@@ -509,7 +518,7 @@ pub fn compile_via_llvm_ir(
             None,
             &runtime_native,
         );
-        let (ir, _) = emitter.emit_module(&fns_vec);
+        let (ir, _) = emitter.emit_module(&fns_vec)?;
         ir_text = ir;
     }
     // 补发后的 fns 向后传递（debug 符号收集等）。
@@ -599,12 +608,7 @@ pub fn compile_via_llvm_ir(
         None
     } else {
         Some(shared_runtime::build_shared_runtime(
-            &rt_base,
-            &clang,
-            &work_dir,
-            target,
-            level,
-            debug_info,
+            &rt_base, &clang, &work_dir, target, level, debug_info,
         )?)
     };
     let shared_rt_input = shared_rt.as_ref().map(|a| a.link_input());
@@ -714,7 +718,14 @@ pub fn compile_via_llvm_ir(
         .status()
         .map_err(|e| CodegenError::Llvm(format!("link failed: {e}")))?;
     if !status.success() {
-        return Err(CodegenError::Llvm("clang link failed".into()));
+        return Err(enriched_link_failure(
+            &clang,
+            &link_objs,
+            output,
+            target,
+            level,
+            &link_flags_refs,
+        ));
     }
 
     // RFC 017 阶段一：共享 runtime 落位产物同目录（缓存 + 硬链接单副本），
@@ -794,17 +805,86 @@ pub fn compile_to_object(
         fn_spans,
         &native_symbols,
         &native_callback_table,
-        native_struct_types,
+        native_struct_types.clone(),
         generate_to_table,
         external_symbols,
         emit_role,
-        package_meta,
+        package_meta.clone(),
         &runtime_native,
     );
-    let (mut ir_text, sinit_diags) = emitter.emit_module(fns);
+    let (mut ir_text, sinit_diags) = emitter.emit_module(fns)?;
 
     // RFC 036 阶段 4·语义级裁剪闭环验证：编译期完整性门（arc-prune-001）。
-    completeness::check_ir_complete(&ir_text)?;
+    // **stub 补发闭环**（compile_to_object 角色——`--dynamic` 库等无入口构建）：
+    // 缺失符号若为 stub-handled（builtin 集合/门面的 custom-accessor getter，如
+    // `TextBuffer_get_LineCount`——MIR 无调用边、tree-shake 剪除后调用体仍引用），
+    // 以空 body 占位补入 fns 重发射（emit_fn 对 stub-handled 名走 `try_emit_stub`，
+    // 不消费 MIR body）；非 stub 缺失仍硬错误。与 exe 路径 refill 环同契约。
+    let mut fns_vec: Vec<(String, mir::MirCfgBody)> = fns.to_vec();
+    for _round in 0..4 {
+        let missing = completeness::check_ir_complete_missing(&ir_text);
+        if missing.is_empty() {
+            break;
+        }
+        let mut patched = false;
+        let template_body = fns_vec
+            .iter()
+            .find(|(n, _)| crate::is_builtin_stub_fn(n))
+            .or_else(|| fns_vec.first())
+            .map(|(_, b)| b.clone());
+        for (sym, _line) in &missing {
+            if !crate::is_builtin_stub_fn(sym) {
+                continue;
+            }
+            if fns_vec.iter().any(|(name, _)| name == sym) {
+                continue;
+            }
+            let Some(mut body) = template_body.clone() else {
+                continue;
+            };
+            body.linkage = mir::Linkage::LinkonceOdr;
+            fns_vec.push((sym.clone(), body));
+            patched = true;
+        }
+        if !patched {
+            if let Err(e) = completeness::check_ir_complete(&ir_text) {
+                if std::env::var("ARC_DEBUG_PRUNE").is_ok() {
+                    let _ = std::fs::create_dir_all("target/scratch");
+                    let _ = std::fs::write("target/scratch/prune-ir.ll", &ir_text);
+                    eprintln!("[prune] IR dumped");
+                }
+                return Err(e);
+            }
+            break;
+        }
+        let emitter = ModuleEmitter::new(
+            layouts,
+            is_windows,
+            target.map(mangle::is_wasm_triple).unwrap_or(false),
+            file_path,
+            source,
+            debug_info,
+            fn_spans,
+            &native_symbols,
+            &native_callback_table,
+            native_struct_types.clone(),
+            generate_to_table,
+            external_symbols,
+            emit_role,
+            package_meta.clone(),
+            &runtime_native,
+        );
+        let (ir, _) = emitter.emit_module(&fns_vec)?;
+        ir_text = ir;
+    }
+    if let Err(e) = completeness::check_ir_complete(&ir_text) {
+        if std::env::var("ARC_DEBUG_PRUNE").is_ok() {
+            let _ = std::fs::create_dir_all("target/scratch");
+            let _ = std::fs::write("target/scratch/prune-ir.ll", &ir_text);
+            eprintln!("[prune] IR dumped");
+        }
+        return Err(e);
+    }
 
     // RFC 015 Phase C: eliminate adjacent ARC retain/release pairs.
     let _arc_elim = arc_optimize::eliminate_arc_pairs(&mut ir_text);
@@ -1374,6 +1454,113 @@ fn ir_needs_platform_window(ir: &str) -> bool {
     ir.contains("@rt_ui_") || ir.contains("@__arc_window_") || ir.contains("@rt_window_")
 }
 
+/// vendored 底座缺口归因（DX，`arc-vendor-001`）：非 Windows 目标链接错误中
+/// 出现 wgpu/crypto 底座命名空间符号时，给出可操作指引。
+///
+/// 现状事实（与 `mangle::*_vendor_subdir` 注释一致）：两类底座仅随 Windows
+/// 发行交付——wgpu-native 对 Linux 返回 `Some("linux")` 但仓库无 `bin/linux`
+/// 资产（M3+ 供应未交付）、macOS 未接线；crypto（`rt_crypto_*` ABI）对
+/// Linux/macOS 恒 `None`（M1+ 未供应）。链接器对未交付底座只会报生硬的
+/// undefined symbol；本归因把「缺底座」与「未知链接错误」区分开。
+fn diagnose_vendored_link_gap(target: Option<&str>, stderr: &str) -> Option<String> {
+    if mangle::is_windows_target(target) {
+        return None;
+    }
+    let mentions = |needle: &str| -> bool {
+        let lower = stderr.to_ascii_lowercase();
+        (lower.contains("undefined") || lower.contains("unresolved"))
+            && lower.contains(&needle.to_ascii_lowercase())
+    };
+    let family = if mentions("wgpu") {
+        Some((
+            "wgpu-native 渲染底座（wgpuCreateInstance 等 wgpu C API）",
+            "`wgpu_native_vendor_subdir`：Linux 预留 `bin/linux` 未供应（M3+），macOS 未接线",
+        ))
+    } else if mentions("rt_crypto_") || mentions("crypto_native") {
+        Some((
+            "crypto_native 密码底座（`rt_crypto_*` ABI）",
+            "`crypto_native_vendor_subdir`：Linux/macOS 未供应（M1+）",
+        ))
+    } else {
+        None
+    };
+    let (name, where_note) = family?;
+    let triple = target.unwrap_or("<host>");
+    Some(format!(
+        "error[arc-vendor-001]: 目标 `{triple}` 链接失败，疑似引用{name}——该底座目前仅随 \
+         Windows 发行交付（{where_note}；仓库无 .so/.dylib 资产）。请在 Windows 目标构建，\
+         或接入对应平台底座供应（fetch/build 脚本平台分支 + vendored 入库）后重试"
+    ))
+}
+
+/// 链接失败时的增强错误：重跑同参数 clang 捕获 stderr（失败属罕见路径，
+/// 重跑成本可接受），叠加 [`diagnose_vendored_link_gap`] 归因并保留原始输出。
+fn enriched_link_failure(
+    clang: &str,
+    objs: &[&Path],
+    output: &Path,
+    target: Option<&str>,
+    level: optimize::OptLevel,
+    extra_flags: &[&str],
+) -> CodegenError {
+    let stderr = optimize::clang_link(clang, objs, output, target, level, extra_flags)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stderr).into_owned())
+        .unwrap_or_default();
+    let mut msg = "clang link failed".to_string();
+    if let Some(gap) = diagnose_vendored_link_gap(target, &stderr) {
+        msg.push('\n');
+        msg.push_str(&gap);
+    }
+    msg.push_str("\n--- linker stderr (tail) ---\n");
+    let tail: Vec<&str> = stderr.lines().rev().take(25).collect();
+    for line in tail.iter().rev() {
+        msg.push_str(line);
+        msg.push('\n');
+    }
+    CodegenError::Llvm(msg)
+}
+
+#[cfg(test)]
+mod vendor_gap_tests {
+    use super::*;
+
+    #[test]
+    fn wgpu_undefined_on_linux_gets_gap_guidance() {
+        let stderr = "ld.lld: error: undefined symbol: wgpuCreateInstance\n>>> referenced by rt_wgpu_native.c";
+        let msg = diagnose_vendored_link_gap(Some("x86_64-unknown-linux-gnu"), stderr).unwrap();
+        assert!(msg.contains("arc-vendor-001"), "unexpected msg: {msg}");
+        assert!(msg.contains("wgpu-native"), "missing family: {msg}");
+        assert!(msg.contains("bin/linux"), "missing supply note: {msg}");
+    }
+
+    #[test]
+    fn crypto_undefined_on_macos_gets_gap_guidance() {
+        let stderr = "ld: undefined symbols for architecture x86_64: \"_rt_crypto_aesgcm_encrypt\"";
+        let msg = diagnose_vendored_link_gap(Some("x86_64-apple-darwin"), stderr).unwrap();
+        assert!(msg.contains("arc-vendor-001"), "unexpected msg: {msg}");
+        assert!(msg.contains("crypto_native"), "missing family: {msg}");
+    }
+
+    #[test]
+    fn windows_target_never_second_guesses() {
+        let stderr = "lld-link: error: undefined symbol: wgpuCreateInstance";
+        assert!(diagnose_vendored_link_gap(Some("x86_64-pc-windows-msvc"), stderr).is_none());
+    }
+
+    #[test]
+    fn unrelated_undefined_symbol_gets_no_guidance() {
+        let stderr = "ld.lld: error: undefined symbol: some_user_function";
+        assert!(diagnose_vendored_link_gap(Some("x86_64-unknown-linux-gnu"), stderr).is_none());
+    }
+
+    #[test]
+    fn wgpu_without_undefined_keyword_is_not_misattributed() {
+        let stderr = "clang: error: linker command failed with exit code 1 (use -v to see invocation)\nnote: wgpu options";
+        assert!(diagnose_vendored_link_gap(Some("x86_64-unknown-linux-gnu"), stderr).is_none());
+    }
+}
+
 /// RFC 037 M1 修复：检测预编译 `.o` 文件是否引用 UI/WGPU ABI 符号。
 ///
 /// 与 `ir_needs_platform_window` 对偶——`compile_via_llvm_ir` 在 IR 文本上
@@ -1447,12 +1634,7 @@ pub fn link_objects_to_executable(
         None
     } else {
         Some(shared_runtime::build_shared_runtime(
-            &rt_base,
-            &clang,
-            &work_dir,
-            target,
-            level,
-            debug_info,
+            &rt_base, &clang, &work_dir, target, level, debug_info,
         )?)
     };
     let shared_rt_input = shared_rt.as_ref().map(|a| a.link_input());
@@ -1591,7 +1773,14 @@ pub fn link_objects_to_executable(
         .status()
         .map_err(|e| CodegenError::Llvm(format!("link failed: {e}")))?;
     if !status.success() {
-        return Err(CodegenError::Llvm("clang link failed".into()));
+        return Err(enriched_link_failure(
+            &clang,
+            &link_objs,
+            output,
+            target,
+            level,
+            &link_flags_refs,
+        ));
     }
 
     // RFC 017 阶段一：共享 runtime 落位产物同目录（缓存 + 硬链接单副本）。
@@ -1662,12 +1851,7 @@ pub fn link_objects_to_dynamic_library(
         None
     } else {
         Some(shared_runtime::build_shared_runtime(
-            &rt_base,
-            &clang,
-            &work_dir,
-            target,
-            level,
-            debug_info,
+            &rt_base, &clang, &work_dir, target, level, debug_info,
         )?)
     };
     let shared_rt_input = shared_rt.as_ref().map(|a| a.link_input());
@@ -2069,7 +2253,15 @@ impl<'a> ModuleEmitter<'a> {
         }
     }
 
-    fn emit_module(mut self, fns: &[(String, MirCfgBody)]) -> (String, Vec<StaticInitDiagnostic>) {
+    fn emit_module(
+        mut self,
+        fns: &[(String, MirCfgBody)],
+    ) -> Result<(String, Vec<StaticInitDiagnostic>), CodegenError> {
+        // POSIX try/catch 编译门（arc-eh-001）：Windows SEH 为 1.0 唯一实现面，
+        // 其余目标在发射前给出结构化错误，而非落到 emit_try_catch 深处 ICE。
+        // 作用域 = 本模块将发射的可达函数集，与旧 panic 触发面完全一致。
+        emit_cfg::reject_try_catch_outside_windows(fns, self.is_windows, self.file_path)?;
+
         // 静态初始化器直 emit 路径的返回类型表（与 FnEmitter.fn_returns 同源构建）。
         self.fn_returns = fns
             .iter()
@@ -2200,10 +2392,9 @@ impl<'a> ModuleEmitter<'a> {
         // all_exports 显式导出——MSVC 数据符号默认不导出）。
         if let Some(ref pm) = self.package_meta {
             if !pm.name.is_empty() {
-                let entries = vtable_registry_entries(
-                    self.layouts,
-                    &|n: &str| self.external_class_names.contains(n),
-                );
+                let entries = vtable_registry_entries(self.layouts, &|n: &str| {
+                    self.external_class_names.contains(n)
+                });
                 let n = entries.len();
                 for (i, (name, _, _, _)) in entries.iter().enumerate() {
                     out.push_str(&format!(
@@ -2214,7 +2405,7 @@ impl<'a> ModuleEmitter<'a> {
                 }
                 let entry_ty = "{ptr, i64, i64, i32}";
                 let mut items = String::new();
-                for (i, (name, sig, shape, slots)) in entries.iter().enumerate() {
+                for (i, (_name, sig, shape, slots)) in entries.iter().enumerate() {
                     if i > 0 {
                         items.push_str(", ");
                     }
@@ -2637,7 +2828,7 @@ impl<'a> ModuleEmitter<'a> {
         // 在模块末尾统一输出（LLVM 允许前向引用）。
         out.push_str(&self.emit_external_aggregate_decls());
 
-        (out, sinit_diags)
+        Ok((out, sinit_diags))
     }
 
     /// RFC 017 M4-link Phase B：收集模块内所有需要 `comdat` 声明的符号名。
@@ -3581,7 +3772,11 @@ impl<'a> ModuleEmitter<'a> {
                 // RFC 017 阶段一：基元 typeinfo 经 rt_typeinfo_prim(id) 运行期查询，
                 // 含基元槽的数组须可写（运行时在 __arc_module_init 回填真实指针），
                 // 基元槽初值 null（typeinfo_global_for 对基元返回 null）。
-                let linkage = if prim_fills.is_empty() { "constant" } else { "global" };
+                let linkage = if prim_fills.is_empty() {
+                    "constant"
+                } else {
+                    "global"
+                };
                 out.push_str(&format!(
                     "{fields_array_name} = private {linkage} [{count} x %RtFieldInfo] [\n  {entries_str}\n]\n"
                 ));
@@ -3647,7 +3842,11 @@ impl<'a> ModuleEmitter<'a> {
                 // RFC 017 阶段一：基元 typeinfo 经 rt_typeinfo_prim(id) 运行期查询，
                 // 含基元槽的数组须可写（运行时在 __arc_module_init 回填真实指针），
                 // 基元槽初值 null（typeinfo_global_for 对基元返回 null）。
-                let linkage = if prim_fills.is_empty() { "constant" } else { "global" };
+                let linkage = if prim_fills.is_empty() {
+                    "constant"
+                } else {
+                    "global"
+                };
                 out.push_str(&format!(
                     "{methods_array_name} = private {linkage} [{count} x %RtMethodInfo] [\n  {entries_str}\n]\n"
                 ));
@@ -3707,7 +3906,11 @@ impl<'a> ModuleEmitter<'a> {
                 // RFC 017 阶段一：基元 typeinfo 经 rt_typeinfo_prim(id) 运行期查询，
                 // 含基元槽的数组须可写（运行时在 __arc_module_init 回填真实指针），
                 // 基元槽初值 null（typeinfo_global_for 对基元返回 null）。
-                let linkage = if prim_fills.is_empty() { "constant" } else { "global" };
+                let linkage = if prim_fills.is_empty() {
+                    "constant"
+                } else {
+                    "global"
+                };
                 out.push_str(&format!(
                     "{props_array_name} = private {linkage} [{count} x %RtPropertyInfo] [\n  {entries_str}\n]\n"
                 ));

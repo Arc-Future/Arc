@@ -6,7 +6,9 @@
 //!
 //! 安全：解压目录穿越防御——仅接受 `zip::ZipFile::enclosed_name()`（拒绝 `..` 与
 //! 平台绝对路径）；额外拒绝以 `/` 或 `\` 开头的条目（Windows 下 `/x` 非绝对，
-//! 显式防御），条目按 zip 内相对路径落盘。
+//! 显式防御），条目按 zip 内相对路径落盘。条目自带 Unix 权限位（zip external
+//! attrs）时，Unix 提取端按位还原（Windows 无意义）；Windows 产线容器通常不带
+//! 权限位，由消费方按各自布局契约补执行位（见 `self_update` staging 恢复）。
 
 use std::io::{Read as _, Write as _};
 use std::path::Path;
@@ -42,7 +44,25 @@ pub fn extract_zip(bytes: &[u8], dest: &Path) -> Result<(), String> {
             }
             let mut out_file = std::fs::File::create(&out).map_err(|e| e.to_string())?;
             std::io::copy(&mut file, &mut out_file).map_err(|e| e.to_string())?;
+            drop(out_file);
+            #[cfg(unix)]
+            apply_stored_unix_mode(file.unix_mode(), &out)?;
         }
+    }
+    Ok(())
+}
+
+/// 条目自带 Unix 权限位时应用之（zip external attrs 的权限位）。
+///
+/// 仅 Unix 提取端生效；Windows 权限位无意义。mode 缺失（Windows 产线容器
+/// 常态）保持默认权限，由消费方按布局契约处理。
+#[cfg(unix)]
+fn apply_stored_unix_mode(mode: Option<u32>, out: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Some(mode) = mode {
+        std::fs::set_permissions(out, std::fs::Permissions::from_mode(mode & 0o7777))
+            .map_err(|e| format!("set permissions on {}: {e}", out.display()))?;
     }
     Ok(())
 }
@@ -137,6 +157,40 @@ mod tests {
             std::fs::read(out.join("pkg/bin/arc.exe")).unwrap(),
             b"binary-bytes"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_applies_stored_unix_mode() {
+        let dir = temp_dir("mode");
+        let zip_path = dir.join("m.zip");
+        let file = std::fs::File::create(&zip_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file(
+            "pkg/bin/tool",
+            zip::write::SimpleFileOptions::default().unix_permissions(0o755),
+        )
+        .unwrap();
+        zip.write_all(b"x").unwrap();
+        zip.finish().unwrap();
+        let bytes = std::fs::read(&zip_path).unwrap();
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        extract_zip(&bytes, &out).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(out.join("pkg/bin/tool"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777;
+            assert_eq!(mode, 0o755);
+        }
+        #[cfg(not(unix))]
+        {
+            assert!(out.join("pkg/bin/tool").is_file());
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

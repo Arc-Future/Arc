@@ -14,7 +14,7 @@ Arc 编译器在构建期消费三类「SDK 资源」：runtime C 源码、vendo
 
 ```text
 安装态（分发物）                      仓库态（开发，仓库自身即 SDK）
-<root>/bin/arc.exe                   <root>/std/
+<root>/bin/arc(.exe)                 <root>/std/
 <root>/lib/std/                      <root>/crates/runtime/
 <root>/lib/rt/                       <root>/crates/runtime-ui/
   └── runtime/、runtime-ui/、          <root>/crates/runtime-drawing/
@@ -41,7 +41,7 @@ runtime 共享 dll（`arc_runtime.<dll|so|dylib>`，含链接期导入库）按 
 
 | 布局 | 标记（全部命中） |
 |------|------------------|
-| 安装态 | `<root>/bin/arc.exe` 为文件，且 `<root>/lib/rt` 或 `<root>/lib/std` 为目录 |
+| 安装态 | `<root>/bin/arc(.exe)` 为文件（可执行名随平台：Windows `arc.exe` / Unix `arc`，`sdk_layout::installed_arc_exe_name` 单一来源），且 `<root>/lib/rt` 或 `<root>/lib/std` 为目录 |
 | 仓库态 | `<root>/std` 与 `<root>/crates/runtime` 均为目录 |
 
 两态互斥判定：优先安装态；仓库态为兜底。显式环境变量覆盖（见 §3.1）即使目录缺标记也原样接受，由下游消费方报出明确错误。
@@ -111,7 +111,7 @@ $ARC_HOME/rt_cache/<target>_<config>_<g|nog><sanitize>/<obj>
 
 以**目录复制冷构建**判别可重定位：
 
-1. `scripts/sdk-stage.ps1 -OutDir <dir>` 将 `arc.exe` + 资源排布为安装态布局（`bin/` + `lib/{std,rt,native}`）；
+1. `scripts/sdk-stage.ps1 -OutDir <dir>` 将 `arc(.exe)` + 资源排布为安装态布局（`bin/` + `lib/{std,rt,native}`）；
 2. 将 `<dir>` 复制到任意目录（脱离仓库源码树）；
 3. 隐藏/移走仓库 `crates/runtime` 后于异地对普通项目 `arc build`，构建成功（证明资源来自 SDK 目录而非编译期固化路径）。
 
@@ -123,7 +123,7 @@ $ARC_HOME/rt_cache/<target>_<config>_<g|nog><sanitize>/<obj>
 
 | 构件 | 落点 | 职责 |
 |------|------|------|
-| 打包 | `scripts/packaging/arc-pack.ps1` | release 构建 → 打安装态目录（`bin/` + `lib/{std,rt,native}`）→ `Compress-Archive` 产出 `arc-<ver>-<triple>.zip` + `.sha256` → 自动判别验收（解包异地冷构建 + 运行） |
+| 打包 | `scripts/packaging/arc-pack.ps1` | release 构建 → 打安装态目录（`bin/` + `lib/{std,rt,native}`）→ 容器随宿主（Windows `Compress-Archive` 产出 `arc-<ver>-<triple>.zip`；Unix `tar -cJf` 产出 `.tar.xz`，归档前恢复 `bin/arc`/`lib/llvm/bin`/`install.sh` 可执行位）+ `.sha256` → 自动判别验收（解包异地冷构建 + 运行） |
 | 安装（Windows） | `scripts/packaging/install.ps1` | HTTPS 下载 zip → SHA256 校验 → 解压到 `%LOCALAPPDATA%\arc\versions\<pkg>` → 用户级 PATH（`-NoModifyPath` 可跳过）→ `arc doctor` |
 | 安装（Unix 骨架） | `scripts/packaging/arc-install.sh` | 同契约（tar.xz，`~/.arc/versions/<pkg>`，`--no-modify-path`） |
 | 工具命令 | `arc env` / `arc doctor` | 诊断与 CI 自检（见 [031 §11](../../031-compiler-cli.md)） |
@@ -132,13 +132,13 @@ zip 内布局与 §2 安装态完全一致，另附包元数据：
 
 ```text
 arc-<ver>-<triple>/
-├── bin/arc.exe
+├── bin/arc(.exe)
 ├── lib/{std,rt,native}      ← §2 资源落点
 ├── version.txt              ← arc=<ver> / triple=<triple> / commit=<sha> / layout=installed
 └── arc.env                  ← 环境变量说明模板（自定位无需任何变量，仅显式覆盖参考）
 ```
 
-**判别**：解包 zip 到任意目录 → `arc env` 输出 `SDK_LAYOUT=installed` 且 `ARC_SDK_ROOT` 指向解包目录 → `arc build` 离线示例成功（std 取自包内 `lib/std`，runtime C 取自包内 `lib/rt`）→ `arc doctor` 全绿。安装脚本 URL 为占位（完整发布端点另行交付）。
+**判别**：解包容器（Windows zip / Unix tar.xz）到任意目录 → `arc env` 输出 `SDK_LAYOUT=installed` 且 `ARC_SDK_ROOT` 指向解包目录 → `arc build` 离线示例成功（std 取自包内 `lib/std`，runtime C 取自包内 `lib/rt`）→ `arc doctor` 全绿。安装脚本 URL 为占位（完整发布端点另行交付）。
 
 ## 8. 签名发布与自更新布局
 
@@ -148,7 +148,7 @@ arc-<ver>-<triple>/
 
 ```text
 <root>/                       ← Windows %LOCALAPPDATA%\arc / Unix ~/.arc（ARC_INSTALL_ROOT 可覆盖）
-├── bin/arc.exe               ← 稳定 PATH 指针 = 活动版本的 bin/arc.exe 副本（唯一 PATH 注入点）
+├── bin/arc(.exe)           ← 稳定 PATH 指针 = 活动版本的 bin/arc(.exe) 副本（唯一 PATH 注入点）
 └── versions/
     ├── current               ← 活动版本标记（内容 = 版本号，如 `0.2.0`）
     ├── current.previous      ← 上一版本（`arc self-update --rollback` 目标）
@@ -156,7 +156,7 @@ arc-<ver>-<triple>/
 ```
 
 要点：
-- 版本目录即 §2 安装态 SDK（可重定位），`current_exe()` 自定位不变；`bin/arc.exe` 指针以副本身份 re-exec 活动版本，切换只改指针与标记，PATH 永不变。
+- 版本目录即 §2 安装态 SDK（可重定位），`current_exe()` 自定位不变；`bin/arc(.exe)` 指针以副本身份 re-exec 活动版本，切换只改指针与标记，PATH 永不变。
 - 原子性：staging（`versions/.staging-<pid>/`）解压 + 校验后 rename 提交；指针/标记临时名 → rename。
 - 回滚：`--rollback` 按 `current.previous` 回切指针（版本目录保留）。
 

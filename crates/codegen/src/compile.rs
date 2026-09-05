@@ -288,13 +288,8 @@ pub fn compile_module_to_dynamic_library(
         .filter(|e| matches!(e.kind, typeck::ExternalSymbolKind::Class))
         .map(|e| e.name.clone())
         .collect();
-    let registry = llvm_ir::vtable_registry_entries(layouts, &|n: &str| {
-        external_types.contains(n)
-    });
-    if package_meta
-        .as_ref()
-        .is_some_and(|pm| !pm.name.is_empty())
-    {
+    let registry = llvm_ir::vtable_registry_entries(layouts, &|n: &str| external_types.contains(n));
+    if package_meta.as_ref().is_some_and(|pm| !pm.name.is_empty()) {
         all_exports.push("__arc_vtable_registry".to_string());
         all_exports.push("__arc_vtable_registry_count".to_string());
         for (name, _, _, _) in &registry {

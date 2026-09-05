@@ -40,7 +40,7 @@ Arc 的长期目标是**自托管（self-hosting）**——编译器最终用 Ar
 
 自举以**子集**推进：每个里程碑定义明确的语言子集边界（parser 子集、HIR 子集、typeck 子集、codegen 子集），逐层验证等价后再拓宽。子集边界是设计契约，非进度记录。
 
-首个里程碑 M4（parser 子集）的约定边界（纳入产生式、排除表、禁止项、验收名）见 [019-self-hosting/references/m4-parser-subset.md](019-self-hosting/references/m4-parser-subset.md)（子文档索引见 [019-self-hosting/references](019-self-hosting/references/index.md)）。
+首个里程碑 M4（parser 子集）的约定边界（纳入产生式、排除表、禁止项、验收名）见 [019-m4-parser-subset.md](019-m4-parser-subset.md)。
 
 ## 边界
 

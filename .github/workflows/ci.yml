@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 on:
   push:
@@ -91,7 +91,22 @@ jobs:
       - name: Run UnitTest suite
         run: cargo run -p arc -- test examples/UnitTest
 
-  wasm32-hello-draft:
+  unix-install-protocol:
+    # Unix 安装脚本协议实机验收（verify-arc-install.sh，stub SDK，T1–T7）：
+    # 把「CI 可复跑」从声明变为门禁——覆盖下载/SHA256/指针布局/PATH 注入/
+    # 破损包拒绝/--from-dir 就地安装/内嵌无参安装（真实二进制链路随发布
+    # 产线验收，见 docs/user-guide/01-getting-started.md 状态标注）。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run verify-arc-install.sh (install protocol T1-T7)
+        run: sh scripts/packaging/verify-arc-install.sh
+
+  ubuntu-extra-draft:
+    # 草稿占位（continue-on-error，非门禁）：当前仅为 ubuntu 侧冗余构建，
+    # 尚不构成 wasm 编译门禁——wasm32 目标 `--experimental-wasm-emit` 的
+    # 编译/产物 e2e 未接线（RFC 031 M-W3 Draft，见 examples/WasmHello 与
+    # docs/user-guide/11-compilation-model.md wasm 硬错误现状）。
     continue-on-error: true
     runs-on: ubuntu-latest
     steps:
@@ -101,5 +116,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang llvm
       - name: Cargo build arc
         run: cargo build -p arc
-      - name: wasm32 gate + Hello artifact e2e
+      - name: WasmHello draft compile gate (RFC 031 M-W3, not yet wired)
         run: cargo test -p arc-tests

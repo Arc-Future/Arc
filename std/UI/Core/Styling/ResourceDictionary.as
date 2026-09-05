@@ -73,19 +73,19 @@ public class ResourceDictionary {
     }
 
     /// <summary>
-    /// 按覆盖序收集全部样式到 into（本地在后覆盖先合并）：逆序
+    /// 按覆盖序收集全部样式到 target（本地在后覆盖先合并）：逆序
     /// MergedDictionaries 先收（最早合并者先应用、可被后合并者覆盖），本地
     /// 最后收（本地覆盖一切）。样式应用「后加者胜」——收集序即应用序，
-    /// 与 TryLookup「后合并者覆盖」同构。调用方提供非 null into。
+    /// 与 TryLookup「后合并者覆盖」同构。调用方提供非空 target。
     /// </summary>
-    public void CollectStyles(List<Style> into) {
+    public void CollectStyles(List<Style> target) {
         for (int i = this.MergedDictionaries.Count - 1; i >= 0; i--) {
             if (this.MergedDictionaries[i] != null) {
-                this.MergedDictionaries[i].CollectStyles(into);
+                this.MergedDictionaries[i].CollectStyles(target);
             }
         }
         foreach (var s in _styles) {
-            into.Add(s);
+            target.Add(s);
         }
     }
 

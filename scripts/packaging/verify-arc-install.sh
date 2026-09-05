@@ -14,6 +14,8 @@
 #   T3  --force 重装 → 幂等
 #   T4  PATH 注入既有 ~/.profile（HOME 沙箱）
 #   T5  破损包（缺 bin/arc）→ 拒绝且不污染 versions/
+#   T6  --from-dir 就地安装（目录改名 + version.txt 推导包名）
+#   T7  SDK 根内无参运行（安装器内嵌场景）→ 自动就地安装
 #
 # 依赖：curl tar xz openssl sha256sum|shasum。端口经 VERIFY_PORT 覆盖（默认 18443）。
 
@@ -146,6 +148,31 @@ else
     pass "broken package rejected"
 fi
 [ -d "$TO5/versions/arc-9.9.9-x86_64-unknown-linux-gnu" ] && fail "versions/ not polluted" || pass "versions/ not polluted"
+
+echo "== T6: --from-dir install (renamed dir, version.txt derives pkg) =="
+TO6="$WORK/home6/.arc"
+mkdir -p "$WORK/sdk6-renamed/bin"
+cp "$WORK/pkg/$PKG/bin/arc" "$WORK/sdk6-renamed/bin/arc"
+printf 'arc=1.0.0\ntriple=x86_64-unknown-linux-gnu\n' > "$WORK/sdk6-renamed/version.txt"
+if sh "$INSTALL_SH" --from-dir "$WORK/sdk6-renamed" --to "$TO6" --no-modify-path >/dev/null 2>&1; then
+    pass "--from-dir install exit 0"
+else
+    fail "--from-dir install exit 0"
+fi
+[ "$(cat "$TO6/versions/current" 2>/dev/null)" = "1.0.0" ] && pass "from-dir versions/current=1.0.0" || fail "from-dir current marker"
+[ -x "$TO6/versions/$PKG/bin/arc" ] && pass "pkg derived from version.txt" || fail "pkg derived from version.txt"
+[ ! -d "$WORK/sdk6-renamed" ] && pass "source dir moved into layout" || fail "source dir moved into layout"
+
+echo "== T7: no-arg run from SDK root (embedded installer) =="
+mkdir -p "$WORK/sdk7/$PKG/bin"
+cp "$WORK/pkg/$PKG/bin/arc" "$WORK/sdk7/$PKG/bin/arc"
+printf 'arc=1.0.0\ntriple=x86_64-unknown-linux-gnu\n' > "$WORK/sdk7/$PKG/version.txt"
+cp "$INSTALL_SH" "$WORK/sdk7/$PKG/install.sh"
+TO7="$WORK/home7/.arc"
+(cd "$WORK/sdk7/$PKG" && HOME="$WORK/home7" sh ./install.sh --no-modify-path >/dev/null 2>&1) \
+    && pass "embedded no-arg install exit 0" || fail "embedded no-arg install exit 0"
+[ "$(cat "$TO7/versions/current" 2>/dev/null)" = "1.0.0" ] && pass "embedded versions/current=1.0.0" || fail "embedded current marker"
+[ -x "$TO7/versions/$PKG/bin/arc" ] && pass "embedded launcher ready" || fail "embedded launcher ready"
 
 echo "== summary: $PASS passed, $FAIL failed =="
 [ "$FAIL" -eq 0 ]

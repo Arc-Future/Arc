@@ -151,9 +151,11 @@ public class Application : Element {
     public void SwitchTheme(string name) {
         ThemeDictionaries.Switch(name);
         this.SyncActiveTheme();
+        // 主题切换后重应用宿主样式（与 RunCore 启动路径同一引擎：
+        // VisualHost.ApplyAllHostStyles；旧 `StyleManager.ApplyImplicitStyles`
+        // 为 M3 期 API，已被两趟宿主样式通道取代）。
         if (this.MainWindow != null) {
-            StyleManager sm = new StyleManager();
-            sm.ApplyImplicitStyles(this.MainWindow, Resources);
+            VisualHost.ApplyAllHostStyles(this.MainWindow);
         }
         FramePump.Invalidate();
     }
@@ -214,8 +216,9 @@ public class Application : Element {
         this.OnStartup();
         ImeBridge.WarmupHandler();
 
-        // M3 + RFC 037: 样式自动应用（两趟；RFC 037 VisualHost 边界）
-        this.ApplyStyleTree();
+        // RFC 037 VisualHost 边界：宿主样式（隐式/显式两趟）统一经
+        // VisualHost.ApplyAllHostStyles 递归应用（旧 `ApplyStyleTree` 为
+        // M3 期占位，未落地即被本通道取代）。
         if (this.MainWindow != null) {
             VisualHost.ApplyAllHostStyles(this.MainWindow);
         }

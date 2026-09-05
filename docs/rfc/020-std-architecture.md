@@ -69,7 +69,7 @@ std/
 | 层 | 目录 / 命名空间 | 职责 |
 |----|-----------------|------|
 | 核心（BCL） | `std/Arc/` 下 Collections、IO、Text、Tasks、Diagnostics、Math、Linq Enumerable、Globalization、Reflection | 基础能力，契约清晰 + 门禁回归 |
-| 领域 | `std/Net/`、`std/Security/`、`std/Data/`、`std/Orm*`、`std/DI/`、`std/UI/Core/`、`std/AI/`、`std/Drawing/`、`std/Net/P2P/` | 协议与领域翻译，显式依赖 |
+| 领域 | `std/Net/`、`std/Security/`、`std/Data/`、`std/Orm*`、`std/DI/`、`std/UI/Core/`、`std/AI/`、`std/Drawing/`、`std/Net.P2P/` | 协议与领域翻译，显式依赖 |
 
 依赖方向单向：核心包零依赖领域包；领域包依赖核心包；方言子库依赖抽象框架层。数据库/ORM 翻译遵循「编译器核心零领域能力」红线——编译器仅提供通用机制（表达式树构建、类型检查、代码生成），领域翻译由 std 以 Arc 语言实现。
 

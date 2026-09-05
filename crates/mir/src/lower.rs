@@ -989,6 +989,7 @@ impl MirBuilder {
         l: &LambdaExpr,
         ctx: &LowerCtx,
         expected: Option<&[TypeId]>,
+        expected_ret: Option<&TypeId>,
     ) -> MirOperand {
         let lambda_name = format!("__lambda_rt_{}", self.next_lambda);
         self.next_lambda += 1;
@@ -1027,6 +1028,17 @@ impl MirBuilder {
             }
         } else {
             ret_ty
+        };
+        // 期望委托返回类型为接口时按契约提升：body 推断只见具体类（如
+        // `() => { ...; return new DisposableAction(...); }` 推断为
+        // DisposableAction），而 `Func<IDisposable>` 契约要求闭包产出接口
+        // fat pointer——否则调用方（`_disposer = _callback()`）按 {obj,itable}
+        // 解引用裸对象 → 0xC0000005（chord EffectEntry 实证）。fn_ret 提升为
+        // 接口后，Return 的 MakeIface 包裹路径（lower_return_value）随之生效。
+        // body 推断已是该接口或契约非接口时保持不变。
+        let ret_ty = match expected_ret {
+            Some(TypeId::Named(n)) if ctx.registry.is_interface(n) => TypeId::Named(n.clone()),
+            _ => ret_ty,
         };
         // RFC 008: compute captures from outer scope (replaces typeck-filled
         // `l.captures`). typeck receives `&Expr` and cannot mutate the AST, so
@@ -1154,9 +1166,12 @@ impl MirBuilder {
                 }
                 Stmt::Return(val) => match val {
                     Some(v) => {
-                        let (mut prep, rvalue) =
-                            lower_expr::lower_expr_to_rvalue_with_binary(&v.node, self, ctx);
-                        stmts.append(&mut prep);
+                        // 与 typed 路径对称走 lower_return_value：声明返回为接口时
+                        // 把 class 返回物化为 fat pointer（raw 路径此前裸 Return，
+                        // 接口返回的 raw 方法体/λ 体收到裸对象 → 调用方按
+                        // {obj,itable} 解引用 AV——chord `Func<IDisposable>` 回调
+                        // `return new DisposableAction(...)` 实证）。
+                        let rvalue = self.lower_return_value(&v.node, ctx, &mut stmts);
                         stmts.push(MirStatement::Return(Some(rvalue)));
                     }
                     None => stmts.push(MirStatement::Return(None)),
@@ -3007,12 +3022,12 @@ impl MirBuilder {
                 // 与表达式级路径（lower_expr.rs `Expr::Call` 分支）对称，
                 // 见 lower_call::try_lower_delegate_invoke。
                 if !matches!(func.node, Expr::Ident(_)) {
-                    if let Some((mut dprep, drv)) =
+                    if let Some((mut dprep, drv, ret_ty)) =
                         lower_call::try_lower_delegate_invoke(self, func, args, ctx)
                     {
                         stmts.append(&mut dprep);
                         stmts.push(MirStatement::Assign {
-                            place: self.fresh_local(&"_tmp".into(), TypeId::Void, ctx.locals),
+                            place: self.fresh_local(&"_tmp".into(), ret_ty, ctx.locals),
                             rvalue: drv,
                         });
                         return;
@@ -3050,8 +3065,14 @@ impl MirBuilder {
                                 };
                                 call_args.push(op);
                             }
+                            // 结果临时按委托返回类型建（Void 默认会把 `Func<IDisposable>`
+                            // 调用结果存 i32 → 指针截断，见 try_lower_delegate_invoke 注释）。
+                            let ret_ty = lower_type::delegate_return_type(&delegate_ty, &|s| {
+                                ctx.registry.types.contains_key(s)
+                            })
+                            .unwrap_or_else(|| TypeId::Named("object".into()));
                             stmts.push(MirStatement::Assign {
-                                place: self.fresh_local(&"_tmp".into(), TypeId::Void, ctx.locals),
+                                place: self.fresh_local(&"_tmp".into(), ret_ty, ctx.locals),
                                 rvalue: MirRvalue::IndirectCall {
                                     func: MirOperand::Local(local_id),
                                     args: call_args,
@@ -3063,12 +3084,12 @@ impl MirBuilder {
                     // 实例委托字段（`_f(x)` 裸调用）：须 IndirectCall，禁止
                     // 自由函数 `Call { func: "_f" }`（链接失败 / 半物化 AV）。
                     // 在自由函数回退前拦截，见 lower_call::try_lower_delegate_invoke。
-                    if let Some((mut dprep, drv)) =
+                    if let Some((mut dprep, drv, ret_ty)) =
                         lower_call::try_lower_delegate_invoke(self, func, args, ctx)
                     {
                         stmts.append(&mut dprep);
                         stmts.push(MirStatement::Assign {
-                            place: self.fresh_local(&"_tmp".into(), TypeId::Void, ctx.locals),
+                            place: self.fresh_local(&"_tmp".into(), ret_ty, ctx.locals),
                             rvalue: drv,
                         });
                         return;
@@ -3466,7 +3487,80 @@ pub fn lower_module(
     // 见 `drop_non_emittable_generic_templates` 的注释。
     drop_non_emittable_generic_templates(&mut result, registry);
 
+    // 模板级联剔除：模板剔除后，其 lowering 期产生的 lifted λ（`__lambda_rt_N`）
+    // 与占位单态体仍留在 result——body 内含未替换的 `__T`/`_T` 型符号引用
+    //（如 `BindingRegistry_ApplyValue__T`——λ 内泛型方法调用以模板形参为实参）。
+    // 这类函数只能被已剔除模板引用，无法独立链接；`--dynamic`（无入口）下
+    // tree-shake 全量保留，不剔则 arc-prune-001。
+    drop_placeholder_tainted(&mut result);
+
     result
+}
+
+/// 剔除 body 引用「占位形态符号」（含单大写原子类型实参，如 `Foo__T`/`Bar_T`，
+/// 或接收者 `Enum_T`）的残留函数。具体类型实参均为已注册多字符类型名；
+/// 单大写原子只可能来自未单态化的模板形参占位。模板体自身由
+/// [`drop_non_emittable_generic_templates`] 先行剔除。
+fn drop_placeholder_tainted(result: &mut Vec<(String, MirCfgBody)>) {
+    fn has_placeholder_atom(name: &str) -> bool {
+        // 跳过函数名前缀部分：仅检查实参段/类型名中的单大写原子。
+        // `TextBuffer_get_LineCount` 等非泛型名无此类原子。
+        name.split(['_', ':']).any(|seg| {
+            seg.chars().count() == 1 && seg.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        })
+    }
+    fn rv_tainted(rv: &MirRvalue) -> bool {
+        // 类型名位（class/receiver）：单大写原子即占位（`EnumOptions_T` 的 T）。
+        // 函数名位（func/target_fn）：仅 `__` 类型实参后缀内判单大写——普通段
+        // 单大写可能是**单字母属性名**（`FkCounter_set_X` 的 X，不可误判）。
+        let fn_tainted = |name: &str| {
+            name.rsplit_once("__")
+                .is_some_and(|(_, suffix)| has_placeholder_atom(suffix))
+        };
+        match rv {
+            MirRvalue::New { class, .. } => has_placeholder_atom(class),
+            MirRvalue::Call { func, .. } => fn_tainted(func),
+            MirRvalue::MethodCall {
+                receiver_type,
+                target_fn,
+                ..
+            } => {
+                has_placeholder_atom(receiver_type) || target_fn.as_deref().is_some_and(fn_tainted)
+            }
+            MirRvalue::NullCondMethod {
+                receiver_type,
+                target_fn,
+                ..
+            }
+            | MirRvalue::ForceDerefMethod {
+                receiver_type,
+                target_fn,
+                ..
+            } => {
+                has_placeholder_atom(receiver_type) || target_fn.as_deref().is_some_and(fn_tainted)
+            }
+            _ => false,
+        }
+    }
+    fn stmts_tainted(stmts: &[MirStatement]) -> bool {
+        stmts.iter().any(|s| match s {
+            MirStatement::Assign { rvalue, .. }
+            | MirStatement::Return(Some(rvalue))
+            | MirStatement::FieldSet { value: rvalue, .. }
+            | MirStatement::StaticFieldSet { value: rvalue, .. } => rv_tainted(rvalue),
+            _ => false,
+        })
+    }
+    result.retain(|(name, body)| {
+        // 非占位形态名的 fn 若 body 无占位引用则保留。
+        if body.blocks.values().any(|b| stmts_tainted(&b.statements)) {
+            if std::env::var("ARC_DEBUG_TEMPLATES").is_ok() {
+                eprintln!("[drop_tainted] {name}");
+            }
+            return false;
+        }
+        true
+    });
 }
 
 /// 收集 MIR body 中引用的具体泛型类方法目标（`Class_concrete::Method`）。
@@ -4889,6 +4983,21 @@ fn collect_closure_monos_in_operand(
                             substitute_in_terminator(&mut block.terminator, generics, concrete);
                         }
                         cloned.linkage = Linkage::LinkonceOdr;
+                        // 嵌套闭包递归：克隆体（如 `__lambda_rt_37__Greeter`）的
+                        // body 内还有 `Closure{ fn_name: "__lambda_rt_38__Greeter" }`
+                        // 操作数（泛型方法体里的外层 λ 再建内层 λ）。闭包克隆产物
+                        // 只进 mono_bodies，不会被后续 fixpoint 轮按方法克隆路径
+                        // 再扫（`try_create_mono_body` 只看 Call/MethodCall）——
+                        // 此处立即递归收集，否则内层闭包 mono 缺失
+                        //（arc-prune-001：IR 引用 `__lambda_rt_38__Greeter` 无定义）。
+                        collect_closure_mono_targets(
+                            &cloned,
+                            generics,
+                            concrete,
+                            name_to_idx,
+                            result,
+                            mono_bodies,
+                        );
                         mono_bodies.push((full, cloned));
                     }
                 }
@@ -5384,6 +5493,19 @@ fn body_refs_generic_param_as_type(body: &MirCfgBody, generics: &[Ident]) -> boo
 /// 判断单个 rvalue 是否以泛型形参作为「类型所有者」作构造或方法调用。
 fn rvalue_refs_generic_param(rv: &MirRvalue, generics: &[Ident]) -> bool {
     let is_gen = |s: &str| generics.iter().any(|g| g.as_str() == s);
+    // 泛型形参嵌入**嵌套泛型类**形态（`EnumOptions_T`/`Signal_T`）时同样无法
+    // 独立成函数：body 内 `options.Count`/`options.Get(i)`（`options: EnumOptions<T>`）
+    // 的调用目标为未单态化符号 `EnumOptions_T_get_Count`/`EnumOptions_T_Get`
+    //（arc-prune-001：UI `From_EnumOptions_T` 模板被发射即报 22 符号缺失）。
+    // 模板仅作单态化克隆源——克隆体经 `substitute_in_rvalue` 把接收者类型与
+    // 目标名中的 T 原子替换为具体类型后才可发射，模板本身须剔除。
+    let name_has_generic_atom = |s: &str| {
+        s.split('_').any(|atom| {
+            generics
+                .iter()
+                .any(|g| !g.as_str().is_empty() && g.as_str() == atom)
+        })
+    };
     // `seed.Value()`（`seed: T`）：target_fn 常为 `T::Value`，但约束接口分派时
     // 解析为接口方法（target_fn = `ISeed::Value`），此时仅靠 target_fn 前缀漏检。
     // 必须同时检查 `receiver_type` 是否即泛型形参——否则模板不被剔除，codegen
@@ -5392,14 +5514,15 @@ fn rvalue_refs_generic_param(rv: &MirRvalue, generics: &[Ident]) -> bool {
         generics.iter().any(|g| {
             let gs = g.as_str();
             receiver_type == gs
-                || target_fn
-                    .as_deref()
-                    .is_some_and(|tf| tf.starts_with(&format!("{gs}::")))
+                || name_has_generic_atom(receiver_type)
+                || target_fn.as_deref().is_some_and(|tf| {
+                    tf.starts_with(&format!("{gs}::")) || name_has_generic_atom(tf)
+                })
         })
     };
     match rv {
         // `new T()` → `MirRvalue::New { class: "T" }` → codegen `@__ctor_T`。
-        MirRvalue::New { class, .. } => is_gen(class),
+        MirRvalue::New { class, .. } => is_gen(class) || name_has_generic_atom(class),
         MirRvalue::MethodCall {
             receiver_type,
             target_fn,
@@ -5418,7 +5541,9 @@ fn rvalue_refs_generic_param(rv: &MirRvalue, generics: &[Ident]) -> bool {
         // 兜底：裸 `Call` 目标为 `__ctor_T` 或 `T::...`。
         MirRvalue::Call { func, .. } => generics.iter().any(|g| {
             let gs = g.as_str();
-            func == &format!("__ctor_{gs}") || func.starts_with(&format!("{gs}::"))
+            func == &format!("__ctor_{gs}")
+                || func.starts_with(&format!("{gs}::"))
+                || name_has_generic_atom(func)
         }),
         _ => false,
     }

@@ -203,6 +203,32 @@ impl TypeChecker {
         })?;
         for (i, ty) in tys.iter().enumerate() {
             // 默认值填充槽：ty 已等于形参类型，跳过。
+            // Func/Action 槽收到内联 lambda（未绑定 → Func_Infer 名）：以槽形参
+            // 类型定向校验 λ（arity + 体），放行透传——名字比对无法处理 Func_Infer
+            // 与目标 mangle 名（扩展方法实参统一绑定路径，与实例方法路径同规则）。
+            if matches!(
+                &slots[i].ty,
+                TypeId::Named(n)
+                    if n.as_str() == "Func"
+                        || n.as_str().starts_with("Func_")
+                        || n.as_str() == "Action"
+                        || n.as_str().starts_with("Action_")
+            ) {
+                if let Expr::Lambda(l) = &bound[i].node {
+                    let tname = match &slots[i].ty {
+                        TypeId::Named(n) => n.as_str(),
+                        _ => unreachable!(),
+                    };
+                    if let Some(TypeId::Func { params, ret }) =
+                        crate::check_expr::demangle_func_type_with(tname, l.params.len(), &|s| {
+                            self.registry.types.contains_key(s)
+                        })
+                    {
+                        self.check_func_lambda(l, &params, &ret)?;
+                    }
+                    continue;
+                }
+            }
             if !self.types_compatible(&slots[i].ty, ty) {
                 // RFC 004 §D9 / RFC 037 M2：实参类型不匹配时尝试隐式 variant
                 // 构造。典型场景：方法形参为 `ContentVariant`，调用方传入
@@ -684,7 +710,10 @@ impl TypeChecker {
                 }
                 Err(e) => {
                     if std::env::var("ARC_DEBUG_BIND").is_ok() {
-                        eprintln!("[BIND] {}.{} reject: {} | sig={:?}", decl, sig.name, e, sig.params);
+                        eprintln!(
+                            "[BIND] {}.{} reject: {} | sig={:?}",
+                            decl, sig.name, e, sig.params
+                        );
                     }
                 }
             }

@@ -14,13 +14,10 @@ Arc 领域库在语言核心与标准库基础面之上，按单一惯用法平�
 | AI 推理 | `Arc.AI` | `std/AI/` | `Tensor`、`IAIModel`、Onnx/Iree 推理后端 | [ai-inference.md](ai-inference.md) |
 | 对象关系映射 | `Arc.Orm` | `std/Orm/` | `DbContext`、实体、查询翻译、SQLite 方言 | [orm.md](orm.md) |
 | Web 框架 | `Arc.Web` | `std/Web/` | `WebApplication`、IMediator、特性路由、SSR、gRPC | [web.md](web.md) |
-| 网络与 P2P | `Arc.Net`（+ `Arc.Net.P2P`/`Arc.Net.Pipes`/`Arc.Net.Grpc`） | `std/Net/`（Core/P2P/Pipes/Grpc） | HttpClient、WebSocket、TCP/UDP、P2P | [networking-p2p.md](networking-p2p.md) |
+| 网络与 P2P | `Arc.Net` | `std/Net/`、`std/Net.P2P/` | HttpClient、WebSocket、TCP/UDP、P2P | [networking-p2p.md](networking-p2p.md) |
 | 依赖注入 | `Arc.DI` | `std/DI/` | 服务注册、解析、生命周期、作用域 | [di.md](di.md) |
 | 插件内核 | `Arc.Chord` | `std/Chord/` | Context/Scope、可逆副作用、动态服务与反应式注入、贡献点与依赖声明、事件与瀑布、副作用事务、热替换 | [chord.md](chord.md) |
-| 游戏引擎 | `Arc.Illusory` | `std/Illusory/` | VR 优先游戏引擎：Actor+Component、World/SimulationTick 确定性仿真、async 行为（RFC 049） | [illusory.md](illusory.md) |
-| 拟真引擎 | 规划中 | 规划中 | 程序化生成有机自然 3D 内容 + 承载渲染（内容生成能力域，独立于 Illusory） | [realism-engine.md](realism-engine.md) |
-
-> **拟真引擎与游戏引擎的区别**：[Arc.Illusory](illusory.md) 是**游戏引擎**（驱动可动元素、确定性步进，RFC 049）；[拟真引擎](realism-engine.md) 是**程序化内容生成 / 3D 呈现**能力域（数据→场景→呈现闭环）。两者不混淆。
+| 拟真引擎 | 规划中 | 规划中 | 程序化生成有机自然 3D 模型（生成层·资产层·承载渲染层） | [realism-engine.md](realism-engine.md) |
 
 ## 阅读顺序
 
@@ -34,12 +31,10 @@ Arc 领域库在语言核心与标准库基础面之上，按单一惯用法平�
 6. [networking-p2p.md](networking-p2p.md) —— 网络编程
 7. [di.md](di.md) —— 依赖注入
 8. [chord.md](chord.md) —— 插件内核
-9. [illusory.md](illusory.md) —— 游戏引擎
-10. [realism-engine.md](realism-engine.md) —— 拟真引擎（规划）
 
 ## 与其它文档的分工
 
-- **设计决策**：各领域库的取舍与架构详见 `docs/rfc/` 的领域 RFC（UI、AI 宿主、ORM、Web、AI 推理、P2P、Illusory 等分册）。
+- **设计决策**：各领域库的取舍与架构详见 `docs/rfc/` 的领域 RFC（UI、AI 宿主、ORM、Web、AI 推理、P2P 等分册）。
 - **语言与基础库**：语言级泛型、表达式树、可空与绑定机制、`Arc.Collections`/`Arc.IO`/`Arc.Text` 等基础面见[标准库架构](../user-guide/13-standard-library.md)与[语言规范](../user-guide/index.md)。
 - **协议层**：HTTP/TCP/WebSocket/QUIC 的协议级细节见 `docs/rfc/025-networking.md`；P2P 见 `docs/rfc/042-p2p.md`；本分册只讲开发者在 `Arc.Net` 之上的使用方式。
 

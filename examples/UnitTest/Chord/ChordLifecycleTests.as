@@ -18,7 +18,7 @@ public class ChordLifecycleTests
         ChordContext tone = app.Tone(new TagTone("tag", "cfg-value"));
         Assert.True(tone.IsActive);
         Assert.Equal("tag", tone.Scope.Name);
-        Assert.Equal("cfg-value", tone.Scope.Config);
+        Assert.Equal("cfg-value", (string)tone.Scope.Config);
     }
 
     [Fact]
@@ -34,7 +34,7 @@ public class ChordLifecycleTests
             throw new Exception("apply boom");
         });
         Assert.False(tone.IsActive);
-        Assert.Equal(ScopeStatus.Failed, tone.Scope.Status);
+        Assert.Equal((int)ScopeStatus.Failed, (int)tone.Scope.Status);
         Assert.Equal("apply boom", tone.Scope.Error);
         Assert.Equal(1, log.Count);
         Assert.Equal("reverted", log[0]);

@@ -67,7 +67,10 @@ public class ExecutorStressTests
         {
             int sc = await tasks[i];
             total += sc;
-            if (sc > maxSeen) maxSeen = sc;
+            if (sc > maxSeen)
+            {
+                maxSeen = sc;
+            }
         }
         // 确定性：每任务已完成（自校验抛异常即失败）。
         Assert.True(total > 0);

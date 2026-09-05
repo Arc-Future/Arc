@@ -1438,7 +1438,10 @@ impl<'a> FnEmitter<'a> {
             }
             // RFC 048: 命名管道门面（本机 IPC · rt_pipe_* 同步面）。
             Some(BuiltinFacadeKind::Pipe)
-                if matches!(receiver_type, "NamedPipeServerStream" | "NamedPipeClientStream") =>
+                if matches!(
+                    receiver_type,
+                    "NamedPipeServerStream" | "NamedPipeClientStream"
+                ) =>
             {
                 self.try_emit_pipe_method(receiver, method, args)
             }

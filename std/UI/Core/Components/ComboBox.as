@@ -129,7 +129,7 @@ internal class ComboBoxBase : Selector {
         _dropDownList.ItemHeight = rowH;
         _dropDownList.Width = dropW;
         _dropDownList.Height = rowH * (double)count;
-        _dropDownList.ItemsSource = items;
+        _dropDownList.ItemsSource = view;
         _dropDown.PlacementX = chromeX;
         _dropDown.PlacementY = chromeY + chromeH;
         _dropDown.Open();

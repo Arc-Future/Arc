@@ -2,7 +2,7 @@
 
 ## 概述
 
-`Arc.Net` 是 Arc 的网络编程域，以 `std/Net/Core`（`Arc.Net`）为核心，`std/Net/P2P`（`Arc.Net.P2P`）、`std/Net/Pipes`（`Arc.Net.Pipes`）、`std/Net/Grpc`（`Arc.Net.Grpc`）为显式依赖子库交付。设计目标：HTTP/WebSocket/TCP/UDP 以 C# 惯用表面呈现、单一门面、版本自动协商、全异步；P2P 以独立栈交付对等身份与传输。协议逻辑全部以 Arc 实现于 std，编译器核心零嵌协议。
+`Arc.Net` 是 Arc 的网络编程域，以 `std/Net`（`Arc.Net`）与 `std/Net.P2P`（`Arc.Net.P2P`）两个显式依赖子库交付。设计目标：HTTP/WebSocket/TCP/UDP 以 C# 惯用表面呈现、单一门面、版本自动协商、全异步；P2P 以独立栈交付对等身份与传输。协议逻辑全部以 Arc 实现于 std，编译器核心零嵌协议。
 
 本册讲如何使用 `Arc.Net` 开发网络应用；Web 应用框架（`WebApplication`、路由、SSR）见 [web.md](web.md)。
 

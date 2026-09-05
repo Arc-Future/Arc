@@ -2,6 +2,8 @@
 
 本章详细说明如何在 Arc 项目中集成第三方 Native 组件——以浏览器引擎（WebView2 / CEF / Miniblink）为典型案例，覆盖从契约声明到窗口嵌入的完整链路。
 
+> **平台现状（1.0）**：本章完整链路以 **Windows** 为交付与验证面（示例库 WebView2/CEF/Miniblink 均为 Windows 组件）。`.ani` 契约、编译期符号验证与动态库机制本身平台中立（命名规则 `.dll`/`.so`/`.dylib` 见 [12 运行时 ABI](12-runtime-abi.md)）；`WindowHost` 原生窗口句柄 API 在 runtime 层为三平台实现（映射见「原生窗口集成」），但 Linux/macOS 的 Arc.UI 渲染链与原生模块 vendor 未随 1.0 交付（wgpu 底座 M3+；平台能力边界见 [11 编译模型](11-compilation-model.md)）——相关示例请在 Windows 上验证。
+
 Arc 提供**两条互补路径**集成 Native 组件，开发者可根据场景选择：
 
 | 路径 | 适用场景 | 核心机制 | 对标 C# |
@@ -407,7 +409,7 @@ AssemblyLoadContext.Default.Use<BrowserPluginLifecycle>();
 
 ## 原生窗口集成
 
-浏览器引擎需要附着到原生窗口。Arc 通过 `WindowHost` 提供跨平台原生窗口句柄提取能力。
+浏览器引擎需要附着到原生窗口。Arc 通过 `WindowHost` 提供原生窗口句柄提取能力——runtime 层窗口后端按平台实现（下表为各平台句柄映射）。**1.0 已验证并随包交付的面为 Windows**；Linux（X11）/macOS（AppKit）后端已接线但未随 1.0 验收（UI/vendor 面边界见 [11 编译模型](11-compilation-model.md)），示例请以 Windows 为准。
 
 ### 平台句柄映射
 

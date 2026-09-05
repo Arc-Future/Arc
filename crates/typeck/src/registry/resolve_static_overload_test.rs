@@ -254,4 +254,90 @@ public static class Assert {
             }
         }
     }
+
+    #[test]
+    fn soft_match_nested_func_param_against_unbound_lambda() {
+        // Chord OnWaterfall 形态：handler 形参为嵌套 Func
+        // `Func<object, Func<object,object>, object>`，实参 λ 未绑定
+        // （`Func_Infer_Infer_Infer`）。旧 arity=None 回溯按 count 升序取首解，
+        // 把嵌套组误切作 ret（arity 1）→ 软匹配零候选 → 回退首签名错绑
+        // （expected 2 / found 3）。须以实参 λ 元数为目标 arity 重解析期望签名。
+        let src = r#"
+public class ChordContext {
+    public void OnWaterfall(string name, object handler) { }
+    public void OnWaterfall(string name, Func_object_Func_object_object_object handler) { }
+    public void OnWaterfall(string name, Func_object_Func_object_object_object handler, bool prepend) { }
+}
+"#;
+        let program = Parser::parse_program(src).unwrap();
+        let mut hir = HirBuilder::new();
+        let module = hir.lower_program(&program).unwrap();
+        let reg = TypeRegistry::from_module(&module);
+        let ctx = AccessContext::none();
+        // 直接单测 func_name_infer_compatible 语义（经 soft 解析的 3 参候选）。
+        let result = reg.resolve_method_overload_lambda_soft(
+            &"ChordContext".into(),
+            &"OnWaterfall".into(),
+            &[
+                "string".into(),
+                "Func_Infer_Infer_Infer".into(),
+                "bool".into(),
+            ],
+            &ctx,
+        );
+        match result {
+            Ok((_, sig)) => {
+                assert_eq!(
+                    sig.params.len(),
+                    3,
+                    "expected 3-param overload to win, got {sig:?}"
+                );
+            }
+            Err(e) => panic!("soft resolve failed: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn generic_template_link_picks_func_form_for_unbound_lambda() {
+        // Chord Provide 形态：`Provide<T>(T)` 与 `Provide<T>(Func<T>)` 双泛型
+        // 重载；调用 `app.Provide<Greeter>(() => …)` 实参为未绑定 λ
+        //（`Func_Infer`）。模板唯一匹配须按 λ 软兼容命中 Func<T> 形——否则
+        // 回退替换后基底（`Provide_Func_Greeter`）+ 后缀与 mono 模板名
+        //（`Provide_Func_T__Greeter`）分叉 → arc-prune-001。
+        let src = r#"
+public class Greeter { }
+public class ChordContext {
+    public IDisposable Provide<T>(T instance) where T : class { return null; }
+    public IDisposable Provide<T>(Func_T factory) where T : class { return null; }
+}
+public interface IDisposable { }
+"#;
+        let program = Parser::parse_program(src).unwrap();
+        let mut hir = HirBuilder::new();
+        let module = hir.lower_program(&program).unwrap();
+        let reg = TypeRegistry::from_module(&module);
+        let ctx = AccessContext::none();
+        let base = reg
+            .method_generic_template_link_name(
+                &"ChordContext".into(),
+                &"Provide".into(),
+                &["Func_Infer".into()],
+                &["Greeter".into()],
+                &ctx,
+            )
+            .unwrap_or_else(|| {
+                reg.method_generic_template_link_name_by_arity(
+                    &"ChordContext".into(),
+                    &"Provide".into(),
+                    1,
+                    1,
+                    &ctx,
+                )
+                .unwrap_or_else(|| panic!("no template base found for Provide<Greeter>(lambda)"))
+            });
+        assert!(
+            base.ends_with("Provide_Func_T"),
+            "expected placeholder base `..._Provide_Func_T`, got {base}"
+        );
+    }
 }

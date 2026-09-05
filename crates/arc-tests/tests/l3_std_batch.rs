@@ -17,10 +17,9 @@ fn std_list_capacity_batch() {
     // setter 按值扩容且保留既有元素（realloc 语义）。
     let results = build_and_run_batch(
         "std_list_capacity",
-        &[
-            BatchCase {
-                name: "list_capacity_grow",
-                src: r#"using Arc;
+        &[BatchCase {
+            name: "list_capacity_grow",
+            src: r#"using Arc;
 using Arc.Collections;
 
 void Main() {
@@ -35,8 +34,7 @@ void Main() {
     Console.WriteLine("ARC_CASE:list_capacity_grow:PASS");
 }
 "#,
-            },
-        ],
+        }],
     );
 
     let r = batch_case_result(&results, "list_capacity_grow");
@@ -57,10 +55,9 @@ fn std_barcode_code39_batch() {
     // 'A' 首元素宽 bar 黑（模块 16..18，x∈[52,58)）。
     let results = build_and_run_batch_with_deps(
         "std_barcode_code39",
-        &[
-            BatchCase {
-                name: "barcode_code39_render",
-                src: r#"using Arc;
+        &[BatchCase {
+            name: "barcode_code39_render",
+            src: r#"using Arc;
 using Arc.Drawing;
 
 void Main() {
@@ -74,8 +71,7 @@ void Main() {
     Console.WriteLine("ARC_CASE:barcode_code39_render:PASS");
 }
 "#,
-            },
-        ],
+        }],
         &[("Arc.Drawing", "Drawing")],
     );
 
@@ -321,7 +317,10 @@ void Main() {
     );
 
     for res in &results {
-        eprintln!("=== {} passed={:?} err={:?}\n{}", res.name, res.passed, res.error, res.stdout);
+        eprintln!(
+            "=== {} passed={:?} err={:?}\n{}",
+            res.name, res.passed, res.error, res.stdout
+        );
     }
 
     let r = batch_case_result(&results, "process_read_eof");

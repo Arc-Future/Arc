@@ -19,4 +19,11 @@ pub enum CodegenError {
     /// 具名诊断由 message 携带（以 `arc-prune-001` 开头，供 CLI 渲染）。
     #[error("{0}")]
     Completeness(String),
+    /// 非 Windows 目标上的 try/catch 编译门（`arc-eh-001`）。
+    ///
+    /// Windows SEH 是 1.0 唯一实现的 zero-cost EH 面；POSIX Itanium 属
+    /// 里程碑⑨ / 1.1+（RFC 010）。message 携带 `arc-eh-001` 前缀与
+    /// 命中函数/源文件（供 CLI 渲染与回归断言）。
+    #[error("{0}")]
+    UnsupportedTryCatch(String),
 }

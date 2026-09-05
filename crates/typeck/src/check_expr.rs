@@ -2101,10 +2101,37 @@ impl TypeChecker {
                                     )
                                 })
                                 .or_else(|_| {
-                                    // Expression<T> 等仍可能需要 name-only 首签名（历史路径）。
-                                    self.registry
-                                        .resolve_method(&tname, method, &self.access_ctx())
-                                        .map(|sig| (tname.clone(), sig))
+                                    // 扩展方法优先于 name-only 兜底（C# 语义：实例候选
+                                    // 无一适用时回落扩展方法；同名单实例方法不得屏蔽扩展）。
+                                    // 命中即返回 Err，令外层 resolve_result 的 Err 臂走
+                                    // 既有扩展处理路径（含 λ 目标参数定向与泛型实例化）。
+                                    // 未命中再回退 name-only 首签名（Expression<T> 等历史路径）。
+                                    let ext_type_arg_names: Vec<ast::Ident> = type_args
+                                        .iter()
+                                        .filter_map(|t| {
+                                            let ty = self.lower_type(&t.node).ok()?;
+                                            Some(type_id_to_field_name(&ty))
+                                        })
+                                        .collect();
+                                    match self.registry.resolve_extension_with_arg_types(
+                                        &tname,
+                                        method,
+                                        args.len(),
+                                        &ext_type_arg_names,
+                                        &arg_type_names,
+                                        &self.access_ctx(),
+                                    ) {
+                                        Ok(Some(_)) => {
+                                            Err(crate::oop_types::OopError::NoMatchingOverload {
+                                                ty: tname.to_string(),
+                                                method: method.to_string(),
+                                            })
+                                        }
+                                        _ => self
+                                            .registry
+                                            .resolve_method(&tname, method, &self.access_ctx())
+                                            .map(|sig| (tname.clone(), sig)),
+                                    }
                                 })
                         }
                     } else {
@@ -2290,8 +2317,7 @@ impl TypeChecker {
                                     // 否则单元素集合被独立推断为元素类型
                                     //（`app.Inject(["dep"], cb)` → string）。
                                     if let Expr::CollectionExpr { .. } = &rewritten_args[i].node {
-                                        let expected_tid =
-                                            resolve_named_type_id(param.ty.clone());
+                                        let expected_tid = resolve_named_type_id(param.ty.clone());
                                         if matches!(&expected_tid, TypeId::Array { .. })
                                             && self.try_bind_collection_array_target(
                                                 &rewritten_args[i].node,
@@ -2405,6 +2431,29 @@ impl TypeChecker {
                                         let pname = &param.name;
                                         let pty = &param.ty;
                                         let aty = self.check_expr_at(arg.span, &arg.node)?.ty;
+                                        // Func/Action 形参收到内联 lambda：目标形参解构后
+                                        // 做定向校验（arity + 方法解析 + 返回类型），跳过
+                                        // 名字比对——未绑定 lambda 的 Func_Infer 名与目标
+                                        // mangle 名不相等（与实例方法路径 2258-2284 同规则）。
+                                        if matches!(aty, TypeId::Func { .. })
+                                            && (pty.as_str() == "Func"
+                                                || pty.as_str().starts_with("Func_")
+                                                || pty.as_str() == "Action"
+                                                || pty.as_str().starts_with("Action_"))
+                                        {
+                                            if let Expr::Lambda(l) = &arg.node {
+                                                if let Some(TypeId::Func { params, ret }) =
+                                                    demangle_func_type_with(
+                                                        pty.as_str(),
+                                                        l.params.len(),
+                                                        &|s| self.registry.types.contains_key(s),
+                                                    )
+                                                {
+                                                    self.check_func_lambda(l, &params, &ret)?;
+                                                }
+                                                continue;
+                                            }
+                                        }
                                         let expected = TypeId::Named(pty.clone());
                                         if !self.types_compatible(&expected, &aty) {
                                             return Err(TypeError::Mismatch {

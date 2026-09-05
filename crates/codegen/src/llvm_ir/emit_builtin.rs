@@ -460,9 +460,7 @@ impl<'a> FnEmitter<'a> {
                             "{size} = ptrtoint ptr getelementptr ({agg}, ptr null, i32 1) to i64"
                         ));
                         let box_ptr = self.fresh_temp();
-                        self.emit(&format!(
-                            "{box_ptr} = call ptr @calloc(i64 1, i64 {size})"
-                        ));
+                        self.emit(&format!("{box_ptr} = call ptr @calloc(i64 1, i64 {size})"));
                         let kv = self.fresh_temp();
                         self.emit(&format!("{kv} = load {agg}, ptr {key_op_val}"));
                         self.emit(&format!("store {agg} {kv}, ptr {box_ptr}"));

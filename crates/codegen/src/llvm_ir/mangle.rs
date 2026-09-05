@@ -38,8 +38,10 @@ pub(super) fn mangle_method(class: &str, method: &str) -> String {
 /// 1. `ARC_CLANG` environment variable (explicit override, all platforms)
 /// 2. Arc-managed toolchain clang（`<tools>/llvm/current` 指针 → `<ver>/bin/clang`；
 ///    `arc toolchain install llvm` 落点，见 [`sdk_layout::toolchain_llvm_clang_path`]）
-/// 3. Windows-only probe of known LLVM install locations
-/// 4. `clang` on PATH (fallback, all platforms)
+/// 3. SDK 捆绑 clang（`<sdk-root>/lib/llvm/bin/clang`，`-BundleLlm` 分发包落点，
+///    见 [`sdk_layout::bundled_llvm_clang_path`]——解压即得离线构建基线）
+/// 4. Windows-only probe of known LLVM install locations
+/// 5. `clang` on PATH (fallback, all platforms)
 ///
 /// Target triple handling is deferred to `optimize::clang_compile` / `clang_link` —
 /// this function is a pure path resolver.
@@ -52,6 +54,9 @@ pub fn clang_path() -> String {
         }
     }
     if let Some(p) = crate::sdk_layout::toolchain_llvm_clang_path() {
+        return p.display().to_string();
+    }
+    if let Some(p) = crate::sdk_layout::bundled_llvm_clang_path() {
         return p.display().to_string();
     }
     if cfg!(windows) {

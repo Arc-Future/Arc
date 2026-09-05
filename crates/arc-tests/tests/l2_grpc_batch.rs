@@ -47,10 +47,9 @@ fn assert_all_passed(batch: &str, results: &[arc_tests::BatchRunResult]) {
 fn runs_l2_grpc_route_batch() {
     let results = assert_compiles_and_runs_batch_with_deps(
         "grpc_route",
-        &[
-            (
-                "grpc_route_echo_roundtrip",
-                r#"using Arc;
+        &[(
+            "grpc_route_echo_roundtrip",
+            r#"using Arc;
 using Arc.Net;
 using Arc.Net.Grpc;
 using Arc.Collections;
@@ -137,8 +136,7 @@ void Main() {
     Console.WriteLine("ARC_CASE:grpc_route_echo_roundtrip:PASS");
 }
 "#,
-            ),
-        ],
+        )],
         &[("Arc.Net", "Net/Core"), ("Arc.Net.Grpc", "Net/Grpc")],
     );
     assert_all_passed("grpc_route", &results);
@@ -149,7 +147,9 @@ void Main() {
             .expect("case result present")
     };
     assert!(
-        get("grpc_route_echo_roundtrip").stdout.contains("grpc-h2-connected"),
+        get("grpc_route_echo_roundtrip")
+            .stdout
+            .contains("grpc-h2-connected"),
         "echo case should log h2 handshake; stdout: {}",
         get("grpc_route_echo_roundtrip").stdout
     );

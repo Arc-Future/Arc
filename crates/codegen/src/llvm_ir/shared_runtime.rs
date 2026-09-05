@@ -44,9 +44,7 @@ impl SharedRuntimeArtifact {
     /// 的导入表项），其余平台直接以共享库本体为输入（链接器记录 SONAME /
     /// install_name 引用）。
     pub(crate) fn link_input(&self) -> PathBuf {
-        self.import_lib
-            .clone()
-            .unwrap_or_else(|| self.lib.clone())
+        self.import_lib.clone().unwrap_or_else(|| self.lib.clone())
     }
 }
 
@@ -158,15 +156,23 @@ pub(crate) fn build_shared_runtime(
         return Err(CodegenError::Llvm("shared runtime link failed".into()));
     }
 
-    Ok(SharedRuntimeArtifact { lib: lib_path, import_lib })
+    Ok(SharedRuntimeArtifact {
+        lib: lib_path,
+        import_lib,
+    })
 }
 
 /// 共享库输出路径（按 target 三元组选扩展名，host 回退按编译期平台）。
 fn shared_lib_path(work_dir: &Path, target: Option<&str>) -> PathBuf {
-    let ext = if target.map(|t| t.contains("msvc") || t.contains("windows-gnu")).unwrap_or(cfg!(target_os = "windows"))
+    let ext = if target
+        .map(|t| t.contains("msvc") || t.contains("windows-gnu"))
+        .unwrap_or(cfg!(target_os = "windows"))
     {
         "dll"
-    } else if target.map(|t| t.contains("darwin")).unwrap_or(cfg!(target_os = "macos")) {
+    } else if target
+        .map(|t| t.contains("darwin"))
+        .unwrap_or(cfg!(target_os = "macos"))
+    {
         "dylib"
     } else {
         "so"
@@ -319,8 +325,8 @@ mod tests {
             assert!(implib.exists(), "missing import lib: {}", implib.display());
         }
 
-        let def_text = fs::read_to_string(work_dir.join(format!("{RUNTIME_LIB_STEM}.def")))
-            .expect("def file");
+        let def_text =
+            fs::read_to_string(work_dir.join(format!("{RUNTIME_LIB_STEM}.def"))).expect("def file");
         assert!(
             def_text.lines().any(|l| l.trim() == "rt_type_init"),
             "def must export core rt symbols"

@@ -541,9 +541,13 @@ public class LivePreviewHost : VisualHost {
             switch (content)
             {
                 case Content.Text(s):
+                {
                     return s;
+                }
                 default:
+                {
                     break;
+                }
             }
         }
         return null;

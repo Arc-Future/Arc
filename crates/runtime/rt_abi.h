@@ -1819,9 +1819,15 @@ void           rt_worker_mark_unparked(rt_worker_ctx* w); /* 标记 worker 唤�
  * 公共 ABI 通过 rt_worker_ctx* 间接操作 preempt 字段。
  *
  * 平台：
- *   - Linux: SIGURG（Go 1.14 方案）
+ *   - Linux: SIGURG（Go 1.14 方案；`rt_preempt.c` 现仅 __linux__ 启用，
+ *     macOS/BSD 定义 SIGURG 但无 sigqueue(2)，走降级——平台审计 S2 #5）
  *   - Windows: QueueUserAPC
  *   - 降级：rt_preempt_is_supported() == 0 时协作式
+ *
+ * 现状注记（平台审计 S2 #6）：**注入侧尚未接线**——rt_preempt_signal_impl /
+ * rt_preempt_init 当前零调用方（定时器轮未触发），await 点的
+ * rt_worker_preempt_check/clear 面已由 codegen 发射；实际语义为协作式
+ * 检测钩子预留。宣称的「1ms 定时抢占」须在调度器接线并协议验证后生效。
  *
  * 设计要点：
  *   - rt_preempt_check: await 边界主动检查（codegen 生成在 __async_resume_* 内）

@@ -32,7 +32,7 @@ public class MultiSelector : Selector {
     private void SetupMulti() {
         this.Type = typeof(MultiSelector);
         this.TypeName = "MultiSelector";
-        _selectedItems = new List<string>();
+        _selectedItems = new List<object>();
     }
 
     private List<object> _selectedItems;
@@ -85,7 +85,7 @@ public class MultiSelector : Selector {
             this.SelectIndex(index);
             return;
         }
-        string item = this.ItemDataAt(index);
+        object item = this.ItemDataAt(index);
         if (item == null) {
             return;
         }

@@ -178,7 +178,7 @@ SwitchTheme("Dark");   // 或 "Light"
 
 ### CodeEditor
 
-代码编辑控件 `Arc.UI.Components.CodeEditor` 实现于 **`Arc.UI.Edit`** 组件库（`std/UI/Edit/`；编辑内核 `Arc.UI.Editing` 的 `TextBuffer`/`LineIndex`/`EditorViewport` 视口虚拟化 + mmap piece-table），支持基础样式定制。经显式装配，编辑器可承载多标签页工作区，标签页关闭按钮遵循 VSCode 风格（激活态常显、非激活态悬停显）。
+`Arc.UI.Components.CodeEditor` 提供代码编辑控件，支持基础样式定制。经显式装配，编辑器可承载多标签页工作区，标签页关闭按钮遵循 VSCode 风格（激活态常显、非激活态悬停显）。
 
 ### 显式装配
 

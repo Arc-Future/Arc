@@ -37,7 +37,14 @@
  * 等待侧：Enter 即将阻塞前记录 {tid, obj, since}（离开阻塞清除）。
  * 持有侧：Enter 成功后登记 obj→owner tid，Leave 前清除。
  * 转储（rt_threadpool.c rt_diag_maybe_dump）输出全部等待者与持锁者，
- * 直接呈现「谁等哪把锁、锁被谁持有」的死锁图。 */
+ * 直接呈现「谁等哪把锁、锁被谁持有」的死锁图。
+ *
+ * 平台守卫：Win32 专用（GetCurrentThreadId / _Interlocked 原子 / GetTickCount64）。
+ * POSIX 侧不编译取证侧表，仅保留跨文件符号空实现（rt_task.c 的嵌套审计
+ * 查询恒 NULL、rt_threadpool.c 转储为空）——此前依赖死代码与 gc-sections
+ * 侥幸通过 POSIX 编译（平台审计 S2 #4）。 */
+#if defined(_WIN32)
+
 typedef struct rt_mon_diag_slot {
     volatile long      tid;      /* 0=空闲 */
     void*              obj;
@@ -148,6 +155,26 @@ void rt_mon_diag_dump(void) {
         }
     }
 }
+
+#else
+/* POSIX：无取证侧表。跨文件引用符号保持可链接：
+ * - rt_mon_diag_current_owner_obj_of：嵌套审计查询 → 恒 NULL
+ * - rt_mon_diag_current_owner_obj / rt_mon_diag_dump：空实现
+ * 静态 hooks（waiter_begin/end、owner_set/clear）仅 Windows 调用点使用，
+ * POSIX 无需占位。 */
+void* rt_mon_diag_current_owner_obj(void) {
+    return NULL;
+}
+
+void* rt_mon_diag_current_owner_obj_of(long tid) {
+    (void)tid;
+    return NULL;
+}
+
+void rt_mon_diag_dump(void) {
+    /* no-op on POSIX */
+}
+#endif
 
 #ifdef _WIN32
   #include <process.h> /* _beginthreadex（重复包含无害） */

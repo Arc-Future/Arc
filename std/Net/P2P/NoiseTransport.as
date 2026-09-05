@@ -1,8 +1,9 @@
 // RFC 042 M5 P0-2: Noise XK 安全传输——byte[] 全接线（N3 债清偿）。
 //
-// 真实面（regular class，AesGcm 模式：私有 [Builtin] `_XxxArr` 经 codegen
-// 拦截直射 vendored crypto_native.dll 的 `rt_noise_*_arr` ABI——RtArray
-// byte[] 语义见 rt_abi.h；公开方法为真实体，负责参数校验与对象语义）：
+// 真实面（regular class：私有 [Builtin] `_XxxArr` 经 codegen 拦截直射
+// **原生 runtime** 的 `rt_noise_*_arr` ABI——crates/runtime/rt_noise.c 随程序
+// 编译、跨平台可移植，不经 vendored crypto_native.dll；RtArray byte[] 语义
+// 见 rt_abi.h；公开方法为真实体，负责参数校验与对象语义）：
 //   - SecureSession.Create → rt_noise_session_create_arr（32B X25519 静态
 //     密钥装载 + 协议名 MixHash；返回对象，不透明会话句柄经 Handle 导出）。
 //   - NoiseTransport.Initiate → rt_noise_initiate_handshake_arr：msg1 =

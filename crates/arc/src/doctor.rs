@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use crate::env::{snapshot, EnvSnapshot, ARC_CLANG_ENV, ARC_HOME_ENV, ARC_STD_ROOT_ENV};
-use codegen::sdk_layout::{SdkLayoutKind, ARC_SDK_ROOT_ENV};
+use codegen::sdk_layout::{installed_arc_exe_name, SdkLayoutKind, ARC_SDK_ROOT_ENV};
 
 /// 单项检测结果状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,7 +188,11 @@ fn check_sdk_root(env: &EnvSnapshot, checks: &mut Vec<Check>) {
                 "sdk-root",
                 "SDK root lacks a valid layout",
                 format!("{} is not an installed or repo SDK layout", root.display()),
-                "set ARC_SDK_ROOT to an SDK root: bin/arc.exe + lib/{std,rt,native} (installed) or std/ + crates/runtime (repo)",
+                format!(
+                    "set ARC_SDK_ROOT to an SDK root: bin/{} + lib/{{std,rt,native}} (installed) \
+                     or std/ + crates/runtime (repo)",
+                    installed_arc_exe_name()
+                ),
             ));
         }
         (None, _) => {
@@ -196,7 +200,11 @@ fn check_sdk_root(env: &EnvSnapshot, checks: &mut Vec<Check>) {
                 "sdk-root",
                 "SDK root not found",
                 "self-location failed and ARC_SDK_ROOT is unset",
-                "run arc from an installed SDK (bin/arc.exe + lib/) or a repo checkout (std/ + crates/runtime), or set ARC_SDK_ROOT",
+                format!(
+                    "run arc from an installed SDK (bin/{} + lib/) or a repo checkout \
+                     (std/ + crates/runtime), or set ARC_SDK_ROOT",
+                    installed_arc_exe_name()
+                ),
             ));
         }
     }
@@ -215,7 +223,7 @@ fn check_sdk_structure(env: &EnvSnapshot, checks: &mut Vec<Check>) {
     };
     let required: Vec<PathBuf> = match env.sdk_layout {
         Some(SdkLayoutKind::Installed) => vec![
-            root.join("bin/arc.exe"),
+            root.join("bin").join(installed_arc_exe_name()),
             root.join("lib/std"),
             root.join("lib/rt"),
             root.join("lib/native"),

@@ -279,9 +279,16 @@ pub struct BatchRunResult {
 
 /// 批运行 watchdog：单 case 无进展超时秒数（§7.3/§7.4 债务 4）。
 /// 观测基线：l2_net 单跑 ~8s、其余批 <60s；§7.5 取证时挂起 case 60s+ 零输出。
-/// 120s 约为正常耗时 2 倍余量，兼顾 CI 冷机差异。
+/// 默认 180s（约为正常耗时 2~3 倍余量，兼顾 CI 冷机与受限 VM 调度差异——
+/// 全量批跑联载下慢宿主实测可达 125s+，原 120s 会误杀）；可用环境变量
+/// `ARC_BATCH_TIMEOUT_SECS` 显式覆盖（缓慢 CI 宿主调大；本地取证可调小）。
 #[cfg(feature = "full-rt")]
-const BATCH_CASE_TIMEOUT_SECS: u64 = 120;
+fn batch_case_timeout_secs() -> u64 {
+    std::env::var("ARC_BATCH_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(180)
+}
 
 /// L2 批量：N 个 case 合并为**一次**编译 + **一次**运行，逐 case 断言运行时行为。
 ///
@@ -408,7 +415,7 @@ pub fn assert_compiles_and_runs_batch_with_deps(
     // 介入。现流式读 stdout：BEGIN/PASS/FAIL 实时进度标记（eprintln，配合
     // --nocapture 可观测），per-case 无进展超时即 kill 批进程，把悬挂收敛为
     // 可诊断失败（悬挂 case 注入 watchdog 错误，后续 case 标记未执行）。
-    let case_timeout = std::time::Duration::from_secs(BATCH_CASE_TIMEOUT_SECS);
+    let case_timeout = std::time::Duration::from_secs(batch_case_timeout_secs());
     let mut child = Command::new(&out_run)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -472,7 +479,8 @@ pub fn assert_compiles_and_runs_batch_with_deps(
                 watchdog_error = Some((
                     hung.clone(),
                     format!(
-                        "watchdog: case `{hung}` 超过 {BATCH_CASE_TIMEOUT_SECS}s 无进展，批进程已终止"
+                        "watchdog: case `{hung}` 超过 {}s 无进展，批进程已终止",
+                        batch_case_timeout_secs()
                     ),
                 ));
                 break;

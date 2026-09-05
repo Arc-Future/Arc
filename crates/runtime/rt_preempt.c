@@ -62,7 +62,10 @@ void rt_preempt_signal_impl(_Atomic(int32_t)* preempt_requested) {
 
 /* ---- 平台实现：Linux SIGURG ---- */
 
-#elif defined(SIGURG)
+/* 仅 __linux__ 启用：SIGURG 在 macOS/BSD 亦定义但无 sigqueue(2)，
+ * 误入本分支会留下潜伏链接错误（平台审计 S2 #5）——此类平台走下方
+ * 协作式降级（rt_preempt_is_supported()=0，语义与文档「自动降级」一致）。 */
+#elif defined(SIGURG) && defined(__linux__)
 
 /* 平台支持标志：1=支持 SIGURG，0=降级协作式 */
 static int32_t g_preempt_supported = 1;

@@ -1,10 +1,8 @@
 # Arc 设计决策（RFC）
 
-> 本目录是 Arc **唯一权威**的设计决策记录。每份 RFC 描述一项**已接受**的最终设计：背景、决策、边界。全篇表述**确定性设计契约**，不含实现进度、状态标记或排期（实现规划见 [实现规划](../plan.md)）。
+> 本目录是 Arc **唯一权威**的设计决策记录。每份 RFC 描述一项**已接受**的最终设计：背景、决策、边界。全篇表述**确定性设计契约**，不含实现进度、状态标记或排期（实现规划见 实现规划）。
 >
 > **组织原则：一主题一文档，互不重叠。** 编号按主题聚合，非研发顺序。当多个旧文档讲同一件事时，已合并为单一文档。
->
-> **待裁决提案**：尚在草案/裁决阶段的提案（非已接受 RFC）见 [proposals 索引](proposals/index.md)。
 
 ## I · 语言核心（001–012）
 
@@ -33,7 +31,7 @@
 | [016 验证式 FFI 与 Native 加载](016-verified-ffi.md) | `.ani` 契约、符号验证、`.ani` 加载模型 | 内存模型见 005 |
 | [017 编译产物、包体系与类型身份](017-build-artifacts-packages.md) | 源码打包、动态库、跨库身份、热卸载、跨库符号共享策略（混合式）、动态库 Entry 根集可达性裁剪 | CLI 见 031；SDK 布局见 [017 references](017-build-artifacts-packages/references/index.md) |
 | [018 类型体系与反射元数据](018-type-reflection-metadata.md) | Type 体系、只读元数据、无反射调用 | 语言类型见 004 |
-| [019 自举路线图](019-self-hosting.md) | 用 Arc 写 Arc 编译器、子集边界 | 编译管线见 013；子集边界见 [019 references](019-self-hosting/references/index.md) |
+| [019 自举路线图](019-self-hosting.md) | 用 Arc 写 Arc 编译器、子集边界 | 编译管线见 013 |
 
 ## III · 标准库（020–030）
 
@@ -62,14 +60,14 @@
 | [035 调试器与 MIR 解释器](035-debugger.md) | DAP、异步栈重建、MIR 解释器 | 编译管线见 013 |
 | [036 成熟度与基础面稳定](036-maturity.md) | 三硬要求、基础面冻结、宣称纪律 | 具体性能门禁见 013 |
 
-## V · 领域库（037–043）
+## V · 领域库（037–043 · 045）
 
 | 编号 | 主题 | 边界（不在此篇） |
 |------|------|----------------|
 | [037 UI 声明式框架](037-ui.md) | ARML、渲染、虚拟化、数据驱动、自适应、自定义字体最小面 | 语言级泛型/表达式树见 011/012；字体细节见 [037-ui/references/custom-fonts](037-ui/references/custom-fonts.md) |
 | [038 AI 宿主](038-ai-host.md) | 会话、工具、HITL、Wiki、CodeAct、MCP；**AIPlan/PlanGate**；**冲突织物**（Coordinator 升维）；**小模型能力调用**（统一门面 `AIModels` 直调 + Agent 会话内可选集成） | 推理见 041；Harness/AIRfc 见 043 |
 | [039 ORM 与 SQL 翻译](039-orm.md) | 表达式树翻译、方言 Provider、实体物化 | 表达式树机制见 011 |
-| [040 Web 框架与 SSR](040-web.md) | WebApplication、IMediator、路由、SSR | 网络协议层见 025；SSR 插槽见 [040 references](040-web/references/index.md) |
+| [040 Web 框架与 SSR](040-web.md) | WebApplication、IMediator、路由、SSR | 网络协议层见 025 |
 | [041 AI 推理](041-ai-inference.md) | `Arc.AI` 张量/IAIModel、Onnx/Iree 后端；**小模型基础设施**（AIModelRegistry/AIModelService/统一门面 `AIModels` 与域子面；请求/响应模型 OpenAI 协议对齐；**流式契约** TTS/ASR §7.9 sink 回调） | Agent 宿主见 038 |
 | [042 P2P 网络](042-p2p.md) | `Arc.Net.P2P` 传输/协商/DHT/NAT/中继/PubSub | 协议层见 025 |
 | [043 Coding Agent Harness 工程](043-harness.md) | Harness 基座 + Coding；**AIRfc**；双环/DoD；复用 AIPlan；冲突织物消费约定 | 宿主/Plan/租约见 038；[conflict-fabric](043-harness/references/conflict-fabric.md)；代码图见 034；QIF 见 032 |

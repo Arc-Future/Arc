@@ -333,7 +333,7 @@ public class AssertTests
     }
 
     // ── Single(predicate)：Arc MIR lowering 暂不支持 泛型 + Func<T,bool> 组合 ──
-    // TODO: 待 Arc 泛型委托支持完善后恢复
+    // 恢复条件：Arc 泛型委托支持完善后（当前 MIR 不支持泛型与 Func<T,bool> 组合）。
 
     // ── List 元素路径（Contains / DoesNotContain）──
 
@@ -405,7 +405,7 @@ public class AssertTests
     }
 
     // ── All / Any：Arc MIR lowering 暂不支持 泛型 + Func<T,bool> 组合 ──
-    // TODO: 待 Arc 泛型委托支持完善后恢复
+    // 恢复条件：Arc 泛型委托支持完善后（当前 MIR 不支持泛型与 Func<T,bool> 组合）。
 
     // ── Assert.Fail ──
 

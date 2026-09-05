@@ -172,10 +172,35 @@ pub fn clang_link(
     }
     if matches!(level, OptLevel::Release) && !target.map(mangle::is_wasm_triple).unwrap_or(false) {
         cmd.arg("-flto=thin");
-        if cfg!(target_os = "windows") && target.is_none_or(|t| t.contains("msvc")) {
-            cmd.arg("-fuse-ld=lld-link");
-        } else {
-            cmd.arg("-fuse-ld=lld");
+        // ThinLTO 链接器按**目标**选择（S1 平台审计 #4/#6：不可按宿主 cfg 决策）：
+        // - Windows MSVC → lld-link；Windows GNU/MinGW → lld（COFF GNU 口味）
+        // - ELF 系（Linux / OHOS）→ lld（`ld.lld`）
+        // - macOS → 不注入：Apple clang 无 lld，`-fuse-ld=lld` 注入即 Release 必败；
+        //   系统 ld64 原生支持 thin LTO，走工具链默认链接器
+        // - Host（未指定 target）→ 按宿主 OS 套同规则
+        let windows_linker = |t: Option<&str>| {
+            if t.is_none_or(|x| x.contains("msvc")) {
+                "-fuse-ld=lld-link"
+            } else {
+                "-fuse-ld=lld"
+            }
+        };
+        match mangle::target_os(target) {
+            mangle::TargetOs::Windows => {
+                cmd.arg(windows_linker(target));
+            }
+            mangle::TargetOs::Linux | mangle::TargetOs::Ohos => {
+                cmd.arg("-fuse-ld=lld");
+            }
+            mangle::TargetOs::Macos => {}
+            mangle::TargetOs::Host => {
+                if cfg!(windows) {
+                    cmd.arg(windows_linker(target));
+                } else if cfg!(target_os = "linux") {
+                    cmd.arg("-fuse-ld=lld");
+                }
+            }
+            mangle::TargetOs::WebAssembly | mangle::TargetOs::Wasi => {}
         }
     }
     for flag in extra_flags {
@@ -367,6 +392,47 @@ mod tests {
             args.contains(&format!("-fuse-ld={expected_fuse_ld}")),
             "Release link missing -fuse-ld={expected_fuse_ld}: {:?}",
             args
+        );
+    }
+
+    #[test]
+    fn release_linker_follows_target_not_host() {
+        let args_of = |target: Option<&str>| -> Vec<String> {
+            let cmd = clang_link(
+                "clang",
+                &[Path::new("a.o")],
+                Path::new("out"),
+                target,
+                OptLevel::Release,
+                &[],
+            );
+            cmd.get_args()
+                .map(|a| a.to_string_lossy().to_string())
+                .collect()
+        };
+        // Linux / OHOS（ELF）目标 → lld（与宿主无关）。
+        let linux = args_of(Some("x86_64-unknown-linux-gnu"));
+        assert!(
+            linux.contains(&"-fuse-ld=lld".to_string()),
+            "linux target missing -fuse-ld=lld: {linux:?}"
+        );
+        // macOS 目标 → 不注入（Apple clang 无 lld；系统 ld64 原生 thin LTO）。
+        let mac = args_of(Some("x86_64-apple-darwin"));
+        assert!(
+            !mac.iter().any(|a| a.starts_with("-fuse-ld=")),
+            "macOS target must not force -fuse-ld: {mac:?}"
+        );
+        // Windows MSVC → lld-link。
+        let msvc = args_of(Some("x86_64-pc-windows-msvc"));
+        assert!(
+            msvc.contains(&"-fuse-ld=lld-link".to_string()),
+            "msvc target missing -fuse-ld=lld-link: {msvc:?}"
+        );
+        // Windows GNU/MinGW → lld（COFF GNU 口味）。
+        let gnu = args_of(Some("x86_64-pc-windows-gnu"));
+        assert!(
+            gnu.contains(&"-fuse-ld=lld".to_string()),
+            "windows-gnu target missing -fuse-ld=lld: {gnu:?}"
         );
     }
 

@@ -13,7 +13,7 @@ Arc 标准库以 Arc 源码组织于 `std/`，按 `.as` 模块划分。编译器
 
 ## Arc.Net / Arc.Net.P2P 能力面与诚实边界
 
-Arc.Net（`std/Net/`，`using Arc.Net;`）与 Arc.Net.P2P（`std/Net/P2P/`，`using Arc.Net.P2P;`）为显式依赖的领域子库。各能力面按最终设计锁定 API 与诚实边界：未实现的面返回真 `NotImplementedException`（禁返回空 / `null` 假面冒充实现）；本地闭环通过 ≠ 实网 / 生态互操作，验收通过前禁宣称。
+Arc.Net（`std/Net/`，`using Arc.Net;`）与 Arc.Net.P2P（`std/Net.P2P/`，`using Arc.Net.P2P;`）为显式依赖的领域子库。各能力面按最终设计锁定 API 与诚实边界：未实现的面返回真 `NotImplementedException`（禁返回空 / `null` 假面冒充实现）；本地闭环通过 ≠ 实网 / 生态互操作，验收通过前禁宣称。
 
 | 面 | 设计 API 与能力边界 |
 |----|------------------|
@@ -87,6 +87,36 @@ std/
 ```
 
 **包名大小写**：树与 `arc.toml` / `using` 为 `Arc.Orm.SQLite` · `Arc.Orm.PostgreSQL`（产品缩写全大写）；**以树为准**，勿为「对齐散文」改 `using`/`namespace` 破编译。
+
+## 标准库扩展开发（安装态，1.0 验收路径）
+
+标准库以**源码分发**：安装后 `lib/std/` 即完整源码树，消费端经「std 索引自动拉取」解析随包命名空间（如 `Arc.Collections`——验证：无依赖声明的应用 `using Arc.Collections` 离线构建运行通过）。
+
+扩展开发推荐**独立子库**形态（与平级子库同构，含 `arc.toml`：`name`/`namespace` 一致、`kind = "library"`）：
+
+```toml
+# MyExt/arc.toml（子库源码树，建议独立版本目录随包演进）
+[package]
+name = "MyExt"
+edition = "1"
+version = "0.1.0"
+kind = "library"
+namespace = "MyExt"
+
+[dependencies]
+# Arc 根包目录（隐式引入面）；路径指向安装 SDK 的 lib/std/Arc（正斜杠）
+"Arc" = { path = "<sdk>/lib/std/Arc" }
+```
+
+```text
+MyExt/
+├── arc.toml
+└── Greeter.as          # namespace MyExt;（using Arc; 后使用核心库）
+```
+
+- 消费端：应用 `arc.toml` 以 `[dependencies] "MyExt" = { path = "../MyExt" }` 引用，`using MyExt;` 即用。
+- 产物：`arc build MyExt --dynamic` 产出 `MyExt.dll`（`.so`/`.dylib` 随宿主）——1.0 已实测：安装态指针 `arc` 离线完成子库动态构建与应用消费。
+- **注意**：向 `lib/std` 添加**新命名空间目录**不会被索引自动解析（1.0 实测 `Arc.ExtLib` 直报 import not found）——扩展请走独立子库 + 显式 path 依赖；如需并入随包索引，应在随包命名空间内直接修改 `lib/std/Arc` 源码树（源码分发授权；升级/重装会覆盖，改动请自管版本）。
 
 ## 模块职责
 

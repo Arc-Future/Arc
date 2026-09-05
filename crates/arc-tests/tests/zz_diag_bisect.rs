@@ -259,5 +259,3 @@ async Task<void> Main() {
     );
     assert_all_passed("bisect_v4", &results);
 }
-
-

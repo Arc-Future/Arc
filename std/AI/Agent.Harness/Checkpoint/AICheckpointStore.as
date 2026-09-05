@@ -409,7 +409,7 @@ public class AICheckpointStore {
         if (len >= 0 && len <= AICheckpointStore.MaxFileContentBytes) {
             string content = File.ReadAllText(absPath);
             entry.Content = content;
-            entry.Hash = SHA256.ComputeHash(content);
+            entry.Hash = SHA256.ToHex(SHA256.ComputeHash(Encoding.GetBytes(content)));
             entry.HasContent = true;
         } else if (len > AICheckpointStore.MaxFileContentBytes) {
             // 大文件：内容寻址存储（SHA256 + 副本）；副本不可写 → 仅登记存在（诚实边界）。

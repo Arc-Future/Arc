@@ -32,7 +32,11 @@ pub fn is_delegate_type(ty: &TypeId) -> bool {
 ///
 /// Used by IndirectCall codegen so `Func<string>` / `Lazy<string>` invoke with
 /// `call ptr` rather than the legacy hardcoded `call i32` (Windows 0xC0000005).
-pub fn delegate_ret_type(ty: &TypeId, layouts: &ProgramLayouts, arg_count: usize) -> Option<TypeId> {
+pub fn delegate_ret_type(
+    ty: &TypeId,
+    _layouts: &ProgramLayouts,
+    arg_count: usize,
+) -> Option<TypeId> {
     let inner = match ty {
         TypeId::Nullable { inner } => inner.as_ref(),
         other => other,

@@ -169,7 +169,10 @@ where
                     ));
                 }
                 let idx = positional.len();
-                let expected = params.get(idx).map(|p| p.ty.clone()).unwrap_or(TypeId::Infer);
+                let expected = params
+                    .get(idx)
+                    .map(|p| p.ty.clone())
+                    .unwrap_or(TypeId::Infer);
                 let (ty, rewritten) = check_value(&a.node, &expected)?;
                 positional.push((Spanned::new(rewritten.clone(), a.span), ty, rewritten));
             }

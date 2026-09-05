@@ -14,7 +14,8 @@
 //!
 //! ```text
 //! 安装态（分发物）                      仓库态（开发，仓库自身即开发 SDK）
-//! <root>/bin/arc.exe                   <root>/std/
+//! <root>/bin/arc[.exe]                 <root>/std/
+//!   （Windows `arc.exe` / Unix `arc`）
 //! <root>/lib/std/                      <root>/crates/runtime/
 //! <root>/lib/rt/                       <root>/crates/runtime-ui/
 //!   └── runtime/、runtime-ui/、        <root>/crates/runtime-drawing/
@@ -32,9 +33,36 @@ use std::path::{Path, PathBuf};
 /// `ARC_SDK_ROOT` 环境变量名：显式指定 SDK 根（可重定位的显式覆盖）。
 pub const ARC_SDK_ROOT_ENV: &str = "ARC_SDK_ROOT";
 
-/// 安装态 SDK 根标记：`bin/arc.exe` + `lib/rt`（runtime C 源码）或 `lib/std`。
+/// 安装态 `arc` 可执行文件名：Windows `arc.exe`，其余平台 `arc`。
+///
+/// SDK 安装态根标记（[`is_installed_sdk_root`]）、`arc doctor` 结构检查与
+/// `arc self-update` 布局共用此单一解析——Unix 分发物按 `bin/arc` 落盘
+/// （`scripts/packaging/arc-install.sh` 指针布局），Windows 按 `bin/arc.exe`
+/// （`install.ps1`）。禁止各处各自 cfg 推导（双轨）。
+pub fn installed_arc_exe_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "arc.exe"
+    } else {
+        "arc"
+    }
+}
+
+/// clang 可执行文件名：Windows `clang.exe`，其余平台 `clang`。
+///
+/// toolchain 指针路径与 SDK 捆绑路径共用（clang 解析序单一来源，
+/// 供 `mangle::clang_path` 的解析链消费）。
+fn clang_exe_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "clang.exe"
+    } else {
+        "clang"
+    }
+}
+
+/// 安装态 SDK 根标记：`bin/arc[.exe]`（见 [`installed_arc_exe_name`]）
+/// + `lib/rt`（runtime C 源码）或 `lib/std`。
 fn is_installed_sdk_root(dir: &Path) -> bool {
-    if !dir.join("bin").join("arc.exe").is_file() {
+    if !dir.join("bin").join(installed_arc_exe_name()).is_file() {
         return false;
     }
     dir.join("lib").join("rt").is_dir() || dir.join("lib").join("std").is_dir()
@@ -50,9 +78,56 @@ pub fn is_sdk_root(dir: &Path) -> bool {
     is_installed_sdk_root(dir) || is_repo_sdk_root(dir)
 }
 
+/// 安装指针布局 → 活动版本 SDK 根解析。
+///
+/// 安装布局（`install.ps1` / `arc-install.sh` / `arc self-update` 同源契约）：
+/// `<R>/bin/arc(.exe)` 是活动版本的稳定副本（唯一 PATH 注入点），版本目录
+/// 在 `<R>/versions/arc-<ver>-<triple>/`（含完整 SDK）。PATH 上的指针在普通
+/// 调用路径**不 re-exec**——本解析使指针副本同样能自定位：读
+/// `<R>/versions/current` 标记 → 在 `versions/` 下找前缀 `arc-<ver>-` 且含
+/// `bin/arc(.exe)` + `lib/{std,rt}` 的版本目录，返回其作为 SDK 根。
+///
+/// 指针与版本目录内 exe 内容相同，直接解析（而非 spawn 活动版本）既保持
+/// 单进程语义，又保留指针设计对更新/回滚的收益（运行中的 exe 是根 bin 副本，
+/// 版本目录可被 `arc self-update` 安全替换）。
+fn resolve_pointer_sdk_root(install_root: &Path) -> Option<PathBuf> {
+    if !install_root
+        .join("bin")
+        .join(installed_arc_exe_name())
+        .is_file()
+    {
+        return None;
+    }
+    let versions_dir = install_root.join("versions");
+    let raw = std::fs::read_to_string(versions_dir.join("current")).ok()?;
+    let ver = raw.trim().trim_start_matches('\u{feff}').to_string();
+    if ver.is_empty() {
+        return None;
+    }
+    let prefix = format!("arc-{ver}-");
+    let entries = std::fs::read_dir(&versions_dir).ok()?;
+    for entry in entries.flatten() {
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        let sdk = entry.path();
+        if sdk.join("bin").join(installed_arc_exe_name()).is_file()
+            && (sdk.join("lib").join("rt").is_dir() || sdk.join("lib").join("std").is_dir())
+        {
+            return Some(sdk);
+        }
+    }
+    None
+}
+
 /// 自定位 SDK 根。
 ///
-/// 优先级：`ARC_SDK_ROOT` 环境变量 → `current_exe()` 向上逐级找标记目录。
+/// 优先级：`ARC_SDK_ROOT` 环境变量 → `current_exe()` 向上逐级找标记目录
+/// （安装态/仓库态/安装指针布局，见 [`resolve_pointer_sdk_root`]）。
 /// 显式环境变量即使目录缺标记也原样返回，让下游给出明确错误。
 pub fn sdk_root() -> Option<PathBuf> {
     if let Ok(root) = std::env::var(ARC_SDK_ROOT_ENV) {
@@ -66,6 +141,9 @@ pub fn sdk_root() -> Option<PathBuf> {
     loop {
         if is_sdk_root(&dir) {
             return Some(dir);
+        }
+        if let Some(sdk) = resolve_pointer_sdk_root(&dir) {
+            return Some(sdk);
         }
         if !dir.pop() {
             break;
@@ -261,12 +339,21 @@ pub fn toolchain_llvm_clang_path() -> Option<PathBuf> {
     if ver.is_empty() {
         return None;
     }
-    let name = if cfg!(target_os = "windows") {
-        "clang.exe"
-    } else {
-        "clang"
-    };
+    let name = clang_exe_name();
     let exe = llvm.join(ver).join("bin").join(name);
+    exe.is_file().then_some(exe)
+}
+
+/// SDK 捆绑 clang 路径：`<sdk-root>/lib/llvm/bin/clang[.exe]`（安装包 Phase 3
+/// `-BundleLlm` 落点；仅带捆绑 LLVM 的安装态分发物存在）。
+///
+/// 返回 `Some` 仅当 clang 文件实际存在。供 `mangle::clang_path` 在 toolchain
+/// 指针之后、系统安装位之前解析——捆绑版 LLVM 是分发包自带的离线构建基线，
+/// 自动接线后用户解压 SDK 即可离线 `arc build`，无需手工设 `ARC_CLANG`。
+pub fn bundled_llvm_clang_path() -> Option<PathBuf> {
+    let root = sdk_root()?;
+    let name = clang_exe_name();
+    let exe = root.join("lib").join("llvm").join("bin").join(name);
     exe.is_file().then_some(exe)
 }
 
@@ -289,7 +376,7 @@ mod tests {
     fn installed_layout_marker_detected() {
         let root = temp_dir("installed");
         std::fs::create_dir_all(root.join("bin")).unwrap();
-        std::fs::write(root.join("bin/arc.exe"), b"").unwrap();
+        std::fs::write(root.join("bin").join(installed_arc_exe_name()), b"").unwrap();
         std::fs::create_dir_all(root.join("lib/rt/runtime")).unwrap();
         assert!(is_sdk_root(&root));
         // lib 缺 rt 但缺 bin 不判为 SDK 根。
@@ -298,6 +385,73 @@ mod tests {
         assert!(!is_sdk_root(&no_bin));
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&no_bin);
+    }
+
+    #[test]
+    fn installed_marker_requires_host_exe_name() {
+        // Unix 分发物落盘 `bin/arc`、Windows `bin/arc.exe`——错名文件不冒充
+        // SDK 根标记（防 Unix 上旧 `arc.exe` 布局误判、Windows 上 `arc` 误判）。
+        let root = temp_dir("marker-name");
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::create_dir_all(root.join("lib/rt/runtime")).unwrap();
+        let wrong = if cfg!(target_os = "windows") {
+            "arc"
+        } else {
+            "arc.exe"
+        };
+        std::fs::write(root.join("bin").join(wrong), b"").unwrap();
+        assert!(!is_sdk_root(&root));
+        std::fs::write(root.join("bin").join(installed_arc_exe_name()), b"").unwrap();
+        assert!(is_sdk_root(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pointer_layout_resolves_active_version_sdk() {
+        let root = temp_dir("ptr");
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::write(root.join("bin").join(installed_arc_exe_name()), b"").unwrap();
+        std::fs::create_dir_all(root.join("versions")).unwrap();
+        std::fs::write(root.join("versions/current"), "1.0.0\n").unwrap();
+        // 活动版本目录（完整 SDK）与非活动版本目录并存——前缀过滤须取对。
+        let active = root.join("versions/arc-1.0.0-x86_64-pc-windows-msvc");
+        std::fs::create_dir_all(active.join("bin")).unwrap();
+        std::fs::write(active.join("bin").join(installed_arc_exe_name()), b"").unwrap();
+        std::fs::create_dir_all(active.join("lib/std/Arc")).unwrap();
+        std::fs::create_dir_all(root.join("versions/arc-0.9.0-x86_64-pc-windows-msvc/bin"))
+            .unwrap();
+        std::fs::write(
+            root.join("versions/arc-0.9.0-x86_64-pc-windows-msvc/bin")
+                .join(installed_arc_exe_name()),
+            b"",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("versions/arc-0.9.0-x86_64-pc-windows-msvc/lib/std"))
+            .unwrap();
+        assert_eq!(resolve_pointer_sdk_root(&root), Some(active));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn pointer_layout_requires_marker_and_complete_active_dir() {
+        let mk = |root: &Path| {
+            std::fs::create_dir_all(root.join("bin")).unwrap();
+            std::fs::write(root.join("bin").join(installed_arc_exe_name()), b"").unwrap();
+            std::fs::create_dir_all(root.join("versions")).unwrap();
+        };
+        // 无 current 标记 → None。
+        let no_marker = temp_dir("ptr-no-marker");
+        mk(&no_marker);
+        assert_eq!(resolve_pointer_sdk_root(&no_marker), None);
+        // 标记存在但版本目录缺 bin/<exe> → None（不把半成品目录当 SDK）。
+        let broken = temp_dir("ptr-broken");
+        mk(&broken);
+        std::fs::write(broken.join("versions/current"), "1.0.0\n").unwrap();
+        std::fs::create_dir_all(broken.join("versions/arc-1.0.0-x86_64-pc-windows-msvc/lib/std"))
+            .unwrap();
+        assert_eq!(resolve_pointer_sdk_root(&broken), None);
+        let _ = std::fs::remove_dir_all(&no_marker);
+        let _ = std::fs::remove_dir_all(&broken);
     }
 
     #[test]
@@ -313,7 +467,7 @@ mod tests {
     fn sdk_root_respects_env_override() {
         let root = temp_dir("env");
         std::fs::create_dir_all(root.join("bin")).unwrap();
-        std::fs::write(root.join("bin/arc.exe"), b"").unwrap();
+        std::fs::write(root.join("bin").join(installed_arc_exe_name()), b"").unwrap();
         std::fs::create_dir_all(root.join("lib/rt/runtime")).unwrap();
         std::env::set_var(ARC_SDK_ROOT_ENV, &root);
         assert_eq!(sdk_root(), Some(root.clone()));
@@ -348,11 +502,7 @@ mod tests {
         // 指针指向存在的版本目录 → Some
         std::fs::create_dir_all(home.join("tools/llvm/22.1.8/bin")).unwrap();
         std::fs::write(home.join("tools/llvm/current"), "22.1.8\n").unwrap();
-        let exe = if cfg!(target_os = "windows") {
-            "clang.exe"
-        } else {
-            "clang"
-        };
+        let exe = clang_exe_name();
         std::fs::write(home.join(format!("tools/llvm/22.1.8/bin/{exe}")), b"").unwrap();
         assert_eq!(
             toolchain_llvm_clang_path(),
@@ -363,6 +513,26 @@ mod tests {
         assert_eq!(toolchain_llvm_clang_path(), None);
         std::env::remove_var("ARC_HOME");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn bundled_llvm_clang_under_sdk_root() {
+        let _lock = ENV_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let root = temp_dir("bundled-llvm");
+        let exe = clang_exe_name();
+        std::fs::create_dir_all(root.join("lib/llvm/bin")).unwrap();
+        // 无 clang 文件 → None（捆绑缺失不冒充可用）。
+        assert_eq!(bundled_llvm_clang_path(), None);
+        std::fs::write(root.join("lib/llvm/bin").join(exe), b"").unwrap();
+        std::env::set_var(ARC_SDK_ROOT_ENV, &root);
+        assert_eq!(
+            bundled_llvm_clang_path(),
+            Some(root.join("lib/llvm/bin").join(exe))
+        );
+        std::env::remove_var(ARC_SDK_ROOT_ENV);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

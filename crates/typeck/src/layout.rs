@@ -366,7 +366,10 @@ pub fn layouts_from_registry(reg: &TypeRegistry) -> ProgramLayouts {
                     generic_instances: Vec::new(),
                 },
             );
-            type_full_names.insert(name.as_str().to_string(), type_fqn(&ty.namespace, ty.name.as_str()));
+            type_full_names.insert(
+                name.as_str().to_string(),
+                type_fqn(&ty.namespace, ty.name.as_str()),
+            );
             continue;
         }
         if ty.kind == TypeKind::Struct {
@@ -610,7 +613,10 @@ pub fn layouts_from_registry(reg: &TypeRegistry) -> ProgramLayouts {
                 declared_properties,
             },
         );
-        type_full_names.insert(name.as_str().to_string(), type_fqn(&ty.namespace, ty.name.as_str()));
+        type_full_names.insert(
+            name.as_str().to_string(),
+            type_fqn(&ty.namespace, ty.name.as_str()),
+        );
 
         // RFC 006 M4：收集本类（含基类链继承）的静态字段（非 const）。
         // const 字段已由 typeck 在 `const_values` 中折叠为编译期常量，

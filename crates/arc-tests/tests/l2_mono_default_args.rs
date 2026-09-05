@@ -13,10 +13,9 @@ use arc_tests::assert_compiles_and_runs_batch;
 fn runs_mono_default_args_batch() {
     let results = assert_compiles_and_runs_batch(
         "mono_default_args",
-        &[
-            (
-                "mono_default_args_basic",
-                r#"using Arc;
+        &[(
+            "mono_default_args_basic",
+            r#"using Arc;
 using Arc.Collections;
 using Arc.Threading;
 
@@ -61,8 +60,7 @@ async Task<void> Main() {
     }
 }
 "#,
-            ),
-        ],
+        )],
     );
     for r in results {
         assert!(

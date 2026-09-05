@@ -142,7 +142,11 @@ void Main() {
         "uri_fragment",
     ] {
         let r = batch_case_result(&results, name);
-        assert!(r.passed, "{} failed: {:?} stdout: {}", name, r.error, r.stdout);
+        assert!(
+            r.passed,
+            "{} failed: {:?} stdout: {}",
+            name, r.error, r.stdout
+        );
     }
 }
 
@@ -212,6 +216,10 @@ void Main() {
         "cookie_clear",
     ] {
         let r = batch_case_result(&results, name);
-        assert!(r.passed, "{} failed: {:?} stdout: {}", name, r.error, r.stdout);
+        assert!(
+            r.passed,
+            "{} failed: {:?} stdout: {}",
+            name, r.error, r.stdout
+        );
     }
 }

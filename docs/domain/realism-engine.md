@@ -104,7 +104,7 @@ Arc 已具备该闭环的多个环节，本引擎补上「生成 + 3D 呈现」�
 ## P0 通道探针 · 实测结论（2026-08-23）
 
 > 立项决策的实证来源：`crates/arc-integration/tests/wgpu_3d_offscreen_probe_e2e.rs`
-> （该探针宿主已随 arc-integration 退场，a2627a0f；**探针实测数据保留于本节作为历史记录**，能力结论径由本节留存）。
+> （已随 arc-integration 退场，a2627a0f；探针实测数据保留于本节）。
 
 **结论：真实 3D 通道成立 —— 零后端改动可跑通 headless 3D 渲染 + 像素回读 + 立体性量化判据。**
 

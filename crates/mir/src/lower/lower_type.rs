@@ -1159,6 +1159,16 @@ pub(super) fn infer_type_from_expr(expr: &Expr, ctx: &LowerCtx) -> TypeId {
         Expr::Base => direct_base_class(ctx)
             .map(TypeId::Named)
             .unwrap_or(TypeId::Int),
+        // 未在 expr_types 表命中的 lambda（typeck 已校验、span 重写后错位或
+        // 无捕获零开销路径）：不得回退 Int（会把 λ 参数/闭包当 i32 截断，
+        // receiver 变成 int → `int_SetConfig` 之类错绑）。返回与 typeck 同构的
+        // `Func{params: Infer…, ret: Infer}`——调用点 resolution 的 λ 软匹配
+        // 按元数对齐目标 Func 槽，形参最终类型由 `expected_lambda_params`
+        //（形参 Func/Action 解构）定向。
+        Expr::Lambda(l) => TypeId::Func {
+            params: l.params.iter().map(|_| TypeId::Infer).collect(),
+            ret: Box::new(TypeId::Infer),
+        },
         Expr::Call {
             func,
             type_args,
@@ -1175,6 +1185,25 @@ pub(super) fn infer_type_from_expr(expr: &Expr, ctx: &LowerCtx) -> TypeId {
                                 delegate_return_type(lty, &|s| ctx.registry.types.contains_key(s))
                             {
                                 return ret;
+                            }
+                        }
+                    }
+                }
+                // 实例委托字段裸调用（`_callback()`）：字段非局部、非自由函数——
+                // 按字段委托返回类型推断，否则回落 Int 会把返回的引用指针物化为
+                // i32 临时（chord `EffectEntry.Run: _disposer = _callback()` 的
+                // ptrtoint→inttoptr 截断实证；与 func=Field 对称路径同源）。
+                if ctx.is_class_field(name) {
+                    if let Some(owner) = &ctx.owner {
+                        let access = access_ctx(ctx);
+                        if let Ok(fty) = ctx.registry.resolve_field(owner, name, &access) {
+                            let fty_id = expand_delegate_alias(ctx, type_name_to_type_id(&fty));
+                            if is_delegate_type(&fty_id) {
+                                if let Some(ret) = delegate_return_type(&fty_id, &|s| {
+                                    ctx.registry.types.contains_key(s)
+                                }) {
+                                    return ret;
+                                }
                             }
                         }
                     }
@@ -1264,6 +1293,21 @@ pub(super) fn infer_type_from_expr(expr: &Expr, ctx: &LowerCtx) -> TypeId {
                         }
                     }
                 }
+                // 委托实例字段调用（`this._f(...)` / `obj._f(...)`，func 为
+                // Field）：静态方法解析未命中时，若字段类型是委托则按委托返回
+                // 类型推断——否则回落 Int 把返回的引用指针物化为 i32 截断
+                //（与 func=Ident 的裸 `_f()` 字段路径同源，chord 实证）。
+                let access = access_ctx(ctx);
+                if let Ok(fty) = ctx.registry.resolve_field(&class_ident, field, &access) {
+                    let fty_id = expand_delegate_alias(ctx, type_name_to_type_id(&fty));
+                    if is_delegate_type(&fty_id) {
+                        if let Some(ret) =
+                            delegate_return_type(&fty_id, &|s| ctx.registry.types.contains_key(s))
+                        {
+                            return ret;
+                        }
+                    }
+                }
             }
             TypeId::Int
         }
@@ -1300,6 +1344,11 @@ pub(super) fn infer_type_from_expr(expr: &Expr, ctx: &LowerCtx) -> TypeId {
         Expr::New { ty, .. } => typeck::resolve_instantiated_type_name(&ty.node)
             .map(|name| TypeId::Named(name.into()))
             .unwrap_or_else(|| lower_type_name(&ty.node)),
+        // `new string[0]` 等数组分配：推断为数组类型——否则回落 Int 会把数组指针
+        // 经 i32 本地往返截断（`ptrtoint ... to i32` 丢 x64 高位 → 0xC0000005）。
+        Expr::NewArray { elem_type, .. } => TypeId::Array {
+            elem: Box::new(lower_type_name(&elem_type.node)),
+        },
         Expr::CollectionExpr { elements } => {
             let elem = elements
                 .first()
@@ -1445,14 +1494,42 @@ pub(super) fn infer_type_from_expr(expr: &Expr, ctx: &LowerCtx) -> TypeId {
                         .and_then(|n| n.methods.get(method))
                     {
                         let arity = args.len();
-                        if let Some(sig) = sigs
+                        // RFC 007 静态同元数重载分裂修复：推断须与实际发射一致的
+                        // 重载解析（按实参类型）——此前仅「static + 元数」取**首个**
+                        // 候选，`Color.Lerp(Color,Color,double)`（公开）与私有
+                        // `Lerp(double,double,double)` 同元数时命中公开载 → 返回类型
+                        // 误判 Color；发射侧按实参类型选中 double 载 → 实参按 struct
+                        // 物化（`load %struct.Color, ptr` 直读 double）→ clang IR
+                        // 校验失败。strict 解析失败（未绑定 λ 等）再回落元数匹配。
+                        let access = access_ctx(ctx);
+                        let arg_type_names: Vec<Ident> = args
                             .iter()
-                            .find(|s| {
-                                s.modifier == MethodModifier::Static && s.params.len() == arity
+                            .map(|a| type_id_name(&infer_type_from_spanned(a, ctx)))
+                            .collect();
+                        let type_aware = ctx.registry.resolve_method_overload(
+                            name,
+                            method,
+                            &arg_type_names,
+                            &access,
+                        );
+                        let sig_opt: Option<typeck::OopMethodSig> = type_aware
+                            .ok()
+                            .map(|(_, s)| s)
+                            .or_else(|| {
+                                sigs.iter()
+                                    .find(|s| {
+                                        s.modifier == MethodModifier::Static
+                                            && s.params.len() == arity
+                                    })
+                                    .cloned()
                             })
-                            .or_else(|| sigs.iter().find(|s| s.modifier == MethodModifier::Static))
-                            .or_else(|| sigs.first())
-                        {
+                            .or_else(|| {
+                                sigs.iter()
+                                    .find(|s| s.modifier == MethodModifier::Static)
+                                    .cloned()
+                            })
+                            .or_else(|| sigs.first().cloned());
+                        if let Some(sig) = sig_opt {
                             let ret = type_name_to_type_id(&sig.ret);
                             if !matches!(ret, TypeId::Named(ref n) if n.as_str() == "void") {
                                 return ret;

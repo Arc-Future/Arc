@@ -353,7 +353,9 @@ impl<'a> FnEmitter<'a> {
                         .cloned()
                         .unwrap_or(MirOperand::ConstString(String::new())),
                 );
-                self.emit(&format!("{tmp} = call ptr @rt_pipe_client_create(ptr {name})"));
+                self.emit(&format!(
+                    "{tmp} = call ptr @rt_pipe_client_create(ptr {name})"
+                ));
             }
             return ("ptr".into(), tmp);
         }
@@ -5336,8 +5338,8 @@ impl<'a> FnEmitter<'a> {
                 ("i32".into(), tmp)
             }
             "Connect" => {
-                let (_, timeout) = self
-                    .emit_operand(&args.first().cloned().unwrap_or(MirOperand::ConstInt(-1)));
+                let (_, timeout) =
+                    self.emit_operand(&args.first().cloned().unwrap_or(MirOperand::ConstInt(-1)));
                 let tmp = self.fresh_temp();
                 self.emit(&format!(
                     "{tmp} = call i32 @rt_pipe_client_connect(ptr {recv}, i32 {timeout})"
@@ -5387,7 +5389,9 @@ impl<'a> FnEmitter<'a> {
             }
             "get_IsConnected" => {
                 let tmp = self.fresh_temp();
-                self.emit(&format!("{tmp} = call i32 @rt_pipe_is_connected(ptr {recv})"));
+                self.emit(&format!(
+                    "{tmp} = call i32 @rt_pipe_is_connected(ptr {recv})"
+                ));
                 ("i32".into(), tmp)
             }
             _ => return None,

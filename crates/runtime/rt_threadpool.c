@@ -174,7 +174,10 @@ void rt_diag_btrace(const char* tag) {
 }
 
 /* 跨线程取栈：SuspendThread → GetThreadContext → StackWalk64 → SymFromAddr。
- * 同步原语全部 GetProcAddress 运行时加载（无链接依赖）。 */
+ * 同步原语全部 GetProcAddress 运行时加载（无链接依赖）。
+ * Win32 专用；POSIX 提供空实现（平台审计 S2 #4：此前 Windows API 无守卫
+ * 编译进 POSIX 对象，靠死代码 + --gc-sections 侥幸通过）。 */
+#ifdef _WIN32
 void rt_diag_thread_stack(unsigned long tid, const char* tag) {
     HMODULE dbgh = LoadLibraryA("dbghelp.dll");
     HMODULE k32 = GetModuleHandleA("kernel32.dll");
@@ -289,6 +292,13 @@ void rt_diag_thread_stack(unsigned long tid, const char* tag) {
     CloseHandle(th);
     fflush(stderr);
 }
+#else
+void rt_diag_thread_stack(unsigned long tid, const char* tag) {
+    (void)tid;
+    (void)tag;
+    /* no-op on POSIX（无 SuspendThread/StackWalk64 对等取证） */
+}
+#endif
 
 /* 卡死线程取证（临时）：worker 执行 work 期间记录起始时刻与 fn 指针；
  * 转储打印 elapsed 超阈值者——识别「卡在 poll_inner / Monitor」的 worker。 */

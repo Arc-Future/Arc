@@ -1710,10 +1710,16 @@ impl TypeChecker {
 
         // First pass: register function signatures for forward references
         for item in &module.items {
-            if let HirItem::Fn { def_ast, .. } = item {
+            if let HirItem::Fn { span, def_ast, .. } = item {
                 if !def_ast.generics.is_empty() {
                     continue;
                 }
+                // RFC 025 M2：与下方 item 主循环一致，签名 lower 亦须按声明文件
+                // 切换包上下文——否则 file 级 fn 形参里的 internal 类型（同包
+                // variant/类）会被按当前默认包判定「不可访问」而误报（实测
+                // `ContentLikeConsume(ContentLike c)` 报 `type ContentLike is not
+                // accessible from this context`）。
+                self.enter_package_for_span(*span);
                 let ret = match self.fn_return_type(def_ast.ret.as_ref(), def_ast.is_async) {
                     Ok(r) => r,
                     Err(e) => {

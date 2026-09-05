@@ -12,11 +12,16 @@ pub(super) fn try_lower_delegate_invoke(
     func: &Spanned<Expr>,
     args: &[Spanned<Expr>],
     ctx: &mut LowerCtx,
-) -> Option<(Vec<MirStatement>, MirRvalue)> {
+) -> Option<(Vec<MirStatement>, MirRvalue, TypeId)> {
     let callee_ty = infer_type_from_spanned(func, ctx);
     if !is_delegate_type(&callee_ty) {
         return None;
     }
+    // 委托返回类型：结果临时须按真实返回类型建（否则 Void 本地 → codegen 以
+    // i32 存储，`_disposer = _callback()` 的 IDisposable 指针被 ptrtoint 截断
+    // x64 高位 → 0xC0000005，chord Provide/Revert 链路实测）。
+    let ret_ty = delegate_return_type(&callee_ty, &|s| ctx.registry.types.contains_key(s))
+        .unwrap_or_else(|| TypeId::Named("object".into()));
     // RFC 039：委托形参为接口时，class 实参须包装为接口胖指针
     //（如 `Action<IServiceCollection>` 收到 `ServiceCollection` 实参）。
     let params = delegate_params_of(&callee_ty, args.len(), &|s| {
@@ -56,6 +61,7 @@ pub(super) fn try_lower_delegate_invoke(
             func: MirOperand::Local(func_local),
             args: call_args,
         },
+        ret_ty,
     ))
 }
 
@@ -183,8 +189,25 @@ pub(super) fn lower_call_args(
             }),
             _ => None,
         };
-        let (mut stmts, op) =
-            lower_arg_operand_with_expected(builder, &a.node, ctx, expected_lambda.as_deref());
+        // 委托契约返回类型：lambda 实参须按形参 Func/Action 的返回类型提升
+        //（接口返回 → 闭包产出 fat pointer，见 lower_lambda_to_fnptr）。
+        let expected_ret: Option<TypeId> = match (&a.node, sig) {
+            (Expr::Lambda(_), Some((params, _))) => params.get(i).and_then(|p| {
+                if lower_type::is_delegate_type(p) {
+                    lower_type::delegate_return_type(p, &|s| ctx.registry.types.contains_key(s))
+                } else {
+                    None
+                }
+            }),
+            _ => None,
+        };
+        let (mut stmts, op) = lower_arg_operand_with_expected(
+            builder,
+            &a.node,
+            ctx,
+            expected_lambda.as_deref(),
+            expected_ret.as_ref(),
+        );
         prep.append(&mut stmts);
         if let Some((params, _)) = sig {
             if let Some(param_ty) = params.get(i) {
@@ -208,7 +231,7 @@ pub(super) fn lower_arg_operand(
     expr: &Expr,
     ctx: &mut LowerCtx,
 ) -> (Vec<MirStatement>, MirOperand) {
-    lower_arg_operand_with_expected(builder, expr, ctx, None)
+    lower_arg_operand_with_expected(builder, expr, ctx, None, None)
 }
 
 /// `lower_arg_operand` 的扩展变体：`expected_lambda` 携带调用点形参类型解析出的
@@ -221,6 +244,7 @@ pub(super) fn lower_arg_operand_with_expected(
     expr: &Expr,
     ctx: &mut LowerCtx,
     expected_lambda: Option<&[TypeId]>,
+    expected_ret: Option<&TypeId>,
 ) -> (Vec<MirStatement>, MirOperand) {
     // 裸自定义属性 Ident（如 `Value`）→ `this.Value`，复用下方 Field 访问器分派。
     // typeck 在复合表达式（Binary 等）中可能未重写子树；与 C# 实例成员查找对齐。
@@ -254,7 +278,7 @@ pub(super) fn lower_arg_operand_with_expected(
         return (vec![], operand_from_expr(expr, ctx));
     }
     if let Expr::Lambda(l) = expr {
-        let op = builder.lower_lambda_to_fnptr(l, ctx, expected_lambda);
+        let op = builder.lower_lambda_to_fnptr(l, ctx, expected_lambda, expected_ret);
         return (vec![], op);
     }
     // Enum variant access (e.g. `ExpressionType.Unary`) and other const
@@ -666,6 +690,22 @@ fn generic_instantiation_target(
 ) -> String {
     let base = registry
         .method_generic_template_link_name(declaring, method, arg_types, type_arg_names, ctx)
+        .or_else(|| {
+            // 模板唯一匹配（替换后形参 vs 实参名）可能因未绑定 lambda
+            //（`Func_Infer_*`）或调用面类型差异失配——按「泛型参数个数 +
+            // 实参个数」窄匹配模板本体（实参类型无关），唯一命中即用其
+            // **占位符** link 基底（如 `Provide_Func_T`），避免回退到替换后
+            // 签名基底（`Provide_Func_Greeter`）与 mono body 命名分叉
+            //（arc-prune-001：call 引用 `Provide_Func_Greeter__Greeter`，
+            // 模板克隆体名为 `Provide_Func_T__Greeter`，符号缺失）。
+            registry.method_generic_template_link_name_by_arity(
+                declaring,
+                method,
+                arg_types.len(),
+                type_arg_names.len(),
+                ctx,
+            )
+        })
         .unwrap_or_else(|| registry.method_link_name_for(declaring, sig));
     format!("{base}__{}", type_arg_names.join("__"))
 }
@@ -753,17 +793,42 @@ pub(super) fn method_call_rvalue(
         .iter()
         .map(|t| type_id_name(&lower_type_name(t)))
         .collect();
-    let resolved = if !type_args.is_empty() {
-        ctx.registry.resolve_method_with_type_args(
-            recv_ty,
-            method,
-            &arg_types,
-            &type_arg_names,
-            &overload_ctx,
-        )
-    } else {
-        ctx.registry
-            .resolve_method_overload(recv_ty, method, &arg_types, &overload_ctx)
+    // RFC 005 M2b λ 对齐（typeck 同阶梯）：strict 重载解析无法匹配未绑定
+    // lambda（实参推断为 `Func_Infer_*`，与形参 mangle 名不严格相等）时，
+    // 先按 λ 软匹配（元数 + Func/Infer 兼容）回落实例重载——否则 MIR 会
+    // 跳过实例候选直接选中同名扩展方法（`app.InjectReactive([...], ctx => …)`
+    // 错绑 `ChordContextExtensions::InjectReactive` 的 string 形参），或
+    // 落到 declaring 首签名/替换后基底——与 typeck 已校验的实例绑定分叉，
+    // λ 形参类型（Func 槽解构）随之丢失。
+    // 仅无显式 type_args 时启用：显式泛型实参下实例泛型候选由 strict
+    // type-args 解析（含 λ 返回具体类型）或模板匹配路径处理，soft 不得
+    // 抢先命中非泛型实例重载（`On<string>` 会错绑实例 `On(string, …)`）。
+    let has_lambda = args.iter().any(|a| matches!(a.node, Expr::Lambda(_)));
+    let resolved = {
+        let strict = if !type_args.is_empty() {
+            ctx.registry.resolve_method_with_type_args(
+                recv_ty,
+                method,
+                &arg_types,
+                &type_arg_names,
+                &overload_ctx,
+            )
+        } else {
+            ctx.registry
+                .resolve_method_overload(recv_ty, method, &arg_types, &overload_ctx)
+        };
+        if strict.is_err() && has_lambda && type_args.is_empty() {
+            strict.or_else(|_| {
+                ctx.registry.resolve_method_overload_lambda_soft(
+                    recv_ty,
+                    method,
+                    &arg_types,
+                    &overload_ctx,
+                )
+            })
+        } else {
+            strict
+        }
     };
     // Capture formal parameter types before `resolved` is consumed by the
     // if-let below. These are used to wrap class-typed arguments in interface
@@ -807,9 +872,36 @@ pub(super) fn method_call_rvalue(
             }
         })
         .collect();
+    // Lambda 实参的委托契约返回类型（`Func<R>` 形参名 → R；接口 R 时闭包
+    // 须产出 fat pointer，见 lower_lambda_to_fnptr）。
+    let expected_lambda_rets: Vec<Option<TypeId>> = args
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            if let Expr::Lambda(_) = &a.node {
+                param_types.get(i).and_then(|p| {
+                    let pty = TypeId::Named(p.clone());
+                    if lower_type::is_delegate_type(&pty) {
+                        lower_type::delegate_return_type(&pty, &|s| {
+                            ctx.registry.types.contains_key(s)
+                        })
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
     let lower_arg = |b: &mut MirBuilder, a: &Spanned<Expr>, i: usize| -> MirOperand {
         if let Expr::Lambda(l) = &a.node {
-            b.lower_lambda_to_fnptr(l, ctx, expected_lambda_params[i].as_deref())
+            b.lower_lambda_to_fnptr(
+                l,
+                ctx,
+                expected_lambda_params[i].as_deref(),
+                expected_lambda_rets[i].as_ref(),
+            )
         } else {
             operand_from_expr(&a.node, ctx)
         }
@@ -1062,17 +1154,36 @@ pub(super) fn method_call_rvalue_with_prep(
         .iter()
         .map(|t| type_id_name(&lower_type_name(t)))
         .collect();
-    let resolved = if !type_args.is_empty() {
-        ctx.registry.resolve_method_with_type_args(
-            recv_ty,
-            method,
-            &arg_types,
-            &type_arg_names,
-            &overload_ctx,
-        )
-    } else {
-        ctx.registry
-            .resolve_method_overload(recv_ty, method, &arg_types, &overload_ctx)
+    // RFC 005 M2b λ 对齐（与 `method_call_rvalue` 同阶梯）：strict 失败且含
+    // 未绑定 lambda 时先按 λ 软匹配回落实例重载，避免与 typeck 绑定分叉
+    //（扩展误选 / 替换后基底 / λ 形参类型丢失）。仅无显式 type_args 时启用
+    //（显式泛型实参须走 type-args/模板路径，soft 不得抢先命中非泛型重载）。
+    let has_lambda = args.iter().any(|a| matches!(a.node, Expr::Lambda(_)));
+    let resolved = {
+        let strict = if !type_args.is_empty() {
+            ctx.registry.resolve_method_with_type_args(
+                recv_ty,
+                method,
+                &arg_types,
+                &type_arg_names,
+                &overload_ctx,
+            )
+        } else {
+            ctx.registry
+                .resolve_method_overload(recv_ty, method, &arg_types, &overload_ctx)
+        };
+        if strict.is_err() && has_lambda && type_args.is_empty() {
+            strict.or_else(|_| {
+                ctx.registry.resolve_method_overload_lambda_soft(
+                    recv_ty,
+                    method,
+                    &arg_types,
+                    &overload_ctx,
+                )
+            })
+        } else {
+            strict
+        }
     };
     // 严格重载失败（lambda 实参推断为 `Func_Infer_*` 与单态化形参
     // `Func_double_*` 不严格匹配）时回退到按名查找的声明类签名——与下方
@@ -1105,6 +1216,28 @@ pub(super) fn method_call_rvalue_with_prep(
             }
         })
         .collect();
+    // Lambda 实参的委托契约返回类型（`Func<R>` 形参名 → R；接口 R 时闭包
+    // 须产出 fat pointer，见 lower_lambda_to_fnptr）。
+    let expected_lambda_rets: Vec<Option<TypeId>> = args
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            if let Expr::Lambda(_) = &a.node {
+                param_types.get(i).and_then(|p| {
+                    let pty = TypeId::Named(p.clone());
+                    if lower_type::is_delegate_type(&pty) {
+                        lower_type::delegate_return_type(&pty, &|s| {
+                            ctx.registry.types.contains_key(s)
+                        })
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
     // Materialize each argument to a temp local via `lower_arg_operand`,
     // preserving prep statements. Lambda args go through the lambda path
     // inside `lower_arg_operand` (it has an `Expr::Lambda` early return).
@@ -1116,6 +1249,7 @@ pub(super) fn method_call_rvalue_with_prep(
             &a.node,
             ctx,
             expected_lambda_params[i].as_deref(),
+            expected_lambda_rets[i].as_ref(),
         );
         prep.append(&mut p);
         arg_ops.push(op);

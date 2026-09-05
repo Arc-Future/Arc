@@ -21,8 +21,8 @@
 //!   1. 复制新 `bin/arc` 指针
 //!   2. 更新 `versions/current` 标记
 //!   3. 记录 `versions/current.previous`（回滚目标）
-//! - 本进程若以指针身份运行（`R/bin/arc.exe`），先 **spawn** 活动版本的
-//!   `versions/arc-<ver>-<triple>/bin/arc.exe` 并**立即退出**——Windows 下
+//! - 本进程若以指针身份运行（`R/bin/arc(.exe)`），先 **spawn** 活动版本的
+//!   `versions/arc-<ver>-<triple>/bin/arc(.exe)` 并**立即退出**——Windows 下
 //!   运行中 exe 不可重命名，父进程退出后子进程可安全替换指针。
 //! - 签名校验失败 → 硬错误中止，禁止降级跳过。
 
@@ -40,12 +40,46 @@ fn pkg_dir_name(version: &str, triple: &str) -> String {
     format!("arc-{version}-{triple}")
 }
 
+/// `arc` 可执行文件名（Windows `arc.exe` / Unix `arc`）。
+///
+/// 单一解析来源：`codegen::sdk_layout::installed_arc_exe_name`（与 SDK
+/// 安装态根标记、`arc doctor` 同源，禁止本地 cfg 双轨）。
 fn exe_name() -> &'static str {
-    if cfg!(windows) {
-        "arc.exe"
-    } else {
-        "arc"
+    codegen::sdk_layout::installed_arc_exe_name()
+}
+
+/// 解压容器（Windows 产线 zip 无 Unix 权限位）后，按安装布局契约恢复
+/// 可执行位：`bin/arc[.exe]` 与捆绑 LLVM `lib/llvm/bin/*`（Unix-only；
+/// Windows 权限位无意义）。带 mode 的容器（tar.xz / unix 侧 zip）由
+/// `archive::extract_zip` 按条目 unix_mode 应用，此处只兜底 mode 缺失
+/// 的 zip 容器——两个机制互补，覆盖同一布局契约。
+#[cfg(unix)]
+fn restore_staged_executables(pkg_root: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut targets: Vec<PathBuf> = Vec::new();
+    let arc_exe = pkg_root.join("bin").join(exe_name());
+    if arc_exe.is_file() {
+        targets.push(arc_exe);
     }
+    let bundled_bin = pkg_root.join("lib/llvm/bin");
+    if bundled_bin.is_dir() {
+        for entry in std::fs::read_dir(&bundled_bin).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                targets.push(entry.path());
+            }
+        }
+    }
+    for target in targets {
+        let mut perm = std::fs::metadata(&target)
+            .map_err(|e| format!("{}: {e}", target.display()))?
+            .permissions();
+        perm.set_mode(0o755);
+        std::fs::set_permissions(&target, perm)
+            .map_err(|e| format!("chmod {}: {e}", target.display()))?;
+    }
+    Ok(())
 }
 
 /// 安装根环境变量（`arc env` 展示与测试覆盖）。
@@ -130,9 +164,7 @@ fn read_marker(versions_dir: &Path, name: &str) -> Option<String> {
     let bytes = std::fs::read(&path).ok()?;
     // BOM 容忍（与 parse 入口同一姿态）：Windows 侧工具（install.ps1 / PS 5.1
     // Set-Content）可能以带 BOM 的 UTF-8 写标记文件，解析前剥离。
-    let bytes = bytes
-        .strip_prefix(&[0xEF, 0xBB, 0xBF])
-        .unwrap_or(&bytes);
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
     let t = String::from_utf8_lossy(bytes);
     let t = t.trim();
     if t.is_empty() {
@@ -330,6 +362,9 @@ fn update(opts: &SelfUpdateOptions) -> Result<(), String> {
     crate::archive::extract_zip(&bytes, &staging)?;
 
     let staged_pkg = staging.join(pkg_dir_name(&target_ver, &triple));
+    #[cfg(unix)]
+    restore_staged_executables(&staged_pkg)?;
+
     let staged_exe = staged_pkg.join("bin").join(exe_name());
     if !staged_exe.is_file() {
         return Err(format!(
@@ -553,7 +588,15 @@ mod tests {
         let dir = temp_dir("marker-bom");
         std::fs::create_dir_all(&dir).unwrap();
         // Windows 侧工具可能以带 BOM 的 UTF-8 写标记（PS 5.1 Set-Content 实测）。
-        std::fs::write(dir.join("current"), [0xEF, 0xBB, 0xBF].iter().copied().chain(b"0.9.0".iter().copied()).collect::<Vec<u8>>()).unwrap();
+        std::fs::write(
+            dir.join("current"),
+            [0xEF, 0xBB, 0xBF]
+                .iter()
+                .copied()
+                .chain(b"0.9.0".iter().copied())
+                .collect::<Vec<u8>>(),
+        )
+        .unwrap();
         assert_eq!(read_marker(&dir, "current").as_deref(), Some("0.9.0"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -589,6 +632,43 @@ mod tests {
         assert_eq!(
             read_marker(&versions, "current.previous").as_deref(),
             Some("0.1.0")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restore_staged_executables_sets_only_layout_execs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_dir("staged-exec");
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::create_dir_all(root.join("lib/llvm/bin")).unwrap();
+        std::fs::create_dir_all(root.join("lib/std")).unwrap();
+        let arc_exe = root.join("bin").join(exe_name());
+        let clang = root.join("lib/llvm/bin/clang");
+        let data = root.join("lib/std/File.as");
+        std::fs::write(&arc_exe, b"arc").unwrap();
+        std::fs::write(&clang, b"clang").unwrap();
+        std::fs::write(&data, b"// std").unwrap();
+        // 无权限位容器解压后的默认态：布局内可执行文件不带执行位。
+        assert_eq!(
+            std::fs::metadata(&arc_exe).unwrap().permissions().mode() & 0o111,
+            0
+        );
+        restore_staged_executables(&root).unwrap();
+        for p in [&arc_exe, &clang] {
+            assert_eq!(
+                std::fs::metadata(p).unwrap().permissions().mode() & 0o777,
+                0o755,
+                "{} should be executable",
+                p.display()
+            );
+        }
+        // 数据文件保持无执行位（不按路径瞎猜）。
+        assert_eq!(
+            std::fs::metadata(&data).unwrap().permissions().mode() & 0o111,
+            0
         );
         let _ = std::fs::remove_dir_all(&root);
     }

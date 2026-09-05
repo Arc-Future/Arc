@@ -1032,7 +1032,11 @@ pub(crate) fn entry_layout_signature(layouts: &ProgramLayouts, type_name: &str) 
     let mut hash = init;
     let mut seen: Vec<String> = Vec::new();
     hash_layout_type(layouts, type_name, &mut hash, &mut seen, 0);
-    if hash == init { 0 } else { hash }
+    if hash == init {
+        0
+    } else {
+        hash
+    }
 }
 
 /// [`entry_layout_signature`] 的递归展开：类型名入哈希后按 classes →

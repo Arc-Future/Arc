@@ -127,6 +127,7 @@ impl Parser {
     /// - `string[]?`      — 数组本身可空（**本函数数组后缀之后消费**——此前缺失，
     ///   `?` 遗留流中被语句层误吞为三元运算符，产生静默解析错位）
     /// - `string?[]?`     — 两级可空各自成立
+    ///
     /// 单一后缀链消除「基类型路径 / 复合类型路径」双轨，是 `string[]?`
     /// 缺口的架构级修复（RFC 045 D12 语料暴露）。
     pub(crate) fn parse_type(&mut self) -> Result<Spanned<Type>, ParseError> {
