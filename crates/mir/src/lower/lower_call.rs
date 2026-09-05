@@ -670,6 +670,45 @@ pub(super) fn maybe_box_iface(
     op
 }
 
+/// raw/λ（模板克隆体 raw 重降级）调用点补齐 string→object 实参装箱。
+///
+/// typed 路径由 typeck 在 AST 插入 `Expr::Box`（`MirRvalue::Box` → codegen
+/// `rt_string_box`，null 保留）；raw 体无此节点——`object`/`object?` 形参直收
+/// rodata/堆裸串。裸串无 ArcHeader：入 object 槽后按对象消费（cast/vtable 判别）
+/// 或未来参与 ARC 计数即损坏（Reload 路径 0xC0000005 实证：inc 把字符串内容当
+/// refcount 原子写）。此处按形参类型补装箱；已带 Box/Unbox 节点或静态类型非
+/// string 时不重复装箱（null 由 emit_box 保留为 null）。
+pub(super) fn maybe_box_string_to_object(
+    builder: &mut MirBuilder,
+    arg: &Spanned<Expr>,
+    op: MirOperand,
+    param_ty: Option<&str>,
+    ctx: &mut LowerCtx,
+    prep: &mut Vec<MirStatement>,
+) -> MirOperand {
+    let Some(pt) = param_ty else {
+        return op;
+    };
+    if pt != "object" && pt != "object?" {
+        return op;
+    }
+    if matches!(arg.node, Expr::Box { .. } | Expr::Unbox { .. }) {
+        return op;
+    }
+    if infer_type_from_spanned(arg, ctx) != TypeId::String {
+        return op;
+    }
+    let tmp = builder.fresh_local(&"_obj_arg".into(), TypeId::Object, ctx.locals);
+    prep.push(MirStatement::Assign {
+        place: tmp,
+        rvalue: MirRvalue::Box {
+            src: op,
+            src_ty: TypeId::String,
+        },
+    });
+    MirOperand::Local(tmp)
+}
+
 /// 泛型方法实例化（`g.M<int>(…)`）调用目标的符号基底。
 ///
 /// 与静态路径 `user_type_static_method_sig` 一致：基底必须取**模板** link 名
@@ -1252,6 +1291,15 @@ pub(super) fn method_call_rvalue_with_prep(
             expected_lambda_rets[i].as_ref(),
         );
         prep.append(&mut p);
+        // raw/λ 路径 string→object 实参装箱（typed 路径由 typeck 插 Box 节点）。
+        let op = maybe_box_string_to_object(
+            builder,
+            a,
+            op,
+            param_types.get(i).map(|s| s.as_str()),
+            ctx,
+            &mut prep,
+        );
         arg_ops.push(op);
     }
     if let Some(info) = params_span {

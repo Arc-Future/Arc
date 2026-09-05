@@ -2074,12 +2074,13 @@ impl<'a> FnEmitter<'a> {
     /// (represented as a `ptr` slot, mirroring the existing retain path).
     pub(super) fn arc_class_place(ty: &TypeId, layouts: &typeck::ProgramLayouts) -> bool {
         match ty {
-            // Object / Nullable{Object} 槽位**不**按 class 计 ARC：object 槽可持
-            // raw string（raw/λ 降级路径缺 typeck 的 string→object Box 插入，
-            // 直存 rodata 裸串——无 ArcHeader，inc/dec 会把字符串内容当 refcount
-            // 原子写 → 写代码段/只读段 0xC0000005，Reload 实测）。该异构性解除前
-            // 不得对 Object 计数；typed-inject over-dec 的根治路径见 CHANGELOG
-            //（补齐 raw 路径装箱后 object 槽才可安全纳入 ARC）。
+            // Object / Nullable{Object} 槽位默认**不**按 class 计 ARC（性能语义
+            // 选项 B：object 槽持借用引用、不计数）。选项 A（对齐契约：raw 路径
+            // 装箱补齐后纳入计数）已实现并验证（over-dec 归零、corpus 至 idx24），
+            // 但涉及「object 流量付 inc/dec」的性能语义取舍——待设计裁决（见
+            // CHANGELOG 登记），裁决前保持 B。注意：任选其一时 raw/λ 路径的
+            // string→object 装箱（maybe_box_string_to_object）都必须保留——裸串
+            // 进 object 槽后按对象消费（unbox 判别/未来计数）必然损坏。
             TypeId::Object => false,
             TypeId::Named(n) => {
                 layouts.classes.contains_key(n.as_str())

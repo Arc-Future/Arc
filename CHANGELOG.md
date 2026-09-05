@@ -4,6 +4,13 @@
 
 ## 2026-09-05
 
+### raw/λ 路径 string→object 实参装箱对齐 + Object 槽 ARC 取舍登记（待设计裁决）
+- **修复（一致性/正确性，A/B 两选项下均成立）**：raw/λ（模板克隆体 raw 重降级）调用点缺 typeck 的 `Expr::Box` 插入——`object`/`object?` 形参直收 rodata/堆裸串（无 ArcHeader），按对象消费（unbox vtable 判别）即错、未来参与计数即写爆只读段。新增 `maybe_box_string_to_object`（`crates/mir/src/lower/lower_call.rs`，接线 `method_call_rvalue_with_prep` 实参物化环）：形参为 object/object?、实参静态类型 string、且非既有 Box/Unbox 节点时补 `MirRvalue::Box`（codegen `rt_string_box`，null 保留）——与 typed 路径契约对齐。验证：chord corpus 漂移分布与基线一致（25/25/14 抽样，无回归）；mir/codegen/typeck 单测全绿；clippy 零告警
+- **Object 槽 ARC 计数：A/B 取舍登记（未裁决，默认 B）**：选项 A（装箱补齐后 `arc_class_place(Object)=true`）实测 over-dec 归零、corpus 确定性到 idx24；选项 B（object 槽持借用、不计数，性能语义优先）。A 使 object 流量付 inc/dec——是否违背「无装箱」初衷的讨论见仓库往来（值类型零装箱路径未动；string→object 盒为表示层必需 ABI，typed 路径 1.0 即如此）。裁决前保持 B（emit_cfg.rs 注释含两选项依据）；裁决入口：RFC 004 §值类型视图 / 性能语义章节
+- **安装态验收闭环复证（Windows 本机、当前树）**：arc-pack（release+BundleLlm，内置 std-consuming 自检）→ install.ps1 就地安装沙箱根 → doctor 10 pass/0 fail（含捆绑 clang 22.1.8、MSVC、native DLLs）→ 隔离环境（PATH=安装根 bin、ARC_HOME 干净、无 ARC_CLANG/ARC_STD_ROOT/ARC_SDK_ROOT）经**指针** bin\arc.exe：StdApp（无依赖声明、`using Arc.Collections` 自动索引）离线构建运行 `stdapp:ok:alpha,beta:3`；MyExt（kind=library + Arc path→安装 SDK lib/std/Arc）`--dynamic` 产出 MyExt.dll；MyApp（path 依赖 + std 自动索引）构建运行 `myapp:ok:2:hello arc!:hello arc?`。质量门：workspace 127 批 + doc-tests exit 0 + clippy 零告警 + fmt clean
+- **过程提示**：arc.toml `kind` 合法值为 `binary`/`library`（`app` 解析失败会被 find_arc_manifest 静默吞掉伪装成 "no arc.toml"——建议后续把 load 错误透出为诊断）
+
+
 ### 仓库拓扑核对 + Object 计数实验否决（raw string 异构槽位取证）——权威远程对齐（Arc-Future/Arc）
 - **仓库拓扑（本轮核对）**：本仓双远程——`origin` = gitcode.com/rf2026/dlang（内部全量历史），权威公开仓库 = **github.com/Arc-Future/Arc**（`5b5026aa` 1.0 公开首发 + `2c5fe0c2` "sync: internal snapshot 2026-09-04 18:48" 两提交，经 `scripts/release/export-exclusions.txt` 剔除 docs/plan、docs/reviews、docs/rfc/proposals 等内部件做增量镜像）。此前各轮提交只推 gitcode，github 未见进展——已补 `github` remote，发布工具 = `scripts/release/github-sync.ps1`（正常快进提交、无历史改写），本节点起每次提交双推并定期跑 sync
 - **Object 槽位 ARC 计数实验（99db6940 提交后取证否决）**：typed-inject over-dec 提示「object? 字段（ServiceEntry._instance）不计 ARC → 注册表持 borrow、typed 路径计数后提前释放」，尝试 `arc_class_place(Object/Nullable{Object}) = true`：over-dec 归零、corpus 推进到 idx0–21 确定性全绿（漂移消失）——**但** Reload/λ 路径新崩 0xC0000005：VEH 转储（`%TEMP%\arc_crash.txt`，内置 arc_dbg_veh）定位 `rt_arc_inc` 内 `lock xadd (%rcx)` 写**代码/只读段**（DATA_ADDR=exe .text+0x4f7 类），即对 **raw string 字面量指针**做 inc——**object 槽位异构**：raw/λ（模板克隆体 raw 重降级）路径缺 typeck 的 string→object Box 插入，`ctx.Provide("svc","v2")` 类调用点把 rodata 裸串直存 object? 槽；无 ArcHeader，计数即写爆字符串内容。结论：**Object 槽位不纳入 ARC 是既有设计约束**，计数前须先根治「raw 路径 string→object 装箱缺失」
