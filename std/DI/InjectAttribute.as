@@ -1,7 +1,6 @@
 // InjectAttribute —— DI 自动注册标记（RFC 023 §1.7.1）：显式声明，默认 Scoped。
 // 归属：DI 框架库（Arc.DI）。自动注册是 DI 容器能力，非 Web 专属，故置于 DI 契约面。
 namespace Arc.DI;
-
 using Arc;
 using Arc.Collections;
 using Arc.Reflection;

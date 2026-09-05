@@ -12,8 +12,8 @@ using Arc.Collections;
 
 /// <summary>RFC 7541 §B 静态 Huffman 编解码（解码树 + 算术位提取）。</summary>
 internal class HuffmanCodec {
-    /// <summary>EOS 符号（256）——结束标记。</summary>
-    private const int EOS = 256;
+    /// <summary>Eos 符号（256）——结束标记。</summary>
+    private const int Eos = 256;
 
     private static int[] _codes;
     private static int[] _lengths;
@@ -62,7 +62,7 @@ internal class HuffmanCodec {
         int[] lengths = _lengths;
         AddNode(); // root = node 0
         int sym = 0;
-        while (sym <= EOS) {
+        while (sym <= Eos) {
             int code = codes[sym];
             int len = lengths[sym];
             int node = 0;
@@ -92,8 +92,8 @@ internal class HuffmanCodec {
     }
 
     /// <summary>
-    /// Huffman 解码 HPACK 串（byte[] → byte[]）。EOS 符号视为解码错误返回 null；
-    /// 末尾 ≤7 位全 1 padding（EOS 前缀）允许（RFC 7541 §5.2）。
+    /// Huffman 解码 HPACK 串（byte[] → byte[]）。Eos 符号视为解码错误返回 null；
+    /// 末尾 ≤7 位全 1 padding（Eos 前缀）允许（RFC 7541 §5.2）。
     /// </summary>
     internal static byte[] Decode(byte[] data) {
         Ensure();
@@ -117,12 +117,12 @@ internal class HuffmanCodec {
             bitIdx = bitIdx + 1;
             int sym = symbol[node];
             if (sym >= 0) {
-                if (sym == EOS) { return null; } // EOS 出现 = 解码错误
+                if (sym == Eos) { return null; } // Eos 出现 = 解码错误
                 out_.Add((byte)sym);
                 node = 0;
             }
         }
-        // 结束在内部节点 = 剩余位是 EOS 前缀 padding，允许。
+        // 结束在内部节点 = 剩余位是 Eos 前缀 padding，允许。
         return out_.ToArray();
     }
 

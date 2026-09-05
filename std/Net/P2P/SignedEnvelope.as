@@ -29,21 +29,3 @@ public class SignedEnvelope {
         return signer.Verify(this.DomainSep + ":" + this.PayloadType + ":" + this.Payload, this.Signature);
     }
 }
-
-public class PeerRecord {
-    public PeerId PeerId { get; }
-    public long Seq { get; }
-    public List<Multiaddr> Addresses { get; }
-
-    public PeerRecord(PeerId peerId, long seq, List<Multiaddr> addresses) {
-        PeerId = peerId;
-        Seq = seq;
-        Addresses = addresses;
-    }
-
-    public PeerRecord() {
-        PeerId = null;
-        Seq = 1;
-        Addresses = new List<Multiaddr>();
-    }
-}

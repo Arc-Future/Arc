@@ -48,15 +48,15 @@ using Arc.Text;
 /// </summary>
 public class WebSocketClient : IDisposable {
     /// <summary>RFC 6455 §1.3 固定 GUID（Sec-WebSocket-Accept 计算）。</summary>
-    public const string WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    public const string WsGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
     // 帧常量（RFC 6455 §5.2；无位运算，直接以整数值表达）。
     private const int OpContinuation = 0;
-    private const int OP_TEXT = 1;
-    private const int OP_BINARY = 2;
-    private const int OP_CLOSE = 8;
+    private const int OpText = 1;
+    private const int OpBinary = 2;
+    private const int OpClose = 8;
     private const int OpPing = 9;
-    private const int OP_PONG = 10;
+    private const int OpPong = 10;
     private const int FinBit = 128;       // 帧首字节 bit7
     private const int MaskBit = 128;      // 帧次字节 bit7
 
@@ -119,7 +119,7 @@ public class WebSocketClient : IDisposable {
     /// </summary>
     /// <param name="key">客户端 Sec-WebSocket-Key（base64 字符串）。</param>
     public static string ComputeAccept(string key) {
-        byte[] digest = SHA1.ComputeHash(Encoding.GetBytes(key + WS_GUID));
+        byte[] digest = SHA1.ComputeHash(Encoding.GetBytes(key + WsGuid));
         return Base64.ToBase64String(digest);
     }
 
@@ -131,12 +131,12 @@ public class WebSocketClient : IDisposable {
 
     /// <summary>发送文本帧（客户端掩码）；返回实际写入字节数，失败返回 0。</summary>
     public async Task<int> SendAsync(string message, CancellationToken cancellationToken) {
-        return await this.DoSendOpcodeAsync(OP_TEXT, message);
+        return await this.DoSendOpcodeAsync(OpText, message);
     }
 
     /// <summary>发送文本帧（SendAsync 的别名，C# ClientWebSocket.SendAsync 形态）。</summary>
     public async Task<int> SendTextAsync(string message, CancellationToken cancellationToken) {
-        return await this.DoSendOpcodeAsync(OP_TEXT, message);
+        return await this.DoSendOpcodeAsync(OpText, message);
     }
 
     /// <summary>
@@ -240,9 +240,9 @@ public class WebSocketClient : IDisposable {
             _negotiated = tls.NegotiatedApplicationProtocol;
         }
 
-        // 随机 16 字节 Sec-WebSocket-Key（CSPRNG → hex → base64）。
-        string keyHex = CSPRNG.GetBytes(16);
-        string keyB64 = HexToBase64(keyHex);
+        // 随机 16 字节 Sec-WebSocket-Key（CSPRNG → base64）。
+        byte[] keyBytes = CSPRNG.GetBytes(16);
+        string keyB64 = Base64.ToBase64String(keyBytes);
         _keyB64 = keyB64;
 
         string req = "GET " + path + " HTTP/1.1\r\n"
@@ -288,7 +288,7 @@ public class WebSocketClient : IDisposable {
     /// <summary>构造并发送一个掩码数据/控制帧（真异步）；返回写入字节数，失败返回 0。</summary>
     private async Task<int> DoSendOpcodeAsync(int opcode, string payload) {
         // Closing 状态仍允许发送 Close 帧（DoCloseAsync 置 Closing 后再发）。
-        if (_state != WebSocketState.Open && !(opcode == OP_CLOSE && _state == WebSocketState.Closing)) {
+        if (_state != WebSocketState.Open && !(opcode == OpClose && _state == WebSocketState.Closing)) {
             return 0;
         }
         int plen = payload.Length;
@@ -356,16 +356,16 @@ public class WebSocketClient : IDisposable {
 
             if (opcode == OpPing) {
                 // 自动应答 Pong（载荷原样回送）。
-                await this.DoSendOpcodeAsync(OP_PONG, payload);
+                await this.DoSendOpcodeAsync(OpPong, payload);
                 continue;
             }
-            if (opcode == OP_PONG) {
+            if (opcode == OpPong) {
                 var m = new WebSocketMessage();
                 m.Opcode = WebSocketOpcode.Pong;
                 m.Text = payload;
                 return m;
             }
-            if (opcode == OP_CLOSE) {
+            if (opcode == OpClose) {
                 var m = new WebSocketMessage();
                 m.Opcode = WebSocketOpcode.Close;
                 m.Text = payload;
@@ -378,7 +378,7 @@ public class WebSocketClient : IDisposable {
                 }
                 return m;
             }
-            if (opcode == OP_BINARY) {
+            if (opcode == OpBinary) {
                 var m = new WebSocketMessage();
                 m.Opcode = WebSocketOpcode.Binary;
                 m.Text = payload;
@@ -391,7 +391,7 @@ public class WebSocketClient : IDisposable {
                 m.Text = payload;
                 return m;
             }
-            if (opcode == OP_TEXT) {
+            if (opcode == OpText) {
                 var m = new WebSocketMessage();
                 m.Opcode = WebSocketOpcode.Text;
                 m.Text = payload;
@@ -420,7 +420,7 @@ public class WebSocketClient : IDisposable {
         string payload = sbp.ToString();
         if (payload.Length > 125) { this.Close(); return false; }
 
-        if ((await this.DoSendOpcodeAsync(OP_CLOSE, payload)) <= 0) { this.Close(); return false; }
+        if ((await this.DoSendOpcodeAsync(OpClose, payload)) <= 0) { this.Close(); return false; }
 
         WebSocketMessage reply = await this.DoReceiveAsync();
         bool ok = reply != null && reply.IsClose();
@@ -489,16 +489,14 @@ public class WebSocketClient : IDisposable {
         return x;
     }
 
-    /// <summary>生成 4 字节掩码键（CSPRNG 8 hex 字符 → 4 字节）；含 0x00 时返回空串。
+    /// <summary>生成 4 字节掩码键（CSPRNG 直出字节）；含 0x00 时返回空串。
     /// 经 StringBuilder.AppendChar 落原始单字节（`(char)` 拼接对 ≥0x80 按 UTF-8 多字节编码）。</summary>
     private string MakeMaskKey() {
-        string hex = CSPRNG.GetBytes(4);
-        if (hex == null || hex.Length < 8) { return ""; }
+        byte[] bytes = CSPRNG.GetBytes(4);
+        if (bytes == null || bytes.Length < 4) { return ""; }
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 8; i = i + 2) {
-            int hi = HexDigit(hex[i]);
-            int lo = HexDigit(hex[i + 1]);
-            int b = hi * 16 + lo;
+        for (int i = 0; i < 4; i++) {
+            int b = bytes[i];
             if (b == 0) { return ""; }
             sb.Append((char)b);
         }

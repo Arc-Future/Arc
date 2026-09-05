@@ -4,19 +4,6 @@
 // 禁止 GetValue 恒返回空串冒充「已解析」。完整编解码 / 校验后置。
 namespace Arc.Net.P2P;
 
-public enum MultiaddrProtocol {
-    IP4,
-    IP6,
-    Tcp,
-    Udp,
-    Dns,
-    Dns4,
-    Dns6,
-    Quic,
-    WS,
-    Wss,
-}
-
 public class Multiaddr {
     private string _raw;
 

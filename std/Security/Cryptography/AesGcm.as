@@ -13,7 +13,7 @@ public class AesGcm {
     private byte[] _key;
 
     private AesGcm(byte[] key) {
-        this._key = key;
+        _key = key;
     }
 
     /// <summary>CSPRNG 生成 32 字节随机密钥。</summary>
@@ -35,8 +35,8 @@ public class AesGcm {
 
     /// <summary>读写密钥（值替换即生效）。</summary>
     public byte[] Key {
-        get { return this._key; }
-        set { this._key = value; }
+        get { return _key; }
+        set { _key = value; }
     }
 
     /// <summary>恒 16（128-bit 标签）。</summary>
@@ -50,7 +50,7 @@ public class AesGcm {
         if (nonce == null || nonce.Length != 12) {
             throw new ArgumentException("AesGcm nonce must be exactly 12 bytes.");
         }
-        return this._Encrypt(nonce, plaintext);
+        return _Encrypt(nonce, plaintext);
     }
 
     /// <summary>解密：认证失败（篡改 tag/密文）返回 null。</summary>
@@ -58,7 +58,7 @@ public class AesGcm {
         if (nonce == null || nonce.Length != 12) {
             throw new ArgumentException("AesGcm nonce must be exactly 12 bytes.");
         }
-        return this._Decrypt(nonce, ciphertext, tag);
+        return _Decrypt(nonce, ciphertext, tag);
     }
 
     [Builtin(ABI = "rt_crypto_aesgcm_encrypt")]

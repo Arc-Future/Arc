@@ -19,11 +19,11 @@ public class PeerKey {
     private byte[] _pk;   // 公钥（32 字节）
 
     private PeerKey(byte[] keypair) {
-        this._sk = new byte[32];
-        this._pk = new byte[32];
+        _sk = new byte[32];
+        _pk = new byte[32];
         for (int i = 0; i < 32; i++) {
-            this._sk[i] = keypair[i];
-            this._pk[i] = keypair[i + 32];
+            _sk[i] = keypair[i];
+            _pk[i] = keypair[i + 32];
         }
     }
 
@@ -61,27 +61,27 @@ public class PeerKey {
 
     /// <summary>公钥身份（Arc.Text 小写 hex 编码 pk——Net 包不依赖 Security）。</summary>
     public PeerId PublicKey {
-        get { return new PeerId(Hex.ToHexString(this._pk)); }
+        get { return new PeerId(Hex.ToHexString(_pk)); }
     }
 
     /// <summary>对消息签名 → 64 字节签名（R‖S）。</summary>
     public byte[] Sign(string message) {
         if (message == null) { throw new ArgumentNullException("message"); }
-        return this._SignArr(Encoding.GetBytes(message), this._sk);
+        return _SignArr(Encoding.GetBytes(message), _sk);
     }
 
     /// <summary>验证签名；长度非 64 直接判假（不进 ABI）。</summary>
     public bool Verify(string message, byte[] signature) {
         if (message == null || signature == null || signature.Length != 64) { return false; }
-        return this._VerifyArr(Encoding.GetBytes(message), signature, this._pk);
+        return _VerifyArr(Encoding.GetBytes(message), signature, _pk);
     }
 
     /// <summary>完整密钥对（seed‖pk，64 字节），供持久化场景。</summary>
     internal byte[] GetSecretKey() {
         byte[] keypair = new byte[64];
         for (int i = 0; i < 32; i++) {
-            keypair[i] = this._sk[i];
-            keypair[i + 32] = this._pk[i];
+            keypair[i] = _sk[i];
+            keypair[i + 32] = _pk[i];
         }
         return keypair;
     }

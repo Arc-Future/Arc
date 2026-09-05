@@ -2,13 +2,6 @@
 // 诚实：Gather/GetLocalCandidates 抛 NotImplementedException，禁止空 List 假绿。
 namespace Arc.Net.P2P;
 
-public class IceCandidate {
-    public string Type { get; set; }
-    public string Address { get; set; }
-    public int Priority { get; set; }
-    public string Transport { get; set; }
-}
-
 public class IceAgent {
     private PeerKey _localKey;
 

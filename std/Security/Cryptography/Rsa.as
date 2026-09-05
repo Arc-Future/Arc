@@ -10,7 +10,7 @@ public class Rsa {
     private long _handle;
 
     private Rsa(long handle) {
-        this._handle = handle;
+        _handle = handle;
     }
 
     /// <summary>生成指定位数 RSA 密钥对（S0 固定 2048）。</summary>

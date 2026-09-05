@@ -17,28 +17,8 @@
 //   - 响应头由调用方（gRPC 框架）构造；本类仅负责帧装配与收发。
 
 namespace Arc.Net;
-
 using Arc.Collections;
 using Arc.Text;
-
-/// <summary>服务端单请求（请求头 + 载荷累积至 END_STREAM）。</summary>
-public class Http2ServerRequest {
-    public int StreamId;
-    public string Method;
-    public string Path;
-    public Http2HeaderList Headers;
-    public byte[] Body;
-    public bool EndStream;
-
-    public Http2ServerRequest(int streamId) {
-        StreamId = streamId;
-        Method = "";
-        Path = "";
-        Headers = new Http2HeaderList();
-        Body = Http2ByteUtils.ZeroBytes(0);
-        EndStream = false;
-    }
-}
 
 /// <summary>
 /// HTTP/2 服务端连接：接受客户端前置 + SETTINGS 交换 + 请求读取 + 响应/流式/trailers 写出。

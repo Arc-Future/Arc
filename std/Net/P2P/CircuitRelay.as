@@ -3,12 +3,6 @@
 // 同步 throw（非 async 状态机）以保证调用即失败。
 namespace Arc.Net.P2P;
 
-public class RelayReservation {
-    public Multiaddr RelayAddr { get; }
-    public int ExpireAt { get; }
-    public RelayReservation(Multiaddr addr, int expireAt) { RelayAddr = addr; ExpireAt = expireAt; }
-}
-
 public class CircuitRelay {
     public CircuitRelay() { }
 

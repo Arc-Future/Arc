@@ -174,7 +174,7 @@ public class TlsServerSession : IDisposable {
         int state = 0;
         byte[] recv = ZeroBytes(0);
         while (state != 1) {
-            byte[] sendOut = this._Handshake(recv, out state);
+            byte[] sendOut = _Handshake(recv, out state);
             if (sendOut == null) {
                 throw new IOException("TLS 1.3 server handshake failed.");
             }
@@ -206,7 +206,7 @@ public class TlsServerSession : IDisposable {
         }
 
         // flush 握手期生成的 post-handshake 消息（NewSessionTicket）。
-        byte[] ticket = this._Drain();
+        byte[] ticket = _Drain();
         if (ticket != null && ticket.Length > 0) {
             int sent = cl.SendBytes(ticket, 0, ticket.Length);
             if (sent != ticket.Length) {
@@ -214,7 +214,7 @@ public class TlsServerSession : IDisposable {
             }
         }
         _authenticated = true;
-        _negotiated = this._Alpn();
+        _negotiated = _Alpn();
     }
 
     // ── 加密字节流读写（语义对齐 NetworkStream.Read / Write）──
@@ -241,7 +241,7 @@ public class TlsServerSession : IDisposable {
                 throw new IOException("TLS read: too many WANT_READ iterations.");
             }
             byte[] empty = ZeroBytes(0);
-            int n = this._Read(empty, buffer, offset, count);
+            int n = _Read(empty, buffer, offset, count);
             if (n == -2) {
                 byte[] buf = ZeroBytes(4096);
                 int r = cl.ReceiveBytes(buf, 0, 4096);
@@ -257,12 +257,12 @@ public class TlsServerSession : IDisposable {
                 for (int i = 0; i < r; i++) {
                     enc[i] = buf[i];
                 }
-                n = this._Read(enc, buffer, offset, count);
+                n = _Read(enc, buffer, offset, count);
                 if (n == -2) {
                     // 密文可能仅含 post-handshake 消息（NewSessionTicket 等），
                     // mbedTLS 消费后以 WANT_READ 交还；空读排空排队数据后再回落 transport。
                     for (int drain = 0; drain < 4 && n == -2; drain++) {
-                        n = this._Read(empty, buffer, offset, count);
+                        n = _Read(empty, buffer, offset, count);
                     }
                     if (n == -2) {
                         continue;
@@ -304,7 +304,7 @@ public class TlsServerSession : IDisposable {
         for (int i = 0; i < count; i++) {
             plain[i] = buffer[offset + i];
         }
-        byte[] enc = this._Write(plain);
+        byte[] enc = _Write(plain);
         if (enc == null) {
             throw new IOException("TLS write failed.");
         }
@@ -330,7 +330,7 @@ public class TlsServerSession : IDisposable {
             throw new ArgumentOutOfRangeException("offset/count");
         }
         byte[] empty = ZeroBytes(0);
-        int n = this._ReadEarlyData(empty, buffer, offset, count);
+        int n = _ReadEarlyData(empty, buffer, offset, count);
         if (n < 0) {
             throw new IOException("TLS early data read failed.");
         }
@@ -340,7 +340,7 @@ public class TlsServerSession : IDisposable {
     /// <summary>释放 TLS 会话句柄与底层传输。</summary>
     public void Dispose() {
         if (_handle != 0) {
-            this._Free();
+            _Free();
             _handle = 0;
         }
         if (_stream != null) {

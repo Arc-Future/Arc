@@ -3,14 +3,6 @@
 // 当前为协议级可用实现；解析器能力落地后升级为生产级（避免占位承诺）。
 namespace Arc.Net.P2P;
 
-public class Peer {
-    public PeerId Id { get; set; }
-    public List<string> Addresses { get; set; }
-    public PeerConnectionState ConnectionState { get; set; }
-    public Dictionary<string, string> Metadata { get; set; }
-}
-public enum PeerConnectionState { Disconnected, Connecting, Connected, Disconnecting }
-
 public class PeerManager {
     private P2PNode _node;
     public PeerManager(PeerKey key) { _node = P2PNode.Create(key); }

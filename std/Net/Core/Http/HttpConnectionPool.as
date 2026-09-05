@@ -32,7 +32,7 @@ public class HttpConnectionPool {
 
     /// <summary>从池中取用 host:port 的有效连接；无则新建并连接。失败返回 null。</summary>
     public TcpClient AcquireConnection(string host, int port) {
-        string key = this._poolKey(host, port);
+        string key = _poolKey(host, port);
         int found = -1;
         for (int i = 0; i < _poolKeys.Count; i++) {
             if (_poolKeys[i] == key && _poolClients[i].Connected) {
@@ -69,7 +69,7 @@ public class HttpConnectionPool {
 
     /// <summary>将连接归还池中（去重 + 容量淘汰最旧）。</summary>
     public void StorePool(string host, int port, TcpClient cl) {
-        string key = this._poolKey(host, port);
+        string key = _poolKey(host, port);
         // 去重：同一 host:port 已有连接则关闭旧连接（先找索引，退出迭代后再移除）。
         int dup = -1;
         for (int i = 0; i < _poolKeys.Count; i++) {

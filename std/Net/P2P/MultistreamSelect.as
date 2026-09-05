@@ -17,22 +17,10 @@
 //     协议标识（无内部 0x00），长度字节 <0x80，故字节保真往返成立；二进制载荷
 //     不属于本切片（N3 已过 · 后续流载荷走 yamux 切片）。
 namespace Arc.Net.P2P;
-
 using Arc;
 using Arc.Net;
 using Arc.Collections;
 using Arc.Text;
-
-/// <summary>multistream-select/1.0.0 帧（已解码载荷 + 原始字节）。</summary>
-public class MsFrame {
-    public string Payload;   // 协议标识（含尾部 \n 前的原文，可含 \n）
-    public byte[] Raw;       // 原始帧字节（长度前缀 + 载荷）
-
-    public MsFrame(string payload, byte[] raw) {
-        Payload = payload;
-        Raw = raw;
-    }
-}
 
 /// <summary>
 /// multistream-select/1.0.0 协商器（client + server 双侧）。真实帧级编解码，

@@ -1,12 +1,6 @@
 // RFC 042: AutoNat — 自动 NAT 检测桩。
 namespace Arc.Net.P2P;
 
-public enum NatStatus {
-    Unknown,
-    Public,
-    Private,
-}
-
 public class AutoNat {
     public NatStatus Status { get; }
 

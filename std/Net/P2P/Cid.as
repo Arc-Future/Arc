@@ -1,17 +1,6 @@
 // RFC 042: Cid — 内容标识符桩。
 namespace Arc.Net.P2P;
 
-public enum MultihashAlgorithm {
-    SHA256,
-    SHA512,
-}
-
-public enum MulticodecType {
-    Raw,
-    DagPb,
-    DagCbor,
-}
-
 public class Cid {
     public string HashValue { get; set; }
 

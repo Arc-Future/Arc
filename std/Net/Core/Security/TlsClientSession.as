@@ -25,22 +25,11 @@
 // 不接受时静默退正常握手（RFC 8446 §8.1 语义）；`Read`/`Write` 同步语义保留。
 
 namespace Arc.Net.Security;
-
 using Arc.Collections;
 using Arc.Text;
 using Arc.Net;
 using Arc.Security.Cryptography;
 using Arc.Threading;
-
-/// <summary>TLS 证书校验策略（S5：`TrustAnchor` 语义从「null=不校验」升级为显式策略）。</summary>
-public enum TlsCertificateVerification {
-    /// <summary>不校验对端证书（仅测试面；显式设置时覆盖锚）。</summary>
-    None,
-    /// <summary>信任锚最小校验（单 DER 锚；等同 M3 行为）。</summary>
-    Anchor,
-    /// <summary>完整链校验（根+中间 PEM 链；含有效期/主机名/吊销 CRL 最小面）。</summary>
-    FullChain
-}
 
 /// <summary>
 /// TLS 1.3 客户端会话——非阻塞握手 + ALPN 协商 + 加密字节流读写 + 校验策略/会话恢复/0-RTT。
@@ -174,7 +163,7 @@ public class TlsClientSession : IDisposable {
             if (!_authenticated) {
                 return -1;
             }
-            return this._VerifyResult();
+            return _VerifyResult();
         }
     }
 
@@ -194,7 +183,7 @@ public class TlsClientSession : IDisposable {
         if (!_authenticated) {
             throw new InvalidOperationException("TlsClientSession is not authenticated.");
         }
-        return this._SessionSave();
+        return _SessionSave();
     }
 
     /// <summary>载入恢复会话（握手前调用）。载入失败不中断——退全握手（mbedTLS 语义）。</summary>
@@ -316,7 +305,7 @@ public class TlsClientSession : IDisposable {
                 || (_trustAnchors != null && _trustAnchors.Count > 0);
             if (mode == 2 && !hasAnchors && _useSystemRoots) {
                 // 默认 FullChain：无显式锚 → 载入 OS 系统根证书（真实公网主机证书校验）。
-                if (this._LoadSystemRoots() != 0) {
+                if (_LoadSystemRoots() != 0) {
                     this.Abort("load_system_roots failed.");
                 }
             } else {
@@ -326,29 +315,29 @@ public class TlsClientSession : IDisposable {
                 } else if (trustDer.Length > 0) {
                     caBlob = trustDer;
                 }
-                if (this._SetVerify(mode, caBlob) != 0) {
+                if (_SetVerify(mode, caBlob) != 0) {
                     this.Abort("set_verify failed.");
                 }
             }
         }
         byte[] crlData = _crlData;
         if (crlData != null && crlData.Length > 0) {
-            if (this._SetCrl(crlData) != 0) {
+            if (_SetCrl(crlData) != 0) {
                 this.Abort("set_crl failed.");
             }
         }
         if (_clientCert != null && _clientKey != null) {
-            if (this._SetClientCert(_clientCert.RawData, _clientKey) != 0) {
+            if (_SetClientCert(_clientCert.RawData, _clientKey) != 0) {
                 this.Abort("set_client_cert failed.");
             }
         }
         byte[] sessionBytes = _sessionBytes;
         if (sessionBytes != null && sessionBytes.Length > 0) {
             // 恢复失败不中断：mbedTLS 语义仅复位会话 → 退全握手。
-            this._SessionLoad(sessionBytes);
+            _SessionLoad(sessionBytes);
         }
         if (_earlyDataEnabled) {
-            this._EnableEarlyData(1);
+            _EnableEarlyData(1);
         }
 
         TcpClient cl = _stream.BaseClient;
@@ -360,7 +349,7 @@ public class TlsClientSession : IDisposable {
         if (_earlyDataEnabled && earlyData != null && earlyData.Length > 0) {
             int edState = -2;
             while (true) {
-                byte[] sendOut = this._WriteEarlyData(recv, earlyData, out edState);
+                byte[] sendOut = _WriteEarlyData(recv, earlyData, out edState);
                 if (sendOut == null) {
                     if (edState == -2) {
                         throw new IOException("TLS 1.3 early data write failed.");
@@ -404,7 +393,7 @@ public class TlsClientSession : IDisposable {
         }
 
         while (state != 1) {
-            byte[] sendOut = this._Handshake(recv, out state);
+            byte[] sendOut = _Handshake(recv, out state);
             if (sendOut == null) {
                 throw new IOException("TLS 1.3 handshake failed.");
             }
@@ -435,8 +424,8 @@ public class TlsClientSession : IDisposable {
             recv = next;
         }
         _authenticated = true;
-        _negotiated = this._Alpn();
-        _earlyDataStatus = this._EarlyDataStatus();
+        _negotiated = _Alpn();
+        _earlyDataStatus = _EarlyDataStatus();
     }
 
     /* 真异步握手（RFC 009 异步为主 · WebSocket wss 全量真异步）：与同步
@@ -463,7 +452,7 @@ public class TlsClientSession : IDisposable {
             bool hasAnchors = _trustAnchor != null
                 || (_trustAnchors != null && _trustAnchors.Count > 0);
             if (mode == 2 && !hasAnchors && _useSystemRoots) {
-                if (this._LoadSystemRoots() != 0) {
+                if (_LoadSystemRoots() != 0) {
                     this.Abort("load_system_roots failed.");
                 }
             } else {
@@ -473,28 +462,28 @@ public class TlsClientSession : IDisposable {
                 } else if (trustDer.Length > 0) {
                     caBlob = trustDer;
                 }
-                if (this._SetVerify(mode, caBlob) != 0) {
+                if (_SetVerify(mode, caBlob) != 0) {
                     this.Abort("set_verify failed.");
                 }
             }
         }
         byte[] crlData = _crlData;
         if (crlData != null && crlData.Length > 0) {
-            if (this._SetCrl(crlData) != 0) {
+            if (_SetCrl(crlData) != 0) {
                 this.Abort("set_crl failed.");
             }
         }
         if (_clientCert != null && _clientKey != null) {
-            if (this._SetClientCert(_clientCert.RawData, _clientKey) != 0) {
+            if (_SetClientCert(_clientCert.RawData, _clientKey) != 0) {
                 this.Abort("set_client_cert failed.");
             }
         }
         byte[] sessionBytes = _sessionBytes;
         if (sessionBytes != null && sessionBytes.Length > 0) {
-            this._SessionLoad(sessionBytes);
+            _SessionLoad(sessionBytes);
         }
         if (_earlyDataEnabled) {
-            this._EnableEarlyData(1);
+            _EnableEarlyData(1);
         }
 
         TcpClient cl = _stream.BaseClient;
@@ -506,7 +495,7 @@ public class TlsClientSession : IDisposable {
         if (_earlyDataEnabled && earlyData != null && earlyData.Length > 0) {
             int edState = -2;
             while (true) {
-                byte[] sendOut = this._WriteEarlyData(recv, earlyData, out edState);
+                byte[] sendOut = _WriteEarlyData(recv, earlyData, out edState);
                 if (sendOut == null) {
                     if (edState == -2) {
                         throw new IOException("TLS 1.3 early data write failed.");
@@ -540,7 +529,7 @@ public class TlsClientSession : IDisposable {
         }
 
         while (state != 1) {
-            byte[] sendOut = this._Handshake(recv, out state);
+            byte[] sendOut = _Handshake(recv, out state);
             if (sendOut == null) {
                 throw new IOException("TLS 1.3 handshake failed.");
             }
@@ -565,8 +554,8 @@ public class TlsClientSession : IDisposable {
             recv = next;
         }
         _authenticated = true;
-        _negotiated = this._Alpn();
-        _earlyDataStatus = this._EarlyDataStatus();
+        _negotiated = _Alpn();
+        _earlyDataStatus = _EarlyDataStatus();
     }
 
     // ── 加密字节流读写（语义对齐 NetworkStream.Read / Write）──
@@ -593,7 +582,7 @@ public class TlsClientSession : IDisposable {
                 throw new IOException("TLS read: too many WANT_READ iterations.");
             }
             byte[] empty = ZeroBytes(0);
-            int n = this._Read(empty, buffer, offset, count);
+            int n = _Read(empty, buffer, offset, count);
             if (n == -2) {
                 byte[] buf = ZeroBytes(4096);
                 int r = cl.ReceiveBytes(buf, 0, 4096);
@@ -610,13 +599,13 @@ public class TlsClientSession : IDisposable {
                 for (int i = 0; i < r; i++) {
                     enc[i] = buf[i];
                 }
-                n = this._Read(enc, buffer, offset, count);
+                n = _Read(enc, buffer, offset, count);
                 if (n == -2) {
                     // 喂入密文后仍 WANT_READ：密文可能只是 post-handshake 消息
                     // （NewSessionTicket 等，mbedTLS 消费后以 WANT_READ 交还控制），
                     // 应用数据仍排队在输入 FIFO。空读连续排空，再回落 transport 读。
                     for (int drain = 0; drain < 4 && n == -2; drain++) {
-                        n = this._Read(empty, buffer, offset, count);
+                        n = _Read(empty, buffer, offset, count);
                     }
                     if (n == -2) {
                         continue;
@@ -658,7 +647,7 @@ public class TlsClientSession : IDisposable {
         for (int i = 0; i < count; i++) {
             plain[i] = buffer[offset + i];
         }
-        byte[] enc = this._Write(plain);
+        byte[] enc = _Write(plain);
         if (enc == null) {
             throw new IOException("TLS write failed.");
         }
@@ -698,7 +687,7 @@ public class TlsClientSession : IDisposable {
                 throw new IOException("TLS read: too many WANT_READ iterations.");
             }
             byte[] empty = ZeroBytes(0);
-            int n = this._Read(empty, buffer, offset, count);
+            int n = _Read(empty, buffer, offset, count);
             if (n == 0) {
                 return 0;
             }
@@ -717,12 +706,12 @@ public class TlsClientSession : IDisposable {
                 for (int i = 0; i < r; i++) {
                     enc[i] = buf[i];
                 }
-                n = this._Read(enc, buffer, offset, count);
+                n = _Read(enc, buffer, offset, count);
                 if (n == -2) {
                     // 同同步 Read：密文可能仅含 post-handshake 消息（NewSessionTicket 等），
                     // mbedTLS 消费后以 WANT_READ 交还；空读排空排队数据后再回落 transport。
                     for (int drain = 0; drain < 4 && n == -2; drain++) {
-                        n = this._Read(empty, buffer, offset, count);
+                        n = _Read(empty, buffer, offset, count);
                     }
                     if (n == -2) {
                         continue;
@@ -765,7 +754,7 @@ public class TlsClientSession : IDisposable {
         for (int i = 0; i < count; i++) {
             plain[i] = buffer[offset + i];
         }
-        byte[] enc = this._Write(plain);
+        byte[] enc = _Write(plain);
         if (enc == null) {
             throw new IOException("TLS write failed.");
         }
@@ -782,7 +771,7 @@ public class TlsClientSession : IDisposable {
     /// <summary>释放 TLS 会话句柄与底层传输。</summary>
     public void Dispose() {
         if (_handle != 0) {
-            this._Free();
+            _Free();
             _handle = 0;
         }
         if (_stream != null) {
@@ -841,7 +830,7 @@ public class TlsClientSession : IDisposable {
     /// <summary>配置失败清理并抛异常。</summary>
     private void Abort(string message) {
         if (_handle != 0) {
-            this._Free();
+            _Free();
             _handle = 0;
         }
         throw new InvalidOperationException("TlsClientSession: " + message);

@@ -11,7 +11,7 @@ public class ECDiffieHellman {
     private int _handle;
 
     private ECDiffieHellman(int handle) {
-        this._handle = handle;
+        _handle = handle;
     }
 
     /// <summary>X25519 密钥对（CSPRNG 生成）。</summary>

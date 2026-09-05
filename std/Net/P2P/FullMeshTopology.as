@@ -1,0 +1,29 @@
+// FullMeshTopology —— 拆分自 ITopology.as（一文件一公开类型）。
+namespace Arc.Net.P2P;
+
+public class FullMeshTopology : ITopology {
+    private int _maxPeers;
+    public FullMeshTopology(int maxPeers) {
+        if (maxPeers <= 0) { maxPeers = 20; }
+        _maxPeers = maxPeers;
+    }
+    public List<PeerId> GetDesiredConnections(List<Peer> knownPeers) {
+        List<PeerId> result = new List<PeerId>();
+        if (knownPeers == null || _maxPeers <= 0) {
+            return result;
+        }
+        int n = knownPeers.Count;
+        if (n > _maxPeers) {
+            n = _maxPeers;
+        }
+        for (int i = 0; i < n; i++) {
+            Peer p = knownPeers[i];
+            if (p != null && p.Id != null) {
+                result.Add(p.Id);
+            }
+        }
+        return result;
+    }
+    public void OnPeerAdded(Peer peer) { }
+    public void OnPeerRemoved(PeerId peerId) { }
+}

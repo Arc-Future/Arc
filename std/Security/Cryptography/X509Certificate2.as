@@ -17,9 +17,9 @@ public class X509Certificate2 {
     private string _subject;   // 构造时缓存（rt_crypto_x509_subject 返回 malloc'd C 字符串）
 
     private X509Certificate2(long handle, byte[] rawData) {
-        this._handle = handle;
-        this._rawData = rawData;
-        this._subject = this._LoadSubject();
+        _handle = handle;
+        _rawData = rawData;
+        _subject = _LoadSubject();
     }
 
     /// <summary>从 DER 字节解析证书 → opaque 句柄；失败返回 0。</summary>
@@ -61,18 +61,18 @@ public class X509Certificate2 {
     /// <summary>主题名称（CN 等，mbedTLS 文本格式）——构造时缓存，避免每次访问
     /// 泄漏 malloc'd 字符串；Dispose 后为字符串快照仍可读。</summary>
     public string Subject {
-        get { return this._subject; }
+        get { return _subject; }
     }
 
     /// <summary>DER 原始字节（CreateFromDer 传入；CreateFromPem 为 null，诚实边界）。</summary>
     public byte[] RawData {
-        get { return this._rawData; }
+        get { return _rawData; }
     }
 
     /// <summary>提取 RSA 公钥（验签用）；非 RSA 证书返回 null。</summary>
     public Rsa PublicKey {
         get {
-            long h = this._GetPublicKeyHandle();
+            long h = _GetPublicKeyHandle();
             if (h == 0) {
                 return null;
             }
@@ -94,9 +94,9 @@ public class X509Certificate2 {
         if (trustAnchor == null) {
             throw new ArgumentNullException("trustAnchor");
         }
-        if (this._handle == 0 || trustAnchor._handle == 0) {
+        if (_handle == 0 || trustAnchor._handle == 0) {
             throw new ObjectDisposedException("X509Certificate2");
         }
-        return _Verify(this._handle, trustAnchor._handle) == 0;
+        return _Verify(_handle, trustAnchor._handle) == 0;
     }
 }

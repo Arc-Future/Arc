@@ -40,7 +40,7 @@ internal class Logger : ILogger {
         // `ReadOnlySpan<string>.Empty` 实参触发 codegen 构造调用降级。
         ReadOnlySpan<string> noArgs = ReadOnlySpan<string>.Empty;
         while (i < count) {
-            ILogger providerLogger = this._GetProviderLogger(providers, i);
+            ILogger providerLogger = _GetProviderLogger(providers, i);
             if (providerLogger.IsEnabled(logLevel)) {
                 providerLogger.Log(logLevel, eventId, exception, formatted, noArgs);
             }
