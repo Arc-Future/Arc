@@ -1043,12 +1043,21 @@ pub(super) fn method_call_rvalue(
         // `{ ptr, ptr }` 解引用（refcount 槽误读为 obj/itable）→ ACCESS_VIOLATION。
         // `ext.sig.params` 不含 this（注册时已 remove(0)），故用 `ext.this_ty`。
         let recv = maybe_box_iface(recv, recv_ty, &TypeId::Named(ext.this_ty.clone()), ctx);
+        // 扩展方法的**其余接口形参**同样须把 class 实参装箱为接口胖指针——仅
+        // 收 receiver 会让 `app.AddHost(menus)`（形参 IContributeHost）把裸对象
+        // 直传 callee，callee 按 `{ptr,ptr}` 解引用对象头（refcount/vtable 槽误读
+        // 为 obj/itable）→ ACCESS_VIOLATION（chord Contribute idx25 实证）。
         let mut call_args = vec![recv];
-        call_args.extend(
-            args.iter()
-                .enumerate()
-                .map(|(i, a)| lower_arg(builder, a, i)),
-        );
+        call_args.extend(args.iter().enumerate().map(|(i, a)| {
+            let op = lower_arg(builder, a, i);
+            match ext.sig.params.get(i).map(|p| p.ty.clone()) {
+                Some(pt) => {
+                    let arg_ty = type_name_from_operand(&op, &a.node, ctx);
+                    maybe_box_iface(op, &arg_ty, &TypeId::Named(pt.into()), ctx)
+                }
+                None => op,
+            }
+        }));
         return MirRvalue::Call {
             func: ext.call_name,
             args: call_args,
@@ -1348,117 +1357,135 @@ pub(super) fn method_call_rvalue_with_prep(
             },
         );
     }
-    let (impl_class, target_fn) = if let Ok((declaring, sig)) = resolved {
-        // CD-15/D4：`base.M()` → 直接基类实现的**非虚**静态分派（同
-        // method_call_rvalue 路径，见 base_call_target）。
-        if matches!(receiver.node, Expr::Base) {
-            base_call_target(
-                ctx.registry,
-                ctx.layouts,
-                recv_ty,
-                method,
-                &declaring,
-                &sig,
-                type_args,
-                &arg_types,
-                &overload_ctx,
-            )
-        } else {
-            let target = if !type_args.is_empty() {
-                // 基底用模板 link 名（含重载参数占位），与 MIR 模板名对齐。
-                generic_instantiation_target(
+    let (impl_class, target_fn) =
+        if let Ok((declaring, sig)) = resolved {
+            // CD-15/D4：`base.M()` → 直接基类实现的**非虚**静态分派（同
+            // method_call_rvalue 路径，见 base_call_target）。
+            if matches!(receiver.node, Expr::Base) {
+                base_call_target(
                     ctx.registry,
-                    &declaring,
+                    ctx.layouts,
+                    recv_ty,
                     method,
+                    &declaring,
                     &sig,
+                    type_args,
                     &arg_types,
-                    &type_arg_names,
                     &overload_ctx,
                 )
             } else {
-                ctx.registry.method_link_name_for(&declaring, &sig)
-            };
-            let impl_cls = if ctx.registry.is_interface(recv_ty) {
-                None
-            } else {
-                Some(declaring.to_string())
-            };
-            (impl_cls, Some(target))
-        }
-    } else if let Ok(Some(ext)) = ctx.registry.resolve_extension_with_arg_types(
-        recv_ty,
-        method,
-        args.len(),
-        &type_arg_names,
-        &arg_types,
-        &overload_ctx,
-    ) {
-        // 决策 #7（RFC 010）：扩展方法首参为接收者；泛型扩展使用 mangled call_name。
-        // 须传实参类型消歧（同 method_call_rvalue：AddSingleton 实例/工厂并列）。
-        // 接收者装箱：与 method_call_rvalue 扩展路径一致——`this` 形参为接口时
-        // 须把具体类接收者包装为接口胖指针（MirOperand::Iface）。
-        // `ext.sig.params` 不含 this（注册时已 remove(0)），故用 `ext.this_ty`。
-        let recv = maybe_box_iface(recv, recv_ty, &TypeId::Named(ext.this_ty.clone()), ctx);
-        let mut call_args = vec![recv];
-        call_args.extend(arg_ops);
-        return (
-            prep,
-            MirRvalue::Call {
-                func: ext.call_name,
-                args: call_args,
-            },
-        );
-    } else {
-        // 严格重载匹配失败时，回退到 `resolve_method_with_declaring`
-        // 沿继承链查找声明类（与 `method_call_rvalue` 对称）。
-        let fallback = ctx
-            .registry
-            .resolve_method_with_declaring(recv_ty, method, &overload_ctx);
-        // CD-15/D4：base 调用的回退路径同样命中直接基类实现（非虚）。
-        if matches!(receiver.node, Expr::Base) {
-            fallback
-                .as_ref()
-                .ok()
-                .map(|(declaring, sig)| {
-                    base_call_target(
-                        ctx.registry,
-                        ctx.layouts,
-                        recv_ty,
-                        method,
-                        declaring,
-                        sig,
-                        type_args,
-                        &arg_types,
-                        &overload_ctx,
-                    )
-                })
-                .unwrap_or((None, None))
-        } else {
-            let impl_cls = if ctx.registry.is_interface(recv_ty) {
-                None
-            } else if let Ok((declaring, _)) = &fallback {
-                Some(declaring.to_string())
-            } else {
-                None
-            };
-            let target_fn = fallback.as_ref().ok().map(|(declaring, sig)| {
-                if !type_args.is_empty() {
+                let target = if !type_args.is_empty() {
+                    // 基底用模板 link 名（含重载参数占位），与 MIR 模板名对齐。
                     generic_instantiation_target(
                         ctx.registry,
-                        declaring,
+                        &declaring,
                         method,
-                        sig,
+                        &sig,
                         &arg_types,
                         &type_arg_names,
                         &overload_ctx,
                     )
                 } else {
-                    ctx.registry.method_link_name_for(declaring, sig)
-                }
-            });
-            (impl_cls, target_fn)
-        }
-    };
+                    ctx.registry.method_link_name_for(&declaring, &sig)
+                };
+                let impl_cls = if ctx.registry.is_interface(recv_ty) {
+                    None
+                } else {
+                    Some(declaring.to_string())
+                };
+                (impl_cls, Some(target))
+            }
+        } else if let Ok(Some(ext)) = ctx.registry.resolve_extension_with_arg_types(
+            recv_ty,
+            method,
+            args.len(),
+            &type_arg_names,
+            &arg_types,
+            &overload_ctx,
+        ) {
+            // 决策 #7（RFC 010）：扩展方法首参为接收者；泛型扩展使用 mangled call_name。
+            // 须传实参类型消歧（同 method_call_rvalue：AddSingleton 实例/工厂并列）。
+            // 接收者装箱：与 method_call_rvalue 扩展路径一致——`this` 形参为接口时
+            // 须把具体类接收者包装为接口胖指针（MirOperand::Iface）。
+            // `ext.sig.params` 不含 this（注册时已 remove(0)），故用 `ext.this_ty`。
+            let recv = maybe_box_iface(recv, recv_ty, &TypeId::Named(ext.this_ty.clone()), ctx);
+            let mut call_args = vec![recv];
+            // 扩展方法除 receiver 外的接口形参：class 实参装箱为接口胖指针（同
+            // method_call_rvalue 扩展分支，Contribute idx25 实证——`AddHost(menus)`
+            // 裸对象直传被按 `{ptr,ptr}` 解引用对象头）。
+            call_args.extend(fixed_args.iter().zip(arg_ops.iter()).enumerate().map(
+                |(i, (a, op))| {
+                    let op = op.clone();
+                    match ext.sig.params.get(i).map(|p| p.ty.clone()) {
+                        Some(pt) => {
+                            let arg_ty = type_name_from_operand(&op, &a.node, ctx);
+                            maybe_box_iface(op, &arg_ty, &TypeId::Named(pt.into()), ctx)
+                        }
+                        None => op,
+                    }
+                },
+            ));
+            if arg_ops.len() > fixed_args.len() {
+                call_args.push(arg_ops[fixed_args.len()].clone());
+            }
+            return (
+                prep,
+                MirRvalue::Call {
+                    func: ext.call_name,
+                    args: call_args,
+                },
+            );
+        } else {
+            // 严格重载匹配失败时，回退到 `resolve_method_with_declaring`
+            // 沿继承链查找声明类（与 `method_call_rvalue` 对称）。
+            let fallback =
+                ctx.registry
+                    .resolve_method_with_declaring(recv_ty, method, &overload_ctx);
+            // CD-15/D4：base 调用的回退路径同样命中直接基类实现（非虚）。
+            if matches!(receiver.node, Expr::Base) {
+                fallback
+                    .as_ref()
+                    .ok()
+                    .map(|(declaring, sig)| {
+                        base_call_target(
+                            ctx.registry,
+                            ctx.layouts,
+                            recv_ty,
+                            method,
+                            declaring,
+                            sig,
+                            type_args,
+                            &arg_types,
+                            &overload_ctx,
+                        )
+                    })
+                    .unwrap_or((None, None))
+            } else {
+                let impl_cls = if ctx.registry.is_interface(recv_ty) {
+                    None
+                } else if let Ok((declaring, _)) = &fallback {
+                    Some(declaring.to_string())
+                } else {
+                    None
+                };
+                let target_fn = fallback.as_ref().ok().map(|(declaring, sig)| {
+                    if !type_args.is_empty() {
+                        generic_instantiation_target(
+                            ctx.registry,
+                            declaring,
+                            method,
+                            sig,
+                            &arg_types,
+                            &type_arg_names,
+                            &overload_ctx,
+                        )
+                    } else {
+                        ctx.registry.method_link_name_for(declaring, sig)
+                    }
+                });
+                (impl_cls, target_fn)
+            }
+        };
     let param_type_strs: Vec<String> = param_types.iter().map(|p| p.as_str().to_string()).collect();
     // CD-15/D4：`base.M()` 恒为非虚调用（C# 语义：跳过派生覆写）。
     let is_base_call = matches!(receiver.node, Expr::Base);

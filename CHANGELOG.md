@@ -4,6 +4,38 @@
 
 ## 2026-09-05
 
+### idx25 Contribute 崩溃——行级取证定稿 + 修复设计（下一段实施）
+- **分层结论（IR 行级证据，见上轮分析）**：编译器「接口↔object 表示转换缺失」双向缺口，非领域写法问题：
+  1. **提供侧**（`Provide<T=IContributeRegistry>` mono 体 IR）：T 形参=接口 fatptr 盒（calloc16{obj,itable}），未拆盒直接透传 `object?` 形参 → **接口盒被当对象存入 object 槽**（接口→object 应取 obj 半；零分配语义）
+  2. **读取侧**（`GetService<IContributeRegistry>` mono 体 IR）：`return value != null ? (T)value : null`（ternary 尾返回）无接口组装直接 `ret`——lower_return_value 的 wrap 源推断对 Ternary 分支失败 → object→接口适配缺失
+  3. **破坏机制**：选项 A 使 object 槽对无 ArcHeader 的 16B 盒做 refcount 原子写 → 盒 [0]（obj 指针低 4B）被改写 → `ContributeRegistry::Add` 以损坏 obj 为 this 读 `_hosts`（VEH DATA=-1）
+- **家族归类**：raw/模板克隆（泛型单态化重降级）路径缺 typeck 表示转换——与 string→object 装箱缺口（6d44d87e 修复）同族；typed 非泛型路径由赋值/返回的 `iface_dest` wrap 兜底，泛型尾返回与形参透传无兜底
+- **修复设计（下段实施指引）**：
+  1. 接口→object 拆盒：接口值进入 object/object? 形参/槽位时取 {obj} 半（零分配、静态可折叠；复用/扩展 `UnboxIface` codegen 的取半路径）
+  2. object→接口组装：lower_return_value / ternary-尾返回的 wrap 源推断补上（MakeIfaceDyn 机制现成；步骤 1 落地后槽内为含 typeid 的 obj，动态适配正确）
+  3. 验证：chord corpus idx25/26 全绿 + workspace 133 批 + 接口转换微基准（零热路径成本门）
+- **性能说明（已论证）**：与值类型零装箱/单态化/约束调用正交；接口→object 零分配、object→接口静态常数 itable 折叠；不触碰顶尖性能杠杆；接口值堆盒表示（calloc16/次）为独立性能工程债，另行排期
+
+### 设计裁决落地：Object 槽 ARC 选项 A 采纳 + 扩展方法接口实参装箱 + std/Net SHA1 清偿
+- **选项 A 采纳（人裁决）**：`arc_class_place(Object/Nullable{Object}) = true`（emit_cfg.rs，依据与备选 B 见注释）。前提（raw/λ string→object 装箱，6d44d87e）已就位。验证：chord corpus **漂移消失**——idx0–24 确定性全过（Reload/Requirements 区此前漂移，现稳定）；崩溃前沿确定性收至 idx25 Contribute 区
+- **扩展方法接口实参装箱修复（`method_call_rvalue` 与 `method_call_rvalue_with_prep` 扩展分支）**：此前只给 receiver（`this`）装箱，`app.AddHost(menus)`（形参 `IContributeHost`）把裸对象直传 callee，callee 按 `{ptr,ptr}` 解引用对象头 → ACCESS_VIOLATION。修复后调用点正确构造 fatptr 盒（calloc16+inc+itable，IR 取证）
+- **std/Net 清偿**：WebSocketClient.as 缺 `using Arc.Security;`（SHA1 声明于 Arc.Security）→ typeck 全绿（Arc.Net/Grpc/P2P 三成员均过 typeck+codegen，仅余已知 Windows library-kind 链接 main 边界缺口）；登记中「std/Net 2 个 typeck mismatch」随之清零
+- **新登记（idx25 Contribute，接口 T 泛型缺口）**：`Provide<IContributeRegistry>`/typed GetService 的 T=接口 路径（corpus 首个接口 T 用例）——VEH 取证：崩溃在 `ContributeRegistry::Add` 读 `_hosts` 字段（DATA=-1），registry fatptr/obj 经接口-T 泛型适配链后损坏；疑似 raw/mono 克隆体内 `(T)value` 接口转换缺 MakeIface（与 string 装箱同族的 raw 路径缺口）；处置建议：接口 T 单态化的 MakeIface 补发 + span 化诊断，下轮按序推进
+
+
+## 2026-09-05
+
+### 目标周期收口（16/16 轮总结）：达成矩阵与剩余债入口
+- **达成（本机已验证）**：① 安装态验收闭环（arc-pack→install.ps1→doctor 10/0→指针 arc 隔离离线：std 自动索引消费 + MyExt library `--dynamic` + MyApp path 消费，全部经安装根）；② 发布级缺口按演练修复（指针自定位等，历轮）；③ 质量门（最终树 workspace 133 批 + doc-tests + clippy 零告警 + fmt + arc-pack 内置验收）；④ 门禁债全程如实登记（见下）；⑤ UI/Core --dynamic 完整性门 22→0 + IR 达链接期（wgpu 外部资产债）；chord corpus 由原始崩点推进至 idx0–21 稳定、22+ 漂移已根因取证
+- **剩余债与处置建议（按入口排序）**：
+  1. **Object 槽 ARC：A/B 设计裁决（需人裁决，唯一硬阻塞）**——选项 A（装箱补齐后计数）实测 over-dec 归零、corpus 确定性到 idx24；选项 B（现状：零计数借用语义）保留性能语义但 over-dec/悬垂家族随 typed-inject 等路径残留。裁决入口：RFC 004 §值类型视图 + 本文档 9/5 轮登记；采纳 A 即启用 `arc_class_place(Object)=true`（改动已就绪，一次 edit 验证）
+  2. chord corpus idx22+（Reload/Contribute 区）漂移崩溃：与 1 绑定；另含 Reload 断言语义核对（tone 服务祖先可见性 vs RFC 045 模型）
+  3. UI wgpu_native.dll 蛇形 shim 导出缺口（外部资产重建/换源）
+  4. std/Net 2 个 typeck mismatch（TypeError::Mismatch 缺 span——补 span 诊断后清偿）
+  5. 外部执行面：macOS/Linux 实机、发布端点、CI runner 观察（本机不可达，明示边界）
+- **下一工作会话入口**：本文件 9/5 各轮登记 → emit_cfg.rs `arc_class_place` 注释（A/B 依据）→ 裁决后按 1→2 序推进
+
+
 ### raw/λ 路径 string→object 实参装箱对齐 + Object 槽 ARC 取舍登记（待设计裁决）
 - **修复（一致性/正确性，A/B 两选项下均成立）**：raw/λ（模板克隆体 raw 重降级）调用点缺 typeck 的 `Expr::Box` 插入——`object`/`object?` 形参直收 rodata/堆裸串（无 ArcHeader），按对象消费（unbox vtable 判别）即错、未来参与计数即写爆只读段。新增 `maybe_box_string_to_object`（`crates/mir/src/lower/lower_call.rs`，接线 `method_call_rvalue_with_prep` 实参物化环）：形参为 object/object?、实参静态类型 string、且非既有 Box/Unbox 节点时补 `MirRvalue::Box`（codegen `rt_string_box`，null 保留）——与 typed 路径契约对齐。验证：chord corpus 漂移分布与基线一致（25/25/14 抽样，无回归）；mir/codegen/typeck 单测全绿；clippy 零告警
 - **Object 槽 ARC 计数：A/B 取舍登记（未裁决，默认 B）**：选项 A（装箱补齐后 `arc_class_place(Object)=true`）实测 over-dec 归零、corpus 确定性到 idx24；选项 B（object 槽持借用、不计数，性能语义优先）。A 使 object 流量付 inc/dec——是否违背「无装箱」初衷的讨论见仓库往来（值类型零装箱路径未动；string→object 盒为表示层必需 ABI，typed 路径 1.0 即如此）。裁决前保持 B（emit_cfg.rs 注释含两选项依据）；裁决入口：RFC 004 §值类型视图 / 性能语义章节

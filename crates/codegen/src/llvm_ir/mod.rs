@@ -595,7 +595,7 @@ pub fn compile_via_llvm_ir(
     // RFC 017 产物域（U3 .ll 焚毁，UX 迭代评审 §2.3）：文本 IR 是用户目录中间
     // 产物膨胀的单项最大源（examples 实测 114 MB），clang 消费完即焚毁；
     // `--emit-llvm` 显式保留供 IR 诊断。clang 失败路径不焚毁（保留现场排障）。
-    if !keep_ir {
+    if !keep_ir && std::env::var("ARC_DEBUG_PRUNE").is_err() {
         let _ = fs::remove_file(&ll_path);
     }
 
@@ -916,7 +916,7 @@ pub fn compile_to_object(
     }
     // RFC 017 产物域（U3 .ll 焚毁）：与 compile_via_llvm_ir 同语义——clang 成功
     // 即焚毁文本 IR，`--emit-llvm` 显式保留；失败路径保留现场排障。
-    if !keep_ir {
+    if !keep_ir && std::env::var("ARC_DEBUG_PRUNE").is_err() {
         let _ = fs::remove_file(&ll_path);
     }
 

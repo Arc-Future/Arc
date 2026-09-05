@@ -39,6 +39,7 @@ using Arc;
 using Arc.Collections;
 using Arc.Net;
 using Arc.Net.Security;
+using Arc.Security;
 using Arc.Security.Cryptography;
 using Arc.Text;
 

@@ -2074,21 +2074,21 @@ impl<'a> FnEmitter<'a> {
     /// (represented as a `ptr` slot, mirroring the existing retain path).
     pub(super) fn arc_class_place(ty: &TypeId, layouts: &typeck::ProgramLayouts) -> bool {
         match ty {
-            // Object / Nullable{Object} 槽位默认**不**按 class 计 ARC（性能语义
-            // 选项 B：object 槽持借用引用、不计数）。选项 A（对齐契约：raw 路径
-            // 装箱补齐后纳入计数）已实现并验证（over-dec 归零、corpus 至 idx24），
-            // 但涉及「object 流量付 inc/dec」的性能语义取舍——待设计裁决（见
-            // CHANGELOG 登记），裁决前保持 B。注意：任选其一时 raw/λ 路径的
-            // string→object 装箱（maybe_box_string_to_object）都必须保留——裸串
-            // 进 object 槽后按对象消费（unbox 判别/未来计数）必然损坏。
-            TypeId::Object => false,
+            // Object / Nullable{Object} 槽位按 class 计 ARC（设计裁决：选项 A，
+            // 2026-09-05 人裁决采纳）。前提已满足：raw/λ 路径 string→object 实参
+            // 装箱补齐（maybe_box_string_to_object，6d44d87e）后 object 槽内均为
+            // 带 ArcHeader 的 box/class 实例——typed-inject 注册表借引用 over-dec
+            // 根治（选项 B 为保留零计数借用语义的备选，见 CHANGELOG 9/5 登记）。
+            // 若再有 raw 串入 object 槽，inc/dec 会把字符串内容当 refcount 原子写
+            // → 0xC0000005（VEH 取证），回归时以 chord corpus + workspace 门禁兜底。
+            TypeId::Object => true,
             TypeId::Named(n) => {
                 layouts.classes.contains_key(n.as_str())
                     && !is_opaque_runtime_handle(n.as_str())
                     && !is_generic_template_name(n.as_str())
             }
             TypeId::Nullable { inner } => match inner.as_ref() {
-                TypeId::Object => false,
+                TypeId::Object => true,
                 TypeId::Named(n) => {
                     layouts.classes.contains_key(n.as_str())
                         && !is_opaque_runtime_handle(n.as_str())
