@@ -855,8 +855,13 @@ pub fn list_elem_size(suffix: &str, layouts: &ProgramLayouts) -> i32 {
 }
 
 /// Runtime eq function for a List element type suffix.
-/// Returns `@rt_list_eq_str` for string, `null` for value types (runtime uses memcmp).
-pub fn list_eq_fn(suffix: &str) -> Option<&'static str> {
+/// Returns `@rt_list_eq_str` for string, `@rt_list_eq_iface` for interface
+/// elements（RFC 051 S3a：按 fat 盒底层对象身份比较，见 rt_list.c 注释）,
+/// `null` for value types (runtime uses memcmp; class 元素默认指针身份相等).
+pub fn list_eq_fn(suffix: &str, layouts: &ProgramLayouts) -> Option<&'static str> {
+    if layouts.interfaces.contains_key(suffix) {
+        return Some("@rt_list_eq_iface");
+    }
     if suffix == "string" {
         Some("@rt_list_eq_str")
     } else {
@@ -911,13 +916,16 @@ pub fn list_elem_is_ref(suffix: &str, layouts: &ProgramLayouts) -> bool {
     if suffix.ends_with("_arr") && !layouts.classes.contains_key(suffix) {
         return false;
     }
-    // 接口值（{ptr obj, ptr itable} fat pointer）：offset 0 是对象指针，无 ArcHeader。
-    // List 存储其裸指针不得走 rt_arc_inc/dec —— 否则 rt_arc_inc/dec 会把 obj 字段当
-    // refcount 改写，接口分派以被污染的值解引用 → 原生崩溃（List<IMessage> 实测）。
-    // 用 layouts.interfaces（含泛型接口 mangled 名）判定，避免 is_iface_name 的 I+大写
-    // 启发式把 Item/Image 等类名误判为接口。
+    // RFC 051 D2：接口值 = 堆 fat 盒（真 ARC 对象，32B：rc/weak/vt@8 +
+    // obj@16/itable@24）——**是**引用类型：List/Dictionary 等须按引用维护
+    //（inc/dec 作用于盒，盒灭经 finalizer 释放 obj）。旧 16B 布局（盒无
+    // ArcHeader）下接口元素禁 ARC 的注释与实现已随 D2 淘汰——raw 存储 + 槽位
+    // drop（盒释放）会使容器内盒悬垂（UAF）。元素相等 = **底层对象身份**
+    //（.NET EqualityComparer<I>.Default 引用相等；盒每次转换新建——List
+    // Remove/Contains/IndexOf 经对象身份扫描（emit_builtin/emit_stubs
+    // iface_list_identity_*，obj@+16）与 rt_list_eq_iface 回调统一）。
     if layouts.interfaces.contains_key(suffix) {
-        return false;
+        return true;
     }
     !matches!(
         suffix,

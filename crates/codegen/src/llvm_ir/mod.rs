@@ -3273,7 +3273,33 @@ impl<'a> ModuleEmitter<'a> {
                 .map(|f| (f.ty.to_string(), f.offset))
                 .collect();
             let has_class_fields = !class_field_slots.is_empty();
-            if has_class_fields {
+            // RFC 051 S3b/S3c：容器句柄包装类（Dictionary_K_V / SortedDictionary_K_V）
+            // 的 `_handle` 槽持有 rt_dict*/rt_sorted_dict*（写于 ctor stub，offset 16）。
+            // 对象最终 drop（rc 1→0）经 vtable finalizer 释放表与 owned 条目值
+            // （rt_dict_destroy / rt_sorted_dict_destroy——对 legacy 表只 free，对
+            // owned 表先 dec 条目值再 free）。此前该类 slot1 恒 null：容器死亡从不
+            // destroy → 每容器泄漏表 + 值（MemProbe13 实测 ~9KB/轮，20000 轮峰值
+            // ~180MB）。vt finalizer 恰在最后一次引用释放时运行一次（无 rc 竞态
+            // 判别需求，比 emit_class_drop 的 rc==1 分支更稳：字段/容器/异步帧
+            // 路径全收敛）。
+            let handle_offset = class
+                .fields
+                .iter()
+                .find(|f| f.name == "_handle")
+                .map(|f| f.offset)
+                .unwrap_or(16);
+            let container_release: Option<String> = parse_dict_kv(&class.name)
+                .map(|_| "@rt_dict_destroy".to_string())
+                .or_else(|| {
+                    parse_sorted_dict_kv(&class.name).map(|_| "@rt_sorted_dict_destroy".to_string())
+                })
+                .or_else(|| {
+                    // RFC 051 S3d: ConcurrentDictionary wrapper finalizer
+                    parse_concurrent_dict_kv(&class.name)
+                        .map(|_| "@rt_concurrent_dict_destroy".to_string())
+                });
+            let has_finalizer = has_class_fields || container_release.is_some();
+            if has_finalizer {
                 let mut fin = String::new();
                 fin.push_str(&format!("$__finalize_{cname} = comdat any\n"));
                 fin.push_str(&format!(
@@ -3288,6 +3314,15 @@ impl<'a> ModuleEmitter<'a> {
                     fin.push_str(&format!("{val} = load ptr, ptr {fld}\n"));
                     fin.push_str(&format!("call void @rt_arc_dec(ptr {val})\n"));
                     let _ = ty;
+                }
+                if let Some(destroy) = &container_release {
+                    let hp = format!("%__finalize_{cname}_hp");
+                    let hv = format!("%__finalize_{cname}_hv");
+                    fin.push_str(&format!(
+                        "{hp} = getelementptr inbounds i8, ptr %self, i64 {handle_offset}\n"
+                    ));
+                    fin.push_str(&format!("{hv} = load ptr, ptr {hp}\n"));
+                    fin.push_str(&format!("call void {destroy}(ptr {hv})\n"));
                 }
                 fin.push_str("ret void\n");
                 fin.push_str("}\n");
@@ -3319,8 +3354,8 @@ impl<'a> ModuleEmitter<'a> {
             // slot 2 walk / slot 3+ virtual methods）
             let mut fns = vec![
                 format!("ptr @.typeinfo.{cname}"), // slot 0: typeinfo
-                if has_class_fields {
-                    format!("ptr @__finalize_{cname}") // slot 1: finalizer
+                if has_finalizer {
+                    format!("ptr @__finalize_{cname}") // slot 1: finalizer（字段释放 / 容器句柄）
                 } else {
                     "ptr null".to_string() // slot 1: 无 class 字段 → null
                 },
@@ -4423,11 +4458,7 @@ impl<'a> ModuleEmitter<'a> {
                  entry:\n\
                  {pre}\
                  \x20 %raw = call ptr @{concrete_fn}({call_args_str})\n\
-                 \x20 %fat = alloca {{ ptr, ptr }}\n\
-                 \x20 %oa = getelementptr inbounds {{ ptr, ptr }}, ptr %fat, i32 0, i32 0\n\
-                 \x20 store ptr %raw, ptr %oa\n\
-                 \x20 %va = getelementptr inbounds {{ ptr, ptr }}, ptr %fat, i32 0, i32 1\n\
-                 \x20 store ptr @.itable.{provider}_{itable_iface}, ptr %va\n\
+                 \x20 %fat = call ptr @rt_iface_box_create(ptr %raw, ptr @.itable.{provider}_{itable_iface})\n\
                  \x20 ret ptr %fat\n\
                  }}\n\n"
             ));
@@ -4453,15 +4484,14 @@ impl<'a> ModuleEmitter<'a> {
                  entry:\n\
                  {pre}\
                  \x20 %src = call ptr @{concrete_fn}({call_args_str})\n\
-                 \x20 %obj_a = getelementptr inbounds {{ ptr, ptr }}, ptr %src, i32 0, i32 0\n\
+                 \x20 %obj_a = getelementptr inbounds i8, ptr %src, i32 16\n\
                  \x20 %obj = load ptr, ptr %obj_a\n\
-                 \x20 %it_a = getelementptr inbounds {{ ptr, ptr }}, ptr %src, i32 0, i32 1\n\
+                 \x20 %it_a = getelementptr inbounds i8, ptr %src, i32 24\n\
                  \x20 %src_it = load ptr, ptr %it_a\n\
-                 \x20 %fat = alloca {{ ptr, ptr }}\n\
-                 \x20 %oa = getelementptr inbounds {{ ptr, ptr }}, ptr %fat, i32 0, i32 0\n\
-                 \x20 store ptr %obj, ptr %oa\n\
-                 \x20 %va = getelementptr inbounds {{ ptr, ptr }}, ptr %fat, i32 0, i32 1\n\
-                 \x20 store ptr %src_it, ptr %va\n"
+                 \x20 call void @rt_arc_inc(ptr %obj)\n\
+                 \x20 %fat = call ptr @rt_iface_box_create(ptr %obj, ptr %src_it)\n\
+                 \x20 call void @rt_arc_dec(ptr %src)\n\
+                 \x20 %va = getelementptr inbounds i8, ptr %fat, i32 24\n"
             );
             let join = "join";
             if pairs.is_empty() {
@@ -4522,15 +4552,12 @@ impl<'a> ModuleEmitter<'a> {
                 .collect();
             let join = format!("{dest}_join");
             let mut s = format!(
-                "  %{dest}_obj_a = getelementptr inbounds {{ ptr, ptr }}, ptr %arg{i}, i32 0, i32 0\n\
+                "  %{dest}_obj_a = getelementptr inbounds i8, ptr %arg{i}, i32 16\n\
                  \x20 %{dest}_obj = load ptr, ptr %{dest}_obj_a\n\
-                 \x20 %{dest}_it_a = getelementptr inbounds {{ ptr, ptr }}, ptr %arg{i}, i32 0, i32 1\n\
+                 \x20 %{dest}_it_a = getelementptr inbounds i8, ptr %arg{i}, i32 24\n\
                  \x20 %{dest}_src_it = load ptr, ptr %{dest}_it_a\n\
-                 \x20 %{dest} = alloca {{ ptr, ptr }}\n\
-                 \x20 %{dest}_oa = getelementptr inbounds {{ ptr, ptr }}, ptr %{dest}, i32 0, i32 0\n\
-                 \x20 store ptr %{dest}_obj, ptr %{dest}_oa\n\
-                 \x20 %{dest}_va = getelementptr inbounds {{ ptr, ptr }}, ptr %{dest}, i32 0, i32 1\n\
-                 \x20 store ptr %{dest}_src_it, ptr %{dest}_va\n"
+                 \x20 %{dest} = call ptr @rt_iface_box_create(ptr %{dest}_obj, ptr %{dest}_src_it)\n\
+                 \x20 %{dest}_va = getelementptr inbounds i8, ptr %{dest}, i32 24\n"
             );
             if pairs.is_empty() {
                 s.push_str(&format!("  br label %{join}\n{join}:\n"));
@@ -4582,11 +4609,7 @@ impl<'a> ModuleEmitter<'a> {
             })
             .unwrap_or_else(|| iface_ty.to_string());
         Some(format!(
-            "  %{dest} = alloca {{ ptr, ptr }}\n\
-             \x20 %{dest}_oa = getelementptr inbounds {{ ptr, ptr }}, ptr %{dest}, i32 0, i32 0\n\
-             \x20 store ptr %arg{i}, ptr %{dest}_oa\n\
-             \x20 %{dest}_va = getelementptr inbounds {{ ptr, ptr }}, ptr %{dest}, i32 0, i32 1\n\
-             \x20 store ptr @.itable.{provider}_{itable_iface}, ptr %{dest}_va\n"
+            "  %{dest} = call ptr @rt_iface_box_create(ptr %arg{i}, ptr @.itable.{provider}_{itable_iface})\n"
         ))
     }
 

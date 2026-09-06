@@ -606,6 +606,68 @@ impl TypeRegistry {
         }
     }
 
+    /// λ 实参调用的**首适用候选**扫描（RFC 045：`Tone(ctx => Cleanup(ctx))` 值体 λ
+    /// 应命中 Func 清理形态而非首个同名 Action 重载）。
+    ///
+    /// 背景：λ 实参在无目标类型时推断为 `Func { params: [Infer..], ret: Infer }`，
+    /// 既有的按名解析对任何候选都不可分配 → 调用点最终回落「首签名」（声明序）
+    /// ——ChordContext 先声明 Action 形态时，值体 λ 恒被 Action 截获，清理形态
+    /// 的 Func 重载不可达（Tone_FuncFormCleanup 0 vs 1 实证）。
+    ///
+    /// 本扫描沿**声明序**逐候选做 λ 感知的可适用判定（首个适用者胜，延续
+    /// 「首适用」语言律）：
+    /// - λ 实参位：形参须为 Func_/Action_ 委托且 λ 元数匹配；委托返回值非 Void
+    ///   时要求 λ 体「可出值」（表达式体或含尾返回的块体——块体无尾返回为
+    ///   void λ，仅适用于 Void 返回委托，对标 C# 语句 λ 不可转换到值返回委托）；
+    /// - 非 λ 实参位：按既有 param_assignable。
+    ///
+    /// `lambda_shapes[i]`：`Some((λ 元数, λ 体不可出值))`；非 λ 实参位 `None`。
+    /// 全部候选均不适用时回传 `NoMatchingOverload`（调用方再按历史路径回落）。
+    pub fn resolve_method_overload_lambda_trial(
+        &self,
+        ty: &Ident,
+        method: &Ident,
+        arg_types: &[Ident],
+        lambda_shapes: &[Option<(usize, bool)>],
+        ctx: &AccessContext,
+    ) -> Result<(Ident, OopMethodSig), OopError> {
+        let candidates = self.collect_method_overloads(ty, method, ctx)?;
+        for (declaring, sig) in &candidates {
+            if sig.params.len() != arg_types.len() {
+                continue;
+            }
+            let applicable = sig
+                .params
+                .iter()
+                .zip(arg_types.iter())
+                .zip(lambda_shapes.iter())
+                .all(|((param, found), shape)| match shape {
+                    None => self.param_assignable(&param.ty, found),
+                    Some((arity, body_voidish)) => {
+                        let Some(TypeId::Func { ret, .. }) =
+                            crate::check_expr::demangle_func_type_with(&param.ty, *arity, &|s| {
+                                self.types.contains_key(s)
+                            })
+                        else {
+                            return false;
+                        };
+                        if matches!(ret.as_ref(), TypeId::Void) {
+                            true
+                        } else {
+                            !*body_voidish
+                        }
+                    }
+                });
+            if applicable {
+                return Ok((declaring.clone(), sig.clone()));
+            }
+        }
+        Err(OopError::NoMatchingOverload {
+            ty: ty.to_string(),
+            method: method.to_string(),
+        })
+    }
+
     pub fn method_overload_count(&self, declaring_type: &Ident, method: &Ident) -> usize {
         self.nominal_type(declaring_type)
             .and_then(|t| t.methods.get(method))

@@ -2101,6 +2101,33 @@ impl TypeChecker {
                                     )
                                 })
                                 .or_else(|_| {
+                                    // RFC 045：soft 软匹配歧义（Action/Func 同 arity 双命中，
+                                    // 如 `Tone(ctx => …)`）时按**声明序**取首个适用候选——
+                                    // 值体 λ → 值返回委托、void 体 λ（块体无尾返回）仅 Void
+                                    // 返回委托。MIR 侧同律镜像（lower_call λ trial），两阶梯
+                                    // 绑定一致，防首签名回退分叉。
+                                    let shapes: Vec<Option<(usize, bool)>> = args
+                                        .iter()
+                                        .map(|a| match &a.node {
+                                            Expr::Lambda(l) => Some((
+                                                l.params.len(),
+                                                match &l.body {
+                                                    LambdaBody::Block(b) => b.tail.is_none(),
+                                                    LambdaBody::Expr(_) => false,
+                                                },
+                                            )),
+                                            _ => None,
+                                        })
+                                        .collect();
+                                    self.registry.resolve_method_overload_lambda_trial(
+                                        &tname,
+                                        method,
+                                        &arg_type_names,
+                                        &shapes,
+                                        &self.access_ctx(),
+                                    )
+                                })
+                                .or_else(|_| {
                                     // 扩展方法优先于 name-only 兜底（C# 语义：实例候选
                                     // 无一适用时回落扩展方法；同名单实例方法不得屏蔽扩展）。
                                     // 命中即返回 Err，令外层 resolve_result 的 Err 臂走

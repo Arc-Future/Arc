@@ -1,6 +1,7 @@
 namespace Arc.Runtime;
 
 using Arc.IO;
+using Arc.Threading;
 
 // ============================================================
 // AssemblyLoadContext —— 动态库加载上下文（RFC 017 M4）
@@ -76,6 +77,13 @@ public class AssemblyLoadContext
     private Dictionary<string, Assembly> _loaded;
     private Dictionary<string, string> _dependencyGraph;
     private List<string> _probingPaths;
+    // u5 并发载入竞态修复：`_loaded`/`_dependencyGraph` 是普通（非并发）
+    // Dictionary——并发 Load（多线程同路径，rt 层多代数并存契约）对其无锁
+    // set_Item 竞态损坏（覆盖/表交错 → 槽位值丢失 → 空值条目），UnloadAll
+    // 反查对 null 读 IsDisposed → 0xC0000005（u5_concurrent_load_unload_race
+    // ~25% AV 根因）。登记表访问统一经本锁串行化（读/写全覆盖）。
+
+    private Lock _registryLock;
 
     private AssemblyLoadContext()
     {
@@ -83,6 +91,7 @@ public class AssemblyLoadContext
         _loaded = new Dictionary<string, Assembly>();
         _dependencyGraph = new Dictionary<string, string>();
         _probingPaths = new List<string>();
+        _registryLock = new Lock();
 
         // 默认探针路径：当前目录 + ./lib/
         _probingPaths.Add(".");
@@ -229,6 +238,16 @@ public class AssemblyLoadContext
     /// requestingAssembly: 触发加载的请求方；null = 顶层调用。
     public Assembly Load(string path, Assembly? requestingAssembly = null)
     {
+        // u5 并发载入竞态修复：注册表（_loaded/_dependencyGraph）访问串行化——
+        // 并发 Load 的 set_Item 竞态损坏曾致 UnloadAll 空值条目 AV。同线程递归
+        // （LoadDependencies→Load、钩子内再 Load）经 Monitor 重入（RFC 009 §7.2）。
+        lock (_registryLock) {
+            return this.LoadCore(path, requestingAssembly);
+        }
+    }
+
+    private Assembly LoadCore(string path, Assembly? requestingAssembly)
+    {
         // 1. 解析阶段
         var resolveArgs = new AssemblyResolvingArgs(this, path, requestingAssembly);
         DefaultAssemblyLifecycle lc = _lifecycle;
@@ -331,16 +350,20 @@ public class AssemblyLoadContext
 
     public Assembly? GetLoadedAssembly(string name)
     {
-        if (_loaded.ContainsKey(name)) {
-            return _loaded[name];
+        lock (_registryLock) {
+            if (_loaded.ContainsKey(name)) {
+                return _loaded[name];
+            }
         }
         return null;
     }
 
     public string? GetLoadedBy(string name)
     {
-        if (_dependencyGraph.ContainsKey(name)) {
-            return _dependencyGraph[name];
+        lock (_registryLock) {
+            if (_dependencyGraph.ContainsKey(name)) {
+                return _dependencyGraph[name];
+            }
         }
         return null;
     }
@@ -349,11 +372,13 @@ public class AssemblyLoadContext
     public List<string> GetDependencies(string name)
     {
         var result = new List<string>();
-        string[] rawKeys = _dependencyGraph.Keys;
-        for (int i = 0; i < rawKeys.Length; i++) {
-            string loaded = rawKeys[i];
-            if (_dependencyGraph[loaded] == name) {
-                result.Add(loaded);
+        lock (_registryLock) {
+            string[] rawKeys = _dependencyGraph.Keys;
+            for (int i = 0; i < rawKeys.Length; i++) {
+                string loaded = rawKeys[i];
+                if (_dependencyGraph[loaded] == name) {
+                    result.Add(loaded);
+                }
             }
         }
         return result;
@@ -363,9 +388,11 @@ public class AssemblyLoadContext
     public List<string> GetLoadedAssemblies()
     {
         var result = new List<string>();
-        string[] rawKeys = _loaded.Keys;
-        for (int i = 0; i < rawKeys.Length; i++) {
-            result.Add(rawKeys[i]);
+        lock (_registryLock) {
+            string[] rawKeys = _loaded.Keys;
+            for (int i = 0; i < rawKeys.Length; i++) {
+                result.Add(rawKeys[i]);
+            }
         }
         return result;
     }
@@ -382,6 +409,8 @@ public class AssemblyLoadContext
     /// B」的静态依赖边。
     private List<string> FindLoadedDependents(Assembly target)
     {
+        // 私有读取，须在调用方持锁语境（Unload/UnloadAll）执行——加载侧并发
+        // 写入期间读取会复现竞态损坏，勿脱离锁调用。
         var result = new List<string>();
         AssemblyPackageMeta targetMeta = target.PackageMeta;
         if (targetMeta.IsEmpty) { return result; }
@@ -390,7 +419,8 @@ public class AssemblyLoadContext
         for (int i = 0; i < names.Length; i++)
         {
             Assembly loaded = _loaded[names[i]];
-            if (loaded == target || loaded.IsDisposed) { continue; }
+            // loaded == null 兜底（历史竞态损坏残留的防御；正常态恒非空）
+            if (loaded == null || loaded == target || loaded.IsDisposed) { continue; }
             AssemblyPackageMeta meta = loaded.PackageMeta;
             if (meta.IsEmpty || meta.Dependencies == null) { continue; }
             for (int j = 0; j < meta.Dependencies.Count; j++)
@@ -417,6 +447,16 @@ public class AssemblyLoadContext
     ///   （须在无模块代码执行时发起卸载）。
     /// - 已被并发卸载 → 幂等 no-op。
     public void Unload(Assembly assembly)
+    {
+        // u5 并发载入竞态修复：卸载触及注册表（FindLoadedDependents 读取 +
+        // 成功/幂等分支移除），与并发 Load 串行化；UnloadAll 经 UnloadCore 在
+        // 同一锁内调用（Monitor 重入），不再二次加锁。
+        lock (_registryLock) {
+            this.UnloadCore(assembly);
+        }
+    }
+
+    private void UnloadCore(Assembly assembly)
     {
         if (assembly == null || assembly.IsDisposed) { return; }
 
@@ -555,29 +595,33 @@ public class AssemblyLoadContext
 
     public void UnloadAll()
     {
-        // 依赖拓扑序卸载（依赖方先、被依赖方后）：每轮挑一个「无在载
-        // 依赖方」的模块卸掉，循环至空。插入序 ≠ 依赖序（递归依赖先插
-        // 父模块，如 A→C 递归载 D 后键序为 [C, D]），逆序遍历会被
-        // E_UNLOAD_DEPENDED 护栏中断。
-        while (_loaded.Count > 0)
-        {
-            string[] names = _loaded.Keys;
-            bool progressed = false;
-            for (int i = 0; i < names.Length; i++)
+        // u5 并发载入竞态修复：整段持锁（含逐模块 UnloadCore 与
+        // FindLoadedDependents 读取），杜绝卸载遍历与并发 Load 写入交错。
+        lock (_registryLock) {
+            // 依赖拓扑序卸载（依赖方先、被依赖方后）：每轮挑一个「无在载
+            // 依赖方」的模块卸掉，循环至空。插入序 ≠ 依赖序（递归依赖先插
+            // 父模块，如 A→C 递归载 D 后键序为 [C, D]），逆序遍历会被
+            // E_UNLOAD_DEPENDED 护栏中断。
+            while (_loaded.Count > 0)
             {
-                Assembly candidate = _loaded[names[i]];
-                if (candidate == null || candidate.IsDisposed) { continue; }
-                if (this.FindLoadedDependents(candidate).Count > 0) { continue; }
-                this.Unload(candidate);
-                progressed = true;
-                break;
-            }
-            if (!progressed)
-            {
-                // 环依赖兜底：成员互为依赖方，护栏互锁谁也卸不掉（对齐
-                // RFC 017「跨模块环经 ledger 拒载」语义）——终止防死循环，
-                // 剩余模块交由调用方按业务序处理。
-                break;
+                string[] names = _loaded.Keys;
+                bool progressed = false;
+                for (int i = 0; i < names.Length; i++)
+                {
+                    Assembly candidate = _loaded[names[i]];
+                    if (candidate == null || candidate.IsDisposed) { continue; }
+                    if (this.FindLoadedDependents(candidate).Count > 0) { continue; }
+                    this.UnloadCore(candidate);
+                    progressed = true;
+                    break;
+                }
+                if (!progressed)
+                {
+                    // 环依赖兜底：成员互为依赖方，护栏互锁谁也卸不掉（对齐
+                    // RFC 017「跨模块环经 ledger 拒载」语义）——终止防死循环，
+                    // 剩余模块交由调用方按业务序处理。
+                    break;
+                }
             }
         }
     }

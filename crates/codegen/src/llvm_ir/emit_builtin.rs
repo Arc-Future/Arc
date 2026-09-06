@@ -19,23 +19,26 @@ impl<'a> FnEmitter<'a> {
     /// 每次具体类→接口转换物化独立 fat 盒（`emit_make_iface` heap box），
     /// `rt_list_remove` 的指针相等对「同对象不同盒」恒判不等（C# 语义：接口
     /// 引用相等 = 底层对象身份相等，`emit_iface_equality` 同规则）。本 helper
-    /// 逐元素解盒（fat[0] = obj）与查询方 obj 比对，命中即 `rt_list_remove_at`。
-    /// 元素恒为盒地址（MakeIface 对 null obj 也产盒，fat[0]=null），仍按 null
-    /// 防御跳过，避免悬空 load。返回 i1 temp（是否删除）。
+    /// 逐元素解盒（**obj @ 盒 +16**，D2 32B 布局）与查询方 obj 比对，命中即
+    /// `rt_list_remove_at`。元素恒为盒地址（MakeIface 对 null obj 也产盒，
+    /// obj@+16 = null），仍按 null 防御跳过，避免悬空 load。返回 i1 temp。
     fn emit_iface_list_identity_remove(&mut self, handle: &str, item_ptr: &str) -> String {
         let entry = self.fresh_label();
         // 调用方当前块收尾跳转（phi 前驱需要显式标签）。
         self.emit(&format!("br label %{entry}"));
         self.emit_label(&entry);
-        let out = self.fresh_temp();
-        self.emit(&format!("{out} = alloca ptr, align 8"));
+        let out = self.scratch_alloca("ptr, align 8");
         // 查询侧双重解盒：`item_ptr` 是**元素槽**（rt_list_remove ABI 约定），
-        // 槽内是 fat 盒地址；接口引用相等须比较**底层对象**（fat[0]）——与
-        // 扫描侧的元素解盒对称（盒地址 ≠ 对象，少一层即永不相等）。
+        // 槽内是 fat 盒地址；接口引用相等须比较**底层对象**（盒 obj@+16）——
+        // 与扫描侧的元素解盒对称（盒地址 ≠ 对象，少一层即永不相等）。
         let q_box = self.fresh_temp();
         self.emit(&format!("{q_box} = load ptr, ptr {item_ptr}"));
+        let q_off = self.fresh_temp();
+        self.emit(&format!(
+            "{q_off} = getelementptr inbounds i8, ptr {q_box}, i32 16"
+        ));
         let q = self.fresh_temp();
-        self.emit(&format!("{q} = load ptr, ptr {q_box}"));
+        self.emit(&format!("{q} = load ptr, ptr {q_off}"));
         let hdr = self.fresh_label();
         let body = self.fresh_label();
         let ld = self.fresh_label();
@@ -65,8 +68,12 @@ impl<'a> FnEmitter<'a> {
         self.emit(&format!("{en} = icmp eq ptr {e}, null"));
         self.emit(&format!("br i1 {en}, label %{adv}, label %{ld}"));
         self.emit_label(&ld);
+        let e_off = self.fresh_temp();
+        self.emit(&format!(
+            "{e_off} = getelementptr inbounds i8, ptr {e}, i32 16"
+        ));
         let eobj = self.fresh_temp();
-        self.emit(&format!("{eobj} = load ptr, ptr {e}"));
+        self.emit(&format!("{eobj} = load ptr, ptr {e_off}"));
         let hit = self.fresh_temp();
         self.emit(&format!("{hit} = icmp eq ptr {eobj}, {q}"));
         self.emit(&format!("br i1 {hit}, label %{found}, label %{adv}"));
@@ -92,17 +99,21 @@ impl<'a> FnEmitter<'a> {
     ///
     /// 与 [`Self::emit_iface_list_identity_remove`] 同族：fat 盒每次转换新建，
     /// `rt_list_index_of`/`rt_list_contains` 的指针相等对「同对象不同盒」恒判
-    /// 不等——按解盒 obj 扫描比对。返回 i32 temp（命中下标，未命中 -1）。
+    /// 不等——按解盒 obj（盒 obj@+16，D2 布局）扫描比对。返回 i32 temp
+    /// （命中下标，未命中 -1）。
     fn emit_iface_list_identity_index(&mut self, handle: &str, item_ptr: &str) -> String {
         let entry = self.fresh_label();
         self.emit(&format!("br label %{entry}"));
         self.emit_label(&entry);
-        let out = self.fresh_temp();
-        self.emit(&format!("{out} = alloca ptr, align 8"));
+        let out = self.scratch_alloca("ptr, align 8");
         let q_box = self.fresh_temp();
         self.emit(&format!("{q_box} = load ptr, ptr {item_ptr}"));
+        let q_off = self.fresh_temp();
+        self.emit(&format!(
+            "{q_off} = getelementptr inbounds i8, ptr {q_box}, i32 16"
+        ));
         let q = self.fresh_temp();
-        self.emit(&format!("{q} = load ptr, ptr {q_box}"));
+        self.emit(&format!("{q} = load ptr, ptr {q_off}"));
         let hdr = self.fresh_label();
         let body = self.fresh_label();
         let ld = self.fresh_label();
@@ -132,8 +143,12 @@ impl<'a> FnEmitter<'a> {
         self.emit(&format!("{en} = icmp eq ptr {e}, null"));
         self.emit(&format!("br i1 {en}, label %{adv}, label %{ld}"));
         self.emit_label(&ld);
+        let e_off = self.fresh_temp();
+        self.emit(&format!(
+            "{e_off} = getelementptr inbounds i8, ptr {e}, i32 16"
+        ));
         let eobj = self.fresh_temp();
-        self.emit(&format!("{eobj} = load ptr, ptr {e}"));
+        self.emit(&format!("{eobj} = load ptr, ptr {e_off}"));
         let hit = self.fresh_temp();
         self.emit(&format!("{hit} = icmp eq ptr {eobj}, {q}"));
         self.emit(&format!("br i1 {hit}, label %{found}, label %{adv}"));
@@ -484,10 +499,9 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         val_op_val
                     };
-                    // H1: class 值须 retain，否则 Add 后 local drop 释对象而 Dict 仍持指针。
-                    if list_elem_is_ref(&v_suf, self.layouts) {
-                        self.emit(&format!("call void @rt_arc_inc(ptr {val_arg})"));
-                    }
+                    // RFC 051 S3b：ref 值（class/接口）字典由 rt_dict_create_owned
+                    // 创建，存储侧 inc 在 rt_dict_set 内部（插入/覆盖/覆盖释放）；
+                    // 此处不再预 inc（旧路径 inc → 覆盖自覆盖净额失衡 + dup 孤儿）。
                     self.emit(&format!(
                         "call void @rt_dict_set(ptr {handle}, ptr {key_arg}, ptr {val_arg})"
                     ));
@@ -555,9 +569,8 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         val_op_val
                     };
-                    if list_elem_is_ref(&v_suf, self.layouts) {
-                        self.emit(&format!("call void @rt_arc_inc(ptr {val_arg})"));
-                    }
+                    // RFC 051 S3b：存储侧 inc 在 rt_dict_try_add 内部（仅命中时；
+                    // dup 失败不 inc——旧 codegen 先 inc 后失败留孤儿 +1）。
                     let raw = self.fresh_temp();
                     self.emit(&format!(
                         "{raw} = call i32 @rt_dict_try_add(ptr {handle}, ptr {key_arg}, ptr {val_arg})"
@@ -568,8 +581,7 @@ impl<'a> FnEmitter<'a> {
                 }
                 "TryGetValue" => {
                     // Single hash lookup: out V value via rt_dict_try_get_value
-                    let slot = self.fresh_temp();
-                    self.emit(&format!("{slot} = alloca ptr, align 8"));
+                    let slot = self.scratch_alloca("ptr, align 8");
                     let raw = self.fresh_temp();
                     self.emit(&format!(
                         "{raw} = call i32 @rt_dict_try_get_value(ptr {handle}, ptr {key_arg}, ptr {slot})"
@@ -665,17 +677,12 @@ impl<'a> FnEmitter<'a> {
                         "{hp} = getelementptr inbounds i8, ptr {obj}, i32 16"
                     ));
                     self.emit(&format!("store ptr {enum_handle}, ptr {hp}"));
+                    // RFC 051 D2：GetEnumerator 返回 IEnumerator<KVP> 接口值——堆 fat
+                    // 盒（旧实现返回栈 alloca 地址，函数返回后悬垂）。枚举器对象为
+                    // 新鲜 rc=1（移交语义：盒不 inc，盒灭 dec obj 平衡）。
                     let fat = self.fresh_temp();
-                    self.emit(&format!("{fat} = alloca {{ ptr, ptr }}"));
-                    let fat_obj = self.fresh_temp();
-                    self.emit(&format!("{fat_obj} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 0"));
-                    self.emit(&format!("store ptr {obj}, ptr {fat_obj}"));
-                    let fat_vt = self.fresh_temp();
                     self.emit(&format!(
-                        "{fat_vt} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 1"
-                    ));
-                    self.emit(&format!(
-                        "store ptr @.itable.DictEnumerator_{k_suf}_{v_suf}_IEnumerator_KVP_{k_suf}_{v_suf}, ptr {fat_vt}"
+                        "{fat} = call ptr @rt_iface_box_create(ptr {obj}, ptr @.itable.DictEnumerator_{k_suf}_{v_suf}_IEnumerator_KVP_{k_suf}_{v_suf})"
                     ));
                     ("ptr".into(), fat)
                 }
@@ -718,10 +725,8 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         val_op_val
                     };
-                    // H1: class 值 retain（与 set_Item / Dict.TryAdd 同构）。
-                    if list_elem_is_ref(&v_suf, self.layouts) {
-                        self.emit(&format!("call void @rt_arc_inc(ptr {val_arg})"));
-                    }
+                    // RFC 051 S3d：owned（类值）存储侧锁内 +1——本臂不再预 inc
+                    //（dup-fail 无孤儿 +1；释放由 remove/覆盖/clear/destroy 配对）。
                     let raw = self.fresh_temp();
                     self.emit(&format!(
                         "{raw} = call i32 @rt_concurrent_dict_try_add(ptr {handle}, ptr {key_arg}, ptr {val_arg})"
@@ -732,8 +737,7 @@ impl<'a> FnEmitter<'a> {
                 }
                 "TryGetValue" => {
                     // out V value — allocate stack slot, pass ptr, load result
-                    let alloca_name = self.fresh_temp();
-                    self.emit(&format!("{alloca_name} = alloca ptr, align 8"));
+                    let alloca_name = self.scratch_alloca("ptr, align 8");
                     let raw = self.fresh_temp();
                     self.emit(&format!(
                         "{raw} = call i32 @rt_concurrent_dict_try_get(ptr {handle}, ptr {key_arg}, ptr {alloca_name})"
@@ -748,6 +752,9 @@ impl<'a> FnEmitter<'a> {
                         let result = if v_is_scalar {
                             self.unbox_ptr_to_scalar(&v_suf, &out_val)
                         } else {
+                            // RFC 051 S3d：借用 retain 由 runtime 在 stripe 锁内完成
+                            //（owned 读臂）——本臂不再 inc（锁外 inc 与 remove/覆盖
+                            // 释放的交错悬垂窗口随 S3d 收敛；cprobe2 校验和漂移同源）。
                             out_val
                         };
                         self.emit(&format!("store {v_ty} {result}, ptr {out_ptr}"));
@@ -764,9 +771,7 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         val_op_val
                     };
-                    if list_elem_is_ref(&v_suf, self.layouts) {
-                        self.emit(&format!("call void @rt_arc_inc(ptr {val_arg})"));
-                    }
+                    // RFC 051 S3d：owned 存储侧锁内 +1（覆盖旧值由 runtime 配对释放）
                     self.emit(&format!(
                         "call void @rt_concurrent_dict_set(ptr {handle}, ptr {key_arg}, ptr {val_arg})"
                     ));
@@ -781,15 +786,12 @@ impl<'a> FnEmitter<'a> {
                         let r = self.unbox_ptr_to_scalar(&v_suf, &rp);
                         (v_ty.into(), r)
                     } else {
-                        if list_elem_is_ref(&v_suf, self.layouts) {
-                            self.emit(&format!("call void @rt_arc_inc(ptr {rp})"));
-                        }
+                        // RFC 051 S3d：借用 retain 由 runtime 在 stripe 锁内完成
                         (v_ty.into(), rp)
                     }
                 }
                 "TryRemove" => {
-                    let slot = self.fresh_temp();
-                    self.emit(&format!("{slot} = alloca ptr, align 8"));
+                    let slot = self.scratch_alloca("ptr, align 8");
                     let raw = self.fresh_temp();
                     self.emit(&format!(
                         "{raw} = call i32 @rt_concurrent_dict_try_remove(ptr {handle}, ptr {key_arg}, ptr {slot})"
@@ -837,26 +839,21 @@ impl<'a> FnEmitter<'a> {
                     ("i1".into(), tmp)
                 }
                 "GetOrAdd" => {
-                    // Value overload：第二参 LLVM 类型为标量 → get_or_add_val。
-                    // Factory 重载：C 函数指针路径；Arc Func trampoline 后置。
+                    // Value 重载（Stable；Func trampoline 已撤面——与 stub 臂同策）。
+                    // 旧启发式按「第二参标量」分派：class/string V 的值重载被误投
+                    // factory 路径（对象指针当函数指针执行 → 0xC0000005，
+                    // cprobe6 实证）。统一走 rt_concurrent_dict_get_or_add_val。
                     let (arg_ty, arg_val) =
                         self.emit_operand(&args.get(1).cloned().unwrap_or(MirOperand::ConstNull));
-                    let use_val = v_is_scalar
-                        && matches!(
-                            arg_ty.as_str(),
-                            "i8" | "i16" | "i32" | "i64" | "float" | "double"
-                        );
                     let rp = self.fresh_temp();
-                    if use_val {
-                        let val_arg = self.box_scalar_to_ptr(&v_suf, &arg_ty, &arg_val);
-                        self.emit(&format!(
-                            "{rp} = call ptr @rt_concurrent_dict_get_or_add_val(ptr {handle}, ptr {key_arg}, ptr {val_arg})"
-                        ));
+                    let val_arg = if v_is_scalar {
+                        self.box_scalar_to_ptr(&v_suf, &arg_ty, &arg_val)
                     } else {
-                        self.emit(&format!(
-                            "{rp} = call ptr @rt_concurrent_dict_get_or_add(ptr {handle}, ptr {key_arg}, ptr {arg_val})"
-                        ));
-                    }
+                        arg_val
+                    };
+                    self.emit(&format!(
+                        "{rp} = call ptr @rt_concurrent_dict_get_or_add_val(ptr {handle}, ptr {key_arg}, ptr {val_arg})"
+                    ));
                     if v_is_scalar {
                         let r = self.unbox_ptr_to_scalar(&v_suf, &rp);
                         (v_ty.into(), r)
@@ -1036,8 +1033,7 @@ impl<'a> FnEmitter<'a> {
                 // out 实参经 MIR lower 为 AddrOf(local)（见 RefArg），兼容 Local。
                 // M7: Queue/Stack also expose TryTake via IConcurrentCollection.
                 m @ ("TryDequeue" | "TryTake" | "TryPop") => {
-                    let slot = self.fresh_temp();
-                    self.emit(&format!("{slot} = alloca ptr, align 8"));
+                    let slot = self.scratch_alloca("ptr, align 8");
                     let tmp = self.fresh_temp();
                     let abi = if is_blocking {
                         "rt_blocking_collection_try_take".to_string()
@@ -1070,8 +1066,7 @@ impl<'a> FnEmitter<'a> {
                 }
                 // TryPeek
                 "TryPeek" => {
-                    let slot = self.fresh_temp();
-                    self.emit(&format!("{slot} = alloca ptr, align 8"));
+                    let slot = self.scratch_alloca("ptr, align 8");
                     let tmp = self.fresh_temp();
                     self.emit(&format!(
                         "{tmp} = call i32 @{abi_prefix}_try_peek(ptr {handle}, ptr {slot})"
@@ -1169,8 +1164,7 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         arg_rval
                     };
-                    let boxed = self.fresh_temp();
-                    self.emit(&format!("{boxed} = alloca ptr"));
+                    let boxed = self.scratch_alloca("ptr");
                     self.emit(&format!("store ptr {key_ptr}, ptr {boxed}"));
                     let result = self.fresh_temp();
                     let abi = match method {
@@ -1284,8 +1278,14 @@ impl<'a> FnEmitter<'a> {
                     // 队列存入撕裂指针（waiter=real+1 实证）。ARC 维护值
                     // 与 ABI 传参槽位必须分离。
                     let arg_rval = self.emit_operand(&args[0]).1;
-                    let boxed = self.fresh_temp();
-                    self.emit(&format!("{boxed} = alloca {elem_ty}"));
+                    let boxed = {
+                        let _s = self.fresh_temp();
+                        self.entry_allocas.push_str(&format!(
+                            "  {_s} = alloca {elem_ty}
+"
+                        ));
+                        _s
+                    };
                     self.emit(&format!("store {elem_ty} {arg_rval}, ptr {boxed}"));
                     if !is_scalar && list_elem_is_ref(elem_suf, self.layouts) {
                         self.emit(&format!("call void @rt_arc_inc(ptr {arg_rval})"));
@@ -1296,8 +1296,14 @@ impl<'a> FnEmitter<'a> {
                     ("void".into(), String::new())
                 }
                 "Dequeue" | "Peek" => {
-                    let slot = self.fresh_temp();
-                    self.emit(&format!("{slot} = alloca {elem_ty}"));
+                    let slot = {
+                        let _s = self.fresh_temp();
+                        self.entry_allocas.push_str(&format!(
+                            "  {_s} = alloca {elem_ty}
+"
+                        ));
+                        _s
+                    };
                     let abi = if method == "Dequeue" {
                         "rt_queue_dequeue"
                     } else {
@@ -1347,8 +1353,14 @@ impl<'a> FnEmitter<'a> {
                     // 快照当元素拷入 rt_list。
                     let arg_val = {
                         let arg_rval = self.emit_operand(&args[0]).1;
-                        let boxed = self.fresh_temp();
-                        self.emit(&format!("{boxed} = alloca {elem_ty}"));
+                        let boxed = {
+                            let _s = self.fresh_temp();
+                            self.entry_allocas.push_str(&format!(
+                                "  {_s} = alloca {elem_ty}
+"
+                            ));
+                            _s
+                        };
                         self.emit(&format!("store {elem_ty} {arg_rval}, ptr {boxed}"));
                         boxed
                     };
@@ -1363,8 +1375,14 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         "rt_stack_peek"
                     };
-                    let out = self.fresh_temp();
-                    self.emit(&format!("{out} = alloca {elem_ty}"));
+                    let out = {
+                        let _s = self.fresh_temp();
+                        self.entry_allocas.push_str(&format!(
+                            "  {_s} = alloca {elem_ty}
+"
+                        ));
+                        _s
+                    };
                     self.emit(&format!("call i32 @{abi}(ptr {handle}, ptr {out})"));
                     if is_scalar {
                         let v = self.fresh_temp();
@@ -1382,8 +1400,14 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         "rt_stack_try_peek"
                     };
-                    let out = self.fresh_temp();
-                    self.emit(&format!("{out} = alloca {elem_ty}"));
+                    let out = {
+                        let _s = self.fresh_temp();
+                        self.entry_allocas.push_str(&format!(
+                            "  {_s} = alloca {elem_ty}
+"
+                        ));
+                        _s
+                    };
                     let raw = self.fresh_temp();
                     self.emit(&format!("{raw} = call i32 @{abi}(ptr {handle}, ptr {out})"));
                     self.emit(&format!("{raw} = trunc i32 {raw} to i1"));
@@ -1392,8 +1416,14 @@ impl<'a> FnEmitter<'a> {
                 "Contains" => {
                     let arg_val = {
                         let arg_rval = self.emit_operand(&args[0]).1;
-                        let boxed = self.fresh_temp();
-                        self.emit(&format!("{boxed} = alloca {elem_ty}"));
+                        let boxed = {
+                            let _s = self.fresh_temp();
+                            self.entry_allocas.push_str(&format!(
+                                "  {_s} = alloca {elem_ty}
+"
+                            ));
+                            _s
+                        };
                         self.emit(&format!("store {elem_ty} {arg_rval}, ptr {boxed}"));
                         boxed
                     };
@@ -1475,6 +1505,11 @@ impl<'a> FnEmitter<'a> {
                         let r = self.unbox_ptr_to_scalar(&v_suf, &rp);
                         (v_ty.into(), r)
                     } else {
+                        // RFC 051 S3c：ref 值借用返回须 retain（调用方局部 epilogue
+                        // dec 配对）——与 dict get_Item 同源。
+                        if list_elem_is_ref(&v_suf, self.layouts) {
+                            self.emit(&format!("call void @rt_arc_inc(ptr {rp})"));
+                        }
                         (v_ty.into(), rp)
                     }
                 }
@@ -1504,8 +1539,7 @@ impl<'a> FnEmitter<'a> {
                     ("i1".into(), tmp)
                 }
                 "TryGetValue" => {
-                    let slot = self.fresh_temp();
-                    self.emit(&format!("{slot} = alloca ptr, align 8"));
+                    let slot = self.scratch_alloca("ptr, align 8");
                     let raw = self.fresh_temp();
                     self.emit(&format!(
                         "{raw} = call i32 @rt_sorted_dict_try_get(ptr {handle}, ptr {key_arg}, ptr {slot})"
@@ -1522,6 +1556,11 @@ impl<'a> FnEmitter<'a> {
                         let result = if v_is_scalar {
                             self.unbox_ptr_to_scalar(&v_suf, &out_val)
                         } else {
+                            // RFC 051 S3c：ref 值经 out 槽移交须 retain（out 局部在
+                            // 调用方 epilogue dec——与 dict TryGetValue 同源）。
+                            if list_elem_is_ref(&v_suf, self.layouts) {
+                                self.emit(&format!("call void @rt_arc_inc(ptr {out_val})"));
+                            }
                             out_val
                         };
                         self.emit(&format!("store {v_ty} {result}, ptr {out_ptr}"));
@@ -1572,8 +1611,14 @@ impl<'a> FnEmitter<'a> {
                 "AddLast" | "AddFirst" => {
                     let (_arg_ty, arg_val) = self.emit_operand(&args[0]);
                     let item_ptr = if is_scalar {
-                        let boxed = self.fresh_temp();
-                        self.emit(&format!("{boxed} = alloca {elem_ty}"));
+                        let boxed = {
+                            let _s = self.fresh_temp();
+                            self.entry_allocas.push_str(&format!(
+                                "  {_s} = alloca {elem_ty}
+"
+                            ));
+                            _s
+                        };
                         self.emit(&format!("store {elem_ty} {arg_val}, ptr {boxed}"));
                         boxed
                     } else {
@@ -1594,8 +1639,14 @@ impl<'a> FnEmitter<'a> {
                     let (_node_ty, node_val) = self.emit_operand(&args[0]);
                     let (_item_ty, item_val) = self.emit_operand(args.get(1).unwrap_or(&args[0]));
                     let item_ptr = if is_scalar {
-                        let boxed = self.fresh_temp();
-                        self.emit(&format!("{boxed} = alloca {elem_ty}"));
+                        let boxed = {
+                            let _s = self.fresh_temp();
+                            self.entry_allocas.push_str(&format!(
+                                "  {_s} = alloca {elem_ty}
+"
+                            ));
+                            _s
+                        };
                         self.emit(&format!("store {elem_ty} {item_val}, ptr {boxed}"));
                         boxed
                     } else {
@@ -1615,8 +1666,14 @@ impl<'a> FnEmitter<'a> {
                 "Find" | "FindLast" => {
                     let (_arg_ty, arg_val) = self.emit_operand(&args[0]);
                     let item_ptr = if is_scalar {
-                        let boxed = self.fresh_temp();
-                        self.emit(&format!("{boxed} = alloca {elem_ty}"));
+                        let boxed = {
+                            let _s = self.fresh_temp();
+                            self.entry_allocas.push_str(&format!(
+                                "  {_s} = alloca {elem_ty}
+"
+                            ));
+                            _s
+                        };
                         self.emit(&format!("store {elem_ty} {arg_val}, ptr {boxed}"));
                         boxed
                     } else {
@@ -1636,8 +1693,14 @@ impl<'a> FnEmitter<'a> {
                 "Contains" => {
                     let (_arg_ty, arg_val) = self.emit_operand(&args[0]);
                     let item_ptr = if is_scalar {
-                        let boxed = self.fresh_temp();
-                        self.emit(&format!("{boxed} = alloca {elem_ty}"));
+                        let boxed = {
+                            let _s = self.fresh_temp();
+                            self.entry_allocas.push_str(&format!(
+                                "  {_s} = alloca {elem_ty}
+"
+                            ));
+                            _s
+                        };
                         self.emit(&format!("store {elem_ty} {arg_val}, ptr {boxed}"));
                         boxed
                     } else {
@@ -1690,8 +1753,14 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         let (_arg_ty, arg_val) = self.emit_operand(&args[0]);
                         let item_ptr = if is_scalar {
-                            let boxed = self.fresh_temp();
-                            self.emit(&format!("{boxed} = alloca {elem_ty}"));
+                            let boxed = {
+                                let _s = self.fresh_temp();
+                                self.entry_allocas.push_str(&format!(
+                                    "  {_s} = alloca {elem_ty}
+"
+                                ));
+                                _s
+                            };
                             self.emit(&format!("store {elem_ty} {arg_val}, ptr {boxed}"));
                             boxed
                         } else {
@@ -1739,8 +1808,14 @@ impl<'a> FnEmitter<'a> {
                 "set_Value" => {
                     let (_aty, aval) = self.emit_operand(&args[0]);
                     if is_scalar {
-                        let boxed = self.fresh_temp();
-                        self.emit(&format!("{boxed} = alloca {elem_ty}"));
+                        let boxed = {
+                            let _s = self.fresh_temp();
+                            self.entry_allocas.push_str(&format!(
+                                "  {_s} = alloca {elem_ty}
+"
+                            ));
+                            _s
+                        };
                         self.emit(&format!("store {elem_ty} {aval}, ptr {boxed}"));
                         self.emit(&format!(
                             "call void @rt_linked_list_node_set_value(ptr {recv}, ptr {boxed})"
@@ -1830,8 +1905,7 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         "rt_sorted_set_max"
                     };
-                    let out = self.fresh_temp();
-                    self.emit(&format!("{out} = alloca ptr"));
+                    let out = self.scratch_alloca("ptr");
                     let ok = self.fresh_temp();
                     self.emit(&format!("{ok} = call i32 @{abi}(ptr {handle}, ptr {out})"));
                     let loaded = self.fresh_temp();
@@ -2081,8 +2155,14 @@ impl<'a> FnEmitter<'a> {
                 "Find" => {
                     let (_, pred) =
                         self.emit_operand(&args.first().cloned().unwrap_or(MirOperand::ConstNull));
-                    let out = self.fresh_temp();
-                    self.emit(&format!("{out} = alloca {elem_ty}"));
+                    let out = {
+                        let _s = self.fresh_temp();
+                        self.entry_allocas.push_str(&format!(
+                            "  {_s} = alloca {elem_ty}
+"
+                        ));
+                        _s
+                    };
                     self.emit(&format!(
                         "call i32 @rt_list_find_get(ptr {handle}, ptr {pred}, ptr {out})"
                     ));
@@ -2203,8 +2283,7 @@ impl<'a> FnEmitter<'a> {
                         self.emit(&format!("{env_ptr} = load ptr, ptr {env_field}"));
                         let env_is_null = self.fresh_temp();
                         self.emit(&format!("{env_is_null} = icmp eq ptr {env_ptr}, null"));
-                        let idx_slot = self.fresh_temp();
-                        self.emit(&format!("{idx_slot} = alloca i32"));
+                        let idx_slot = self.scratch_alloca("i32");
                         self.emit(&format!("store i32 0, ptr {idx_slot}"));
                         let lbl_bare = self.fresh_label();
                         let lbl_bare_body = self.fresh_label();
@@ -2364,8 +2443,7 @@ impl<'a> FnEmitter<'a> {
                         "{cp} = getelementptr inbounds i8, ptr {obj}, i32 28"
                     ));
                     self.emit(&format!("store i32 {size}, ptr {cp}"));
-                    let fat = self.fresh_temp();
-                    self.emit(&format!("{fat} = alloca {{ ptr, ptr }}"));
+                    let fat = self.scratch_alloca("{ ptr, ptr }");
                     let fat_obj = self.fresh_temp();
                     self.emit(&format!(
                         "{fat_obj} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 0"

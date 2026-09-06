@@ -123,6 +123,13 @@ char*    rt_str_to_upper(const char* s);
 char*    rt_str_to_lower(const char* s);
 char*    rt_str_from_codepoint(int32_t code);         /* Unicode codepoint → UTF-8 string */
 void* rt_dict_create(uint32_t (*hash)(void*), int32_t (*eq)(void*, void*));
+/* RFC 051 S3b：值所有权变体——值须为 ArcHeader 对象（class / 接口 fat 盒）。
+ * 存储侧自持 +1：插入（set 新键 / try_add 命中）rt_arc_inc 新值；set 覆盖、
+ * remove、clear、destroy 释放被移除条目的值（rt_arc_dec，空值安全）。
+ * 标量 / string 值字典必须用 rt_dict_create（无所有权维护，行为同旧版）。
+ * try_add 重复键失败**不**存储也不 inc（修复 codegen 侧先 inc 后失败的
+ * 孤儿 +1 泄漏）。 */
+void* rt_dict_create_owned(uint32_t (*hash)(void*), int32_t (*eq)(void*, void*));
 void rt_dict_set(void* dict, void* key, void* value);
 void rt_dict_ensure_capacity(void* dict, int32_t capacity);
 void* rt_dict_get(void* dict, void* key);
@@ -249,6 +256,11 @@ void*    rt_linked_list_node_list(void* node_handle);     /* 所属 LinkedList h
  * 由 Arc 侧 facade 负责引用计数）。Keys/Values 返回 rt_array payload
  * （void** 数组），按中序遍历产出有序序列。 */
 void*    rt_sorted_dict_create(rt_cmp_fn cmp);
+/* RFC 051 S3c：值所有权变体（值须为 ArcHeader 对象：class / 接口 fat 盒）。
+ * 存储侧自持 +1：插入（add/set 新键）rt_arc_inc；set 覆盖旧值、remove、clear、
+ * destroy 释放被移除条目值（rt_arc_dec，空值安全）；重复键失败不存储不 inc。
+ * 标量 / string 值字典必须用 rt_sorted_dict_create（无 ARC 维护）。 */
+void*    rt_sorted_dict_create_owned(rt_cmp_fn cmp);
 void     rt_sorted_dict_destroy(void* handle);
 void     rt_sorted_dict_clear(void* handle);
 int32_t  rt_sorted_dict_count(void* handle);
@@ -298,6 +310,15 @@ void*    rt_queue_to_array(void* handle);
 void*   rt_concurrent_dict_create(uint32_t (*hash)(void*), int32_t (*eq)(void*, void*), int32_t bucket_count);
 void*   rt_concurrent_dict_create_level(uint32_t (*hash)(void*), int32_t (*eq)(void*, void*), int32_t concurrency_level);
 void*   rt_concurrent_dict_create_level_cap(uint32_t (*hash)(void*), int32_t (*eq)(void*, void*), int32_t concurrency_level, int32_t capacity);
+/* RFC 051 S3d：值所有权变体（值须为 ArcHeader 对象：class 实例 / 接口 fat 盒）。
+   存储侧自持 +1：插入（TryAdd/set 新键/GetOrAdd miss）锁内 rt_arc_inc；覆盖旧值、
+   TryUpdate、clear、destroy 释放被移除条目值（锁外 dec，finalizer 重入安全）；
+   TryRemove 不移除侧 dec——存储 +1 移交调用方 out 槽；读臂（TryGetValue/
+   get_or_default/GetOrAdd 命中返回）锁内借用 +1（codegen 调用侧不再 inc）。
+   标量 / string 值字典必须用 legacy create（无 ARC 维护，lock-free 读保持）。 */
+void*   rt_concurrent_dict_create_owned(uint32_t (*hash)(void*), int32_t (*eq)(void*, void*), int32_t bucket_count);
+void*   rt_concurrent_dict_create_level_owned(uint32_t (*hash)(void*), int32_t (*eq)(void*, void*), int32_t concurrency_level);
+void*   rt_concurrent_dict_create_level_cap_owned(uint32_t (*hash)(void*), int32_t (*eq)(void*, void*), int32_t concurrency_level, int32_t capacity);
 int32_t rt_concurrent_dict_try_add(void* dict, void* key, void* value);
 int32_t rt_concurrent_dict_try_get(void* dict, void* key, void** out_value);
 int32_t rt_concurrent_dict_try_update(void* dict, void* key, void* newValue, void* comparisonValue);
@@ -311,6 +332,11 @@ void*   rt_concurrent_dict_add_or_update_pf(void* dict, void* key, void* (*addFa
 int32_t rt_concurrent_dict_contains(void* dict, void* key);
 int32_t rt_concurrent_dict_count(void* dict);
 void    rt_concurrent_dict_clear(void* dict);
+/* RFC 051 S3d：销毁（wrapper vtable finalizer 调用；独占 teardown）——
+ * 释放当前/延迟表、节点批次池、table_lock（rt_mutex_create raw malloc →
+ * plain free，勿经 rt_mutex_destroy 的 rt_obj_free 语义——前移 16B 越界
+ * free，已修 rt_mutex_destroy 本身）与句柄头。 */
+void    rt_concurrent_dict_destroy(void* dict);
 void*   rt_concurrent_dict_keys(void* dict);
 void*   rt_concurrent_dict_values(void* dict);
 void*   rt_concurrent_dict_to_array(void* dict);
@@ -938,6 +964,10 @@ void rt_list_clear(void* handle);
 int32_t rt_list_remove(void* handle, const void* elem_ptr);
 void rt_list_reverse(void* handle);
 int32_t rt_list_eq_str(const void* a, const void* b);
+/* RFC 051 S3a：接口元素相等回调——比较 fat 盒底层对象身份（obj@+16），
+ * 供 codegen 在 List<Iface> 等容器创建时传入（默认 memcmp 按盒指针比较，
+ * 每次转换新盒 → Remove/Contains 同对象新盒恒 miss）。 */
+int32_t rt_list_eq_iface(const void* a, const void* b);
 
 /* List<T> (RFC 007 Phase 3: predicate/comparison/array callbacks) */
 typedef int32_t (*rt_list_pred_fn)(const void* elem);
@@ -1391,6 +1421,7 @@ int32_t  rt_box_unbox(void* box_ptr, int32_t expected_size,
  * `o is string` 可识别且其它类型判别安全）；rt_string_unbox 从 object 槽
  * 提取 char*（非 string box 返回 NULL）。 */
 void*       rt_string_box(const char* s);
+void*       rt_iface_box_create(void* obj, const void* itable);  /* RFC 051 D2: 接口值 fat 盒（真 ARC 对象） */
 const char* rt_string_unbox(void* obj);
 
 /* Waker (RFC 009 §5.3): invoked by external events to move a task to ready.

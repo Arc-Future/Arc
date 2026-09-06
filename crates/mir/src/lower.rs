@@ -1040,6 +1040,37 @@ impl MirBuilder {
             Some(TypeId::Named(n)) if ctx.registry.is_interface(n) => TypeId::Named(n.clone()),
             _ => ret_ty,
         };
+        // 引用契约回退保护（idx36 Waterfall 家族）：body 推断落 `Int` 回退
+        //（如 `next(...)`——委托调用结果 expr 推断失败默认 Int）而期望契约
+        // 在场时按契约定 fn_ret。否则 λ 函数体按 i32 返回（`define i32`），
+        // 调用方按委托契约 `ptr` 读取 → x64 高位截断/垃圾指针 → 0xC0000005
+        //（chord `Waterfall_ChainsInRegistrationOrder` IR 取证：h1/h2 的
+        // `ptrtoint ... to i32` + `ret i32`）。契约即 ABI：Int 推断仅当契约
+        // 同样为 Int 时保留（`Func<int>` 等值类型契约不受影响）。
+        //
+        // object 契约同理：body 推断为 string（`return "intercepted"` 拦截
+        // handler）而契约 `Func<…,object?>` 要求 object 表示（ArcBox）——
+        // fn_ret 按契约定 object，Return 装箱由 lower_return_value 补
+        //（`Waterfall_HandlerWithoutNextIntercepts`：raw 串直返 → 调用方按
+        // object 拆箱读盒头 → 空串取证）。
+        let contract_is_object = |exp: &TypeId| {
+            let inner = match exp {
+                TypeId::Nullable { inner } => inner.as_ref(),
+                other => other,
+            };
+            matches!(inner, TypeId::Object)
+                || matches!(inner, TypeId::Named(n) if n.as_str() == "object")
+        };
+        let ret_ty = if matches!(ret_ty, TypeId::Int)
+            || (ret_ty == TypeId::String && expected_ret.is_some_and(contract_is_object))
+        {
+            match expected_ret {
+                Some(exp) => exp.clone(),
+                None => ret_ty,
+            }
+        } else {
+            ret_ty
+        };
         // RFC 008: compute captures from outer scope (replaces typeck-filled
         // `l.captures`). typeck receives `&Expr` and cannot mutate the AST, so
         // capture analysis runs here in MIR lowering where outer-scope locals
@@ -1268,6 +1299,33 @@ impl MirBuilder {
                             } else {
                                 stmts.push(MirStatement::Assign { place, rvalue: rv });
                             }
+                        } else if ctx
+                            .owner
+                            .as_ref()
+                            .is_some_and(|o| ctx.is_static_field_of(o, name))
+                        {
+                            // RFC 045（λ 内裸静态赋值静默丢弃根因）：无 `this`
+                            // 捕获的 λ 其 lowering 上下文 class_fields 为空
+                            // （class_fields 仅随 this 传播），下方 `is_class_field`
+                            // 门控恒 false → 裸静态字段赋值（`_cleaned = 1`）整体
+                            // 消失。owner 传播判据（refs_owner_static）与读路径
+                            // （operand_from_expr 经 owner + is_static_field_of 独立
+                            // 解析）都不依赖 class_fields——写路径同样按 owner 独立
+                            // 判定，先于 is_class_field 分支处理静态字段
+                            //（方法上下文 class_fields 含静态名时产出相同
+                            // StaticFieldSet，行为不变）。
+                            let owner = ctx.owner.as_ref().unwrap().to_string();
+                            let (mut prep, rv) = lower_expr::lower_expr_to_rvalue_with_binary(
+                                &value.node,
+                                self,
+                                ctx,
+                            );
+                            stmts.append(&mut prep);
+                            stmts.push(MirStatement::StaticFieldSet {
+                                class: owner,
+                                field: name.to_string(),
+                                value: rv,
+                            });
                         } else if ctx.is_class_field(name) {
                             // RFC 006 M3：静态字段赋值走 `StaticFieldSet`（store 到
                             // `@__static_<class>_<field>` 全局变量），实例字段走 `FieldSet`。
@@ -1903,9 +1961,60 @@ impl MirBuilder {
         let (mut prep, rvalue) = lower_expr::lower_expr_to_rvalue_with_binary(v, self, ctx);
         stmts.append(&mut prep);
         let Some(iface_name) = iface_dest_name(&ctx.fn_ret, ctx.registry) else {
+            // 契约返回 `object`/`object?` 而返回表达式静态为 string（λ/委托
+            // 上下文 body 推断优先，typeck 未插 AST Box——`return "intercepted"`
+            // 类拦截 handler 直返 raw 串 → 调用方按 object 拆箱读盒头 →
+            // 空串/崩溃，chord Waterfall intercept 取证）。与 typed 方法调用
+            // 实参环（maybe_box_string_to_object）对齐补 Box（null 保留）。
+            // 已带 Box 节点（typeck 插入面）不重复。
+            if self.fn_ret_is_object(ctx)
+                && !matches!(v, Expr::Box { .. })
+                && lower_type::infer_type_from_expr(v, ctx) == TypeId::String
+            {
+                let str_tmp = self.fresh_local(&"_str_ret".into(), TypeId::String, ctx.locals);
+                stmts.push(MirStatement::Assign {
+                    place: str_tmp,
+                    rvalue,
+                });
+                let obj_tmp = self.fresh_local(&"_obj_ret".into(), TypeId::Object, ctx.locals);
+                stmts.push(MirStatement::Assign {
+                    place: obj_tmp,
+                    rvalue: MirRvalue::Box {
+                        src: MirOperand::Local(str_tmp),
+                        src_ty: TypeId::String,
+                    },
+                });
+                return MirRvalue::Use(MirOperand::Local(obj_tmp));
+            }
             return rvalue;
         };
         let src_ty = class_ty_for_iface_wrap(v, ctx);
+        // 源静态类型已是接口：其值即 {obj,itable} fat 盒（无 ArcHeader）——禁止经
+        // Object 临时槽中转：Object 槽按 class 计 ARC（选项 A），codegen 对该赋值
+        // 的 rt_arc_inc/dec 会把盒首槽 obj 指针当 refcount 原子改写（obj+1）→
+        // 盒内对象字段错位读 → 0xC0000005（fd-probe8/30 实证：`Func<IDisposable>
+        // f = () => d`（d: IDisposable 捕获）调用结果 Dispose 崩溃，
+        // DisposableAction._action 域被覆写）。
+        if let TypeId::Named(src_name) = &src_ty {
+            if ctx.registry.is_interface(src_name) {
+                if src_name.as_str() == iface_name.as_str() {
+                    // 同接口直返：原样透传（fat 盒借用，无 class→iface 转换面）。
+                    return rvalue;
+                }
+                // variance 接口重绑定（AdaptIface）：操作数临时以**源接口名**登记
+                //（非 Object）——无 ARC 覆写、无自动 Drop，与 fat 盒表示一致。
+                let temp_id = self.fresh_local(&"_iface_ret".into(), src_ty.clone(), ctx.locals);
+                stmts.push(MirStatement::Assign {
+                    place: temp_id,
+                    rvalue,
+                });
+                return MirRvalue::AdaptIface {
+                    from_iface: src_name.to_string(),
+                    to_iface: iface_name.to_string(),
+                    object: MirOperand::Local(temp_id),
+                };
+            }
+        }
         let temp_id = self.fresh_local(&"_iface_ret".into(), TypeId::Object, ctx.locals);
         stmts.push(MirStatement::Assign {
             place: temp_id,
@@ -1921,6 +2030,18 @@ impl MirBuilder {
         } else {
             MirRvalue::Use(MirOperand::Local(temp_id))
         }
+    }
+
+    /// 返回契约是否为 `object`/`object?`（Option-A 对象槽：字符串须以 ArcBox
+    /// 入槽）。与 codegen `arc_class_place` 的 Object 判定同源。
+    fn fn_ret_is_object(&self, ctx: &LowerCtx) -> bool {
+        let ty = &ctx.fn_ret;
+        let inner = match ty {
+            TypeId::Nullable { inner } => inner.as_ref(),
+            other => other,
+        };
+        matches!(inner, TypeId::Object)
+            || matches!(inner, TypeId::Named(n) if n.as_str() == "object")
     }
 
     pub(super) fn lower_typed_block(
@@ -2108,6 +2229,27 @@ impl MirBuilder {
                             } else {
                                 stmts.push(MirStatement::Assign { place, rvalue: rv });
                             }
+                        } else if ctx
+                            .owner
+                            .as_ref()
+                            .is_some_and(|o| ctx.is_static_field_of(o, name))
+                        {
+                            // RFC 045（λ 内裸静态赋值静默丢弃根因）typed 对称路径：
+                            // 见 raw 路径注释——无 this 捕获的 λ class_fields 为空，
+                            // 裸静态字段赋值须按 owner 独立判定，不可被 is_class_field
+                            // 门控吞掉。
+                            let owner = ctx.owner.as_ref().unwrap().to_string();
+                            let (mut prep, rv) = lower_expr::lower_expr_to_rvalue_with_binary(
+                                &value.node,
+                                self,
+                                ctx,
+                            );
+                            stmts.append(&mut prep);
+                            stmts.push(MirStatement::StaticFieldSet {
+                                class: owner,
+                                field: name.to_string(),
+                                value: rv,
+                            });
                         } else if ctx.is_class_field(name) {
                             // RFC 006 M3：静态字段赋值走 `StaticFieldSet`，实例字段走 `FieldSet`。
                             // 先 clone owner，避免后续 mutable borrow 与 immutable borrow 冲突。
@@ -3325,6 +3467,19 @@ impl MirBuilder {
                 stmts.append(&mut prep);
                 stmts.push(MirStatement::Await { place, task });
             }
+            // RFC 009 L2：bare `up!.Method(...)` / `up?.Method(...)` 语句（如
+            // `ChordContext.Bubble` 的 `up!.EmitSelf(name, payload);`）。此前落入
+            // 下方 `_ => {}` 兜底被静默丢弃：while 体只保留 `up = up!._parent`
+            // 推进赋值，祖先链事件从不触发——Bubble 只发自身。与表达式级路径
+            // 对称走 with_binary，产出 ForceDerefMethod/NullCondMethod rvalue，
+            // `!.` 空值断言 panic 与 `?.` 短路语义由 codegen 原样保留。
+            Expr::ForceDeref { .. } | Expr::NullCond { .. } => {
+                let place = self.fresh_local(&"_tmp".into(), TypeId::Void, ctx.locals);
+                let (mut prep, rv) =
+                    lower_expr::lower_expr_to_rvalue_with_binary(&e.node, self, ctx);
+                stmts.append(&mut prep);
+                stmts.push(MirStatement::Assign { place, rvalue: rv });
+            }
             _ => {}
         }
     }
@@ -3492,7 +3647,15 @@ pub fn lower_module(
     //（如 `BindingRegistry_ApplyValue__T`——λ 内泛型方法调用以模板形参为实参）。
     // 这类函数只能被已剔除模板引用，无法独立链接；`--dynamic`（无入口）下
     // tree-shake 全量保留，不剔则 arc-prune-001。
-    drop_placeholder_tainted(&mut result);
+    drop_placeholder_tainted(&mut result, registry);
+
+    // idx25 家族：mono 克隆体（含 typed 体漏网）补接口→object 实参拆盒。
+    // 必须在全部单态化阶段收敛后跑（泛型方法 / 泛型类 ctor / 泛型类方法 /
+    // 接口实例化 / 替换调用各 fixpoint 都可能新增克隆体）；typed 体已被
+    // lowering 实参物化环转换（UnboxIface 节点或非接口局部 → 跳过）。
+    for (_, body) in &mut result {
+        repair_clone_iface_arg_shapes(body, registry);
+    }
 
     result
 }
@@ -3501,31 +3664,42 @@ pub fn lower_module(
 /// 或接收者 `Enum_T`）的残留函数。具体类型实参均为已注册多字符类型名；
 /// 单大写原子只可能来自未单态化的模板形参占位。模板体自身由
 /// [`drop_non_emittable_generic_templates`] 先行剔除。
-fn drop_placeholder_tainted(result: &mut Vec<(String, MirCfgBody)>) {
-    fn has_placeholder_atom(name: &str) -> bool {
+///
+/// 单大写原子判定须以 registry 为准：原子本身是已注册的具体类型
+/// （真实单字母类 `X`/`Y`/`A`/`B`，或单字母实参的单态化 mangle 如 `Weak_X`、
+/// `Foo::M__X`）不是占位——旧判定把任何单大写原子当模板占位，凡 body 引用
+/// 单字母类的真实用户函数（cycle_collection 批的 `Case2_Run`/`Worker` 等）
+/// 被误删 → 调用体引用未定义符号 → arc-prune-001 硬错误。
+fn drop_placeholder_tainted(result: &mut Vec<(String, MirCfgBody)>, registry: &TypeRegistry) {
+    fn is_placeholder_atom(seg: &str, registry: &TypeRegistry) -> bool {
+        seg.chars().count() == 1
+            && seg.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            && !registry.types.contains_key(seg)
+    }
+    fn has_placeholder_atom(name: &str, registry: &TypeRegistry) -> bool {
         // 跳过函数名前缀部分：仅检查实参段/类型名中的单大写原子。
         // `TextBuffer_get_LineCount` 等非泛型名无此类原子。
-        name.split(['_', ':']).any(|seg| {
-            seg.chars().count() == 1 && seg.chars().next().is_some_and(|c| c.is_ascii_uppercase())
-        })
+        name.split(['_', ':'])
+            .any(|seg| is_placeholder_atom(seg, registry))
     }
-    fn rv_tainted(rv: &MirRvalue) -> bool {
+    fn rv_tainted(rv: &MirRvalue, registry: &TypeRegistry) -> bool {
         // 类型名位（class/receiver）：单大写原子即占位（`EnumOptions_T` 的 T）。
         // 函数名位（func/target_fn）：仅 `__` 类型实参后缀内判单大写——普通段
         // 单大写可能是**单字母属性名**（`FkCounter_set_X` 的 X，不可误判）。
         let fn_tainted = |name: &str| {
             name.rsplit_once("__")
-                .is_some_and(|(_, suffix)| has_placeholder_atom(suffix))
+                .is_some_and(|(_, suffix)| has_placeholder_atom(suffix, registry))
         };
         match rv {
-            MirRvalue::New { class, .. } => has_placeholder_atom(class),
+            MirRvalue::New { class, .. } => has_placeholder_atom(class, registry),
             MirRvalue::Call { func, .. } => fn_tainted(func),
             MirRvalue::MethodCall {
                 receiver_type,
                 target_fn,
                 ..
             } => {
-                has_placeholder_atom(receiver_type) || target_fn.as_deref().is_some_and(fn_tainted)
+                has_placeholder_atom(receiver_type, registry)
+                    || target_fn.as_deref().is_some_and(fn_tainted)
             }
             MirRvalue::NullCondMethod {
                 receiver_type,
@@ -3537,23 +3711,28 @@ fn drop_placeholder_tainted(result: &mut Vec<(String, MirCfgBody)>) {
                 target_fn,
                 ..
             } => {
-                has_placeholder_atom(receiver_type) || target_fn.as_deref().is_some_and(fn_tainted)
+                has_placeholder_atom(receiver_type, registry)
+                    || target_fn.as_deref().is_some_and(fn_tainted)
             }
             _ => false,
         }
     }
-    fn stmts_tainted(stmts: &[MirStatement]) -> bool {
+    fn stmts_tainted(stmts: &[MirStatement], registry: &TypeRegistry) -> bool {
         stmts.iter().any(|s| match s {
             MirStatement::Assign { rvalue, .. }
             | MirStatement::Return(Some(rvalue))
             | MirStatement::FieldSet { value: rvalue, .. }
-            | MirStatement::StaticFieldSet { value: rvalue, .. } => rv_tainted(rvalue),
+            | MirStatement::StaticFieldSet { value: rvalue, .. } => rv_tainted(rvalue, registry),
             _ => false,
         })
     }
     result.retain(|(name, body)| {
         // 非占位形态名的 fn 若 body 无占位引用则保留。
-        if body.blocks.values().any(|b| stmts_tainted(&b.statements)) {
+        if body
+            .blocks
+            .values()
+            .any(|b| stmts_tainted(&b.statements, registry))
+        {
             if std::env::var("ARC_DEBUG_TEMPLATES").is_ok() {
                 eprintln!("[drop_tainted] {name}");
             }
@@ -4147,6 +4326,141 @@ fn split_mono_name<'a>(
     }
     let pos = best?;
     Some((&tfn[..pos], &tfn[pos + 2..]))
+}
+
+/// idx25 家族修复：接口→object 实参拆盒（mono 克隆体补位）。
+///
+/// 泛型方法模板在 lowering 期 T 未知：`Provide<T>` 模板体内
+/// `this.Provide(name, instance)`（object? 形参）无法判定 T 需拆盒；克隆
+/// 单态化（`try_create_mono_body` / 闭包克隆 / 泛型类方法克隆）把局部/形参
+/// 类型替换为具体接口名后缺陷定型——接口 fat 盒（`{obj, itable}`）被当对象
+/// 存入 object 槽，槽位 ARC inc/dec（选项 A：`arc_class_place(Object)=true`）
+/// 对盒内存做原子写 → obj 半损坏 → 接口分派 0xC0000005（chord corpus idx25
+/// `Contribute_RegistryRoutesAndAutoReverts` 取证，见 CHANGELOG 9/5 登记）。
+///
+/// typed 非泛型路径的同类转换在 lowering 实参物化环
+///（`lower_call::maybe_unbox_iface_to_object`）完成；本函数按**已替换**的
+/// 局部类型给克隆体补拆盒：`params[i]` ∈ {object, object?} 且实参为接口类型
+/// 局部 → 换为 `UnboxIface` 操作数（取 obj 半，零分配；codegen 为 null 安全
+/// phi，null 接口值 → null）。非 Local 实参（字段读等）无静态类型可查——
+/// 模板 lowering 已把复杂实参物化为局部，Local 即全量覆盖。
+///
+/// 对全体 body 幂等安全：typed 体已被 lowering 转换（实参为 UnboxIface 节点
+/// 或非接口局部 → 跳过）；模板体局部为泛型占位名（非接口 → 跳过）。
+pub(super) fn repair_clone_iface_arg_shapes(body: &mut MirCfgBody, registry: &TypeRegistry) {
+    for block in body.blocks.values_mut() {
+        repair_iface_args_in_stmts(&mut block.statements, registry, &body.locals);
+    }
+}
+
+fn repair_iface_args_in_stmts(
+    stmts: &mut Vec<MirStatement>,
+    registry: &TypeRegistry,
+    locals: &IndexMap<LocalId, (Ident, TypeId)>,
+) {
+    for stmt in stmts {
+        match stmt {
+            MirStatement::Assign { rvalue, .. } => {
+                repair_iface_args_in_rvalue(rvalue, registry, locals);
+            }
+            MirStatement::FieldSet { value, .. } => {
+                repair_iface_args_in_rvalue(value, registry, locals);
+            }
+            MirStatement::StaticFieldSet { value, .. } => {
+                repair_iface_args_in_rvalue(value, registry, locals);
+            }
+            MirStatement::IndexSet { value, .. } => {
+                repair_iface_args_in_rvalue(value, registry, locals);
+            }
+            MirStatement::Return(Some(rv)) => {
+                repair_iface_args_in_rvalue(rv, registry, locals);
+            }
+            MirStatement::Throw { value } => {
+                repair_iface_args_in_rvalue(value, registry, locals);
+            }
+            MirStatement::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                repair_iface_args_in_stmts(then_body, registry, locals);
+                repair_iface_args_in_stmts(else_body, registry, locals);
+            }
+            MirStatement::While { body, .. } => {
+                repair_iface_args_in_stmts(body, registry, locals);
+            }
+            MirStatement::TryCatch {
+                try_body,
+                catch_body,
+                ..
+            } => {
+                repair_iface_args_in_stmts(try_body, registry, locals);
+                repair_iface_args_in_stmts(catch_body, registry, locals);
+            }
+            MirStatement::TryFinally { body, finally } => {
+                repair_iface_args_in_stmts(body, registry, locals);
+                repair_iface_args_in_stmts(finally, registry, locals);
+            }
+            MirStatement::LinqForeach { body, .. } => {
+                repair_iface_args_in_stmts(body, registry, locals);
+            }
+            MirStatement::Drop(_)
+            | MirStatement::Break
+            | MirStatement::Continue
+            | MirStatement::Await { .. }
+            | MirStatement::Return(None) => {}
+        }
+    }
+}
+
+fn repair_iface_args_in_rvalue(
+    rv: &mut MirRvalue,
+    registry: &TypeRegistry,
+    locals: &IndexMap<LocalId, (Ident, TypeId)>,
+) {
+    match rv {
+        MirRvalue::MethodCall { args, params, .. }
+        | MirRvalue::NullCondMethod { args, params, .. }
+        | MirRvalue::ForceDerefMethod { args, params, .. } => {
+            for (i, arg) in args.iter_mut().enumerate() {
+                let Some(pt) = params.get(i) else {
+                    continue;
+                };
+                if pt != "object" && pt != "object?" {
+                    continue;
+                }
+                let MirOperand::Local(id) = arg else {
+                    continue;
+                };
+                // 已拆盒 / 已装箱节点不重复处理。
+                let Some((_, ty)) = locals.get(id) else {
+                    continue;
+                };
+                let iface: Option<Ident> = match ty {
+                    TypeId::Named(n) if registry.is_interface(n) => Some(n.clone()),
+                    TypeId::Nullable { inner } => {
+                        if let TypeId::Named(n) = inner.as_ref() {
+                            if registry.is_interface(n) {
+                                Some(n.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(iface_name) = iface {
+                    *arg = MirOperand::UnboxIface {
+                        object: Box::new(MirOperand::Local(*id)),
+                        class: iface_name.to_string(),
+                    };
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn try_create_mono_body(

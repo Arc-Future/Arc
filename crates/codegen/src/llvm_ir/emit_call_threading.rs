@@ -363,8 +363,7 @@ impl<'a> FnEmitter<'a> {
         self.parallel_for_tramp_counter += 1;
 
         // 调用点 env 结构：{ ptr user_fn, ptr user_env }，供 trampoline 载荷。
-        let env_ptr = self.fresh_temp();
-        self.emit(&format!("{env_ptr} = alloca {{ptr, ptr}}"));
+        let env_ptr = self.scratch_alloca("{ptr, ptr}");
         let env_fn_addr = self.fresh_temp();
         self.emit(&format!(
             "{env_fn_addr} = getelementptr inbounds {{ptr, ptr}}, ptr {env_ptr}, i32 0, i32 0"
@@ -398,8 +397,7 @@ impl<'a> FnEmitter<'a> {
             "{completed} = call i32 @rt_parallel_for(i32 {from}, i32 {to}, ptr @{tramp_name}, ptr {env_ptr}, ptr {pool}, ptr {cts}, i32 {max_degree})"
         ));
 
-        let result_ptr = self.fresh_temp();
-        self.emit(&format!("{result_ptr} = alloca %struct.ParallelResult"));
+        let result_ptr = self.scratch_alloca("%struct.ParallelResult");
         self.emit(&format!("store i32 {completed}, ptr {result_ptr}"));
 
         ("ptr".into(), result_ptr)
@@ -512,8 +510,7 @@ impl<'a> FnEmitter<'a> {
         self.native_trampolines.try_push(&tramp_name, tramp_ir);
 
         // 分配 env 结构 {ptr user_fn, ptr user_env} 在栈上
-        let env_ptr = self.fresh_temp();
-        self.emit(&format!("{env_ptr} = alloca {{ptr, ptr}}"));
+        let env_ptr = self.scratch_alloca("{ptr, ptr}");
         let env_fn_addr = self.fresh_temp();
         let env_user_env_addr = self.fresh_temp();
         self.emit(&format!(
@@ -533,8 +530,7 @@ impl<'a> FnEmitter<'a> {
             "{completed} = call i32 @rt_parallel_foreach(ptr {array_ptr}, i32 {len_tmp}, ptr @{tramp_name}, ptr {env_ptr}, ptr {pool}, ptr {cts}, i32 {max_degree})"
         ));
 
-        let result_ptr = self.fresh_temp();
-        self.emit(&format!("{result_ptr} = alloca %struct.ParallelResult"));
+        let result_ptr = self.scratch_alloca("%struct.ParallelResult");
         self.emit(&format!("store i32 {completed}, ptr {result_ptr}"));
 
         ("ptr".into(), result_ptr)

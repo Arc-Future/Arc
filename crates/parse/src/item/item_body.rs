@@ -2,7 +2,7 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_field_or_property(&mut self) -> Result<FieldOrProperty, ParseError> {
-        // RFC 017锛氭敹闆嗘垚鍛樼骇 `///` 鏂囨。娉ㄩ噴锛圥1d锛夈€?
+        // RFC 017：收集成员级 `///` 文档注释（P1d）。
         let doc = self.collect_doc_comments();
         let attrs = self.parse_attributes()?;
         let vis = self.parse_vis();
@@ -23,9 +23,9 @@ impl Parser {
                 self.match_token(&Token::Semi);
             }
             self.expect(Token::RBrace)?;
-            // FieldOrProperty::Property 涓烘爣璁板彉浣擄紝涓嶆惡甯?PropertyDef锛?
-            // 姝ゅ doc/attrs 闅忔爣璁颁涪寮冿紙瀹為檯 PropertyDef 鐢?parse_class_body_member /
-            // parse_interface_member 鐩存帴鏋勯€犲苟璁剧疆 doc/attributes锛夈€?
+            // FieldOrProperty::Property 为标记变体，不携带 PropertyDef；
+            // 此处 doc/attrs 随标记丢弃（实际 PropertyDef 由 parse_class_body_member /
+            // parse_interface_member 直接构造并设置 doc/attributes）。
             Ok(FieldOrProperty::Property)
         } else {
             let init = if self.match_token(&Token::Eq) {
@@ -52,21 +52,21 @@ impl Parser {
         &mut self,
         class_name: &Ident,
     ) -> Result<ClassBodyMember, ParseError> {
-        // RFC 017锛氭敹闆嗘垚鍛樼骇 `///` 鏂囨。娉ㄩ噴锛圥1d锛夈€?
+        // RFC 017：收集成员级 `///` 文档注释（P1d）。
         let doc = self.collect_doc_comments();
         let attrs = self.parse_attributes()?;
         let vis = self.parse_vis();
         let (is_const, is_readonly, is_static) = self.parse_field_modifier()?;
-        // RFC 061锛歱arse_field_modifier 宸叉秷璐?`static`锛岃嫢鎴愬憳鏈€缁堟槸鏂规硶锛?
-        // 闇€鏍规嵁 is_static 璁剧疆 MethodModifier::Static锛坧arse_method_modifier
-        // 姝ゆ椂涓嶄細鐪嬪埌 static token锛夈€?
+        // RFC 061：parse_field_modifier 已消费 `static`，若成员最终是方法，
+        // 需根据 is_static 设置 MethodModifier::Static（parse_method_modifier
+        // 此时不会看到 static token）。
         let mut modifier = self.parse_method_modifier();
         if is_static && modifier == MethodModifier::None {
             modifier = MethodModifier::Static;
         }
         let is_async = self.match_token(&Token::Async);
 
-        // RFC 006 M3锛歚required` 淇グ绗︼紙灞炴€у墠锛涘瓧娈垫殏涓嶆敮鎸侊級銆?
+        // RFC 006 M3：`required` 修饰符（属性前；字段暂不支持）。
         let is_required = if matches!(&self.peek().token, Token::Ident(n) if n.as_str() == "required")
         {
             self.advance();
@@ -75,7 +75,7 @@ impl Parser {
             false
         };
 
-        // Constructor: public Rectangle(int w, int h) { } 鈥?no return type
+        // Constructor: public Rectangle(int w, int h) { } — no return type
         if let Token::Ident(name) = &self.peek().token {
             if name == class_name
                 && self.check_at(1, &Token::LParen)
@@ -90,9 +90,9 @@ impl Parser {
                 }
                 let _ = self.parse_ident()?;
                 let params = self.parse_params_after_name()?;
-                // 鏋勯€犲櫒鍒濆鍖栧櫒 `: base(args)`锛圧FC 009 L1锛夈€?
-                // 浠呮敮鎸?`: base(...)`锛沗: this(...)` 鏆傛湭瀹炵幇銆?
-                // `base` 鏄叧閿瓧 token锛圱oken::Base锛夛紝闇€鐢?match_token 娑堣垂銆?
+                // 构造器初始化器 `: base(args)`（RFC 009 L1）。
+                // 仅支持 `: base(...)`；`: this(...)` 暂未实现。
+                // `base` 是关键字 token（Token::Base），需用 match_token 消费。
                 let base_args = if self.match_token(&Token::Colon) {
                     if !self.match_token(&Token::Base) {
                         return Err(
@@ -118,7 +118,7 @@ impl Parser {
 
         let ty = self.parse_type()?;
 
-        // RFC 060锛歚T this[params] { get/set }` 绱㈠紩鍣ㄥ０鏄庯紱浜︽敮鎸?`T this[...] => expr;`銆?
+        // RFC 060：`T this[params] { get/set }` 索引器声明；亦支持 `T this[...] => expr;`。
         if self.check(&Token::This) {
             self.advance();
             let index_params = self.parse_indexer_params()?;
@@ -192,9 +192,9 @@ impl Parser {
             }
             let mut sig = self.finish_method_sig(vis, modifier, is_async, name, Some(ty))?;
             sig.attributes = attrs;
-            // 鏂规硶 doc 浼樺厛缃簬 MethodDef.doc锛泂ig.doc 淇濇寔 None锛堜笌 docgen 浼樺厛鍙?
-            // MethodDef.doc 鐨勯€昏緫涓€鑷达級銆?
-            // 琛ㄨ揪寮忎綋鏂规硶 `Ret M(...) => expr;` 鑴辩硸涓哄潡锛坴oid 鈫?璇彞锛涢潪 void 鈫?return锛夈€?
+            // 方法 doc 优先置于 MethodDef.doc；sig.doc 保持 None（与 docgen 优先取
+            // MethodDef.doc 的逻辑一致）。
+            // 表达式体方法 `Ret M(...) => expr;` 脱糖为块（void → 语句；非 void → return）。
             let body = if self.match_token(&Token::LBrace) {
                 Some(self.parse_block_inner()?)
             } else if self.match_token(&Token::FatArrow) {
@@ -349,10 +349,10 @@ impl Parser {
         }
     }
 
-    /// Parse an accessor body: `{ ... }` / `=> 鈥?`锛堣嚜瀹氫箟锛夋垨 `;`锛堣嚜鍔級銆?
+    /// Parse an accessor body: `{ ... }` / `=> … `（自定义）或 `;`（自动）。
     ///
-    /// `as_return`锛歚get => expr;` 鑴辩硸涓?`return expr;`锛沗set => 鈥?` 鑴辩硸涓?
-    /// 璧嬪€兼垨琛ㄨ揪寮忚鍙ワ紙Arc 璧嬪€兼槸璇彞锛岄』鍦ㄦ璺緞鎺ュ彈 `lhs = rhs`锛夈€?
+    /// `as_return`：`get => expr;` 脱糖为 `return expr;`；`set => … ` 脱糖为
+    /// 赋值或表达式语句（Arc 赋值是语句，须在此路径接受 `lhs = rhs`）。
     fn parse_accessor_body(&mut self, as_return: bool) -> Result<Option<Block>, ParseError> {
         if self.match_token(&Token::LBrace) {
             let body = self.parse_block_inner()?;
@@ -369,7 +369,7 @@ impl Parser {
         }
     }
 
-    /// `=> expr;` 鈫?`{ return expr; }`锛堣〃杈惧紡浣撳睘鎬?/ get / 闈?void 鏂规硶锛夈€?
+    /// `=> expr;` → `{ return expr; }`（表达式体属性 / get / 非 void 方法）。
     pub(crate) fn parse_expr_bodied_return_block(&mut self) -> Result<Block, ParseError> {
         let expr = self.parse_expr()?;
         self.expect(Token::Semi)?;
@@ -380,7 +380,7 @@ impl Parser {
         })
     }
 
-    /// `=> stmt-expr;` 鈫?鍗曡鍙ュ潡銆傛敮鎸?`lhs = rhs`锛坰et 璁块棶鍣級涓庢櫘閫氳〃杈惧紡璇彞銆?
+    /// `=> stmt-expr;` → 单语句块。支持 `lhs = rhs`（set 访问器）与普通表达式语句。
     pub(crate) fn parse_expr_bodied_stmt_block(&mut self) -> Result<Block, ParseError> {
         let start = self.current_span();
         let expr = self.parse_expr()?;
@@ -399,7 +399,7 @@ impl Parser {
         })
     }
 
-    /// 琛ㄨ揪寮忎綋鏂规硶锛氶潪 `void` 鈫?`return expr;`锛沗void` 鈫?璇彞鍧楋紙鍙惈璧嬪€硷級銆?
+    /// 表达式体方法：非 `void` → `return expr;`；`void` → 语句块（可含赋值）。
     pub(crate) fn parse_expr_bodied_method_block(
         &mut self,
         ret: Option<&Spanned<Type>>,
@@ -420,19 +420,19 @@ impl Parser {
     }
 
     pub(crate) fn parse_interface_member(&mut self) -> Result<InterfaceBodyMember, ParseError> {
-        // RFC 017锛氭敹闆嗘垚鍛樼骇 `///` 鏂囨。娉ㄩ噴锛圥1d锛夈€?
+        // RFC 017：收集成员级 `///` 文档注释（P1d）。
         let doc = self.collect_doc_comments();
         let attrs = self.parse_attributes()?;
         let _vis = self.parse_vis();
-        // RFC 004 M1锛氭娴?`static abstract` 淇グ绗︾粍鍚堬紙浠呮帴鍙ｆ垚鍛樺悎娉曪級銆?
-        // 鎺ュ彈 `static abstract` 涓?`abstract static` 涓ょ椤哄簭锛涘叾浠栨儏褰㈣蛋
-        // `parse_method_modifier` 鍗曚慨楗扮璺緞銆俙is_static_abstract` 鏍囪
-        // 閫忎紶鍒?`MethodSig`/`PropertyDef`锛屼緵 typeck 璺宠繃瀹炰緥鏍￠獙銆?
-        // codegen 鎷︽埅鍣ㄨ瘑鍒€?
+        // RFC 004 M1：检测 `static abstract` 修饰符组合（仅接口成员合法）。
+        // 接受 `static abstract` 与 `abstract static` 两种顺序；其他情形走
+        // `parse_method_modifier` 单修饰符路径。`is_static_abstract` 标记
+        // 透传到 `MethodSig`/`PropertyDef`，供 typeck 跳过实例校验、
+        // codegen 拦截器识别。
         let (modifier, is_static_abstract) = self.parse_interface_member_modifier();
         let is_async = self.match_token(&Token::Async);
         let ty = self.parse_type()?;
-        // RFC 060锛氭帴鍙ｇ储寮曞櫒 `T this[params] { get; set; }`
+        // RFC 060：接口索引器 `T this[params] { get; set; }`
         if self.check(&Token::This) {
             self.advance();
             let index_params = self.parse_indexer_params()?;
@@ -470,7 +470,7 @@ impl Parser {
                 Some(ty),
             )?;
             sig.attributes = attrs;
-            // 鎺ュ彛鏂规硶鍙瓨 MethodSig锛堟棤 MethodDef锛夛紝doc 缃簬 sig.doc銆?
+            // 接口方法只存 MethodSig（无 MethodDef），doc 置于 sig.doc。
             sig.doc = doc;
             return Ok(InterfaceBodyMember::Method(sig));
         }
@@ -558,7 +558,7 @@ impl Parser {
                     set_body = self.parse_accessor_body(false)?;
                 }
                 "init" => {
-                    // RFC 006 M2锛氬厑璁歌嚜瀹氫箟 `init { 鈥?}`锛堜綋瀛樺叆 set_body锛屼笌 set 浜掓枼锛夈€?
+                    // RFC 006 M2：允许自定义 `init { … }`（体存入 set_body，与 set 互斥）。
                     let body = self.parse_accessor_body(false)?;
                     has_init = true;
                     if accessor_vis.is_some() {
@@ -587,8 +587,8 @@ impl Parser {
         ))
     }
 
-    /// 鎺ュ彛灞炴€?绱㈠紩鍣ㄨ闂櫒锛堜粎 `get;` / `set;`锛宍{` 宸叉秷璐癸級銆?
-    /// RFC 069锛氭帴鍙?`init` 鍚庣疆锛圡1 纭嫆缁濓級銆?
+    /// 接口属性/索引器访问器（仅 `get;` / `set;`，`{` 已消费）。
+    /// RFC 069：接口 `init` 后置（M1 硬拒绝）。
     fn parse_interface_property_accessors_inner(
         &mut self,
     ) -> Result<(bool, bool, bool, Option<Block>, Option<Block>), ParseError> {
@@ -627,25 +627,25 @@ impl Parser {
         Ok((has_get, has_set, false, None, None))
     }
 
-    /// RFC 004 M1锛氳В鏋愭帴鍙ｆ垚鍛樹慨楗扮锛岃瘑鍒?`static abstract` 缁勫悎銆?
+    /// RFC 004 M1：解析接口成员修饰符，识别 `static abstract` 组合。
     ///
-    /// 杩斿洖 `(modifier, is_static_abstract)`锛?
-    /// - `static abstract` 鎴?`abstract static` 鈫?`(Static, true)`
-    /// - `static` 鈫?`(Static, false)`
-    /// - `abstract` 鈫?`(Abstract, false)`
-    /// - `virtual`/`override` 鈫?瀵瑰簲鍙樹綋
-    /// - 鏃犱慨楗扮 鈫?`(None, false)`
+    /// 返回 `(modifier, is_static_abstract)`：
+    /// - `static abstract` 或 `abstract static` → `(Static, true)`
+    /// - `static` → `(Static, false)`
+    /// - `abstract` → `(Abstract, false)`
+    /// - `virtual`/`override` → 对应变体
+    /// - 无修饰符 → `(None, false)`
     ///
-    /// `static abstract` 浠呭湪鎺ュ彛鎴愬憳浣嶇疆鍚堟硶锛涚被鎴愬憳浣嶇疆鐢?
-    /// `parse_method_modifier` 澶勭悊锛堜笉璇嗗埆缁勫悎锛夈€?
+    /// `static abstract` 仅在接口成员位置合法；类成员位置由
+    /// `parse_method_modifier` 处理（不识别组合）。
     fn parse_interface_member_modifier(&mut self) -> (MethodModifier, bool) {
-        // `static abstract` 椤哄簭
+        // `static abstract` 顺序
         if self.check(&Token::Static) && self.check_at(1, &Token::Abstract) {
             self.advance(); // consume Static
             self.advance(); // consume Abstract
             return (MethodModifier::Static, true);
         }
-        // `abstract static` 椤哄簭锛堝皯瑙佷絾鍚堟硶锛?
+        // `abstract static` 顺序（少见但合法）
         if self.check(&Token::Abstract) && self.check_at(1, &Token::Static) {
             self.advance(); // consume Abstract
             self.advance(); // consume Static

@@ -28,8 +28,14 @@ impl<'a> FnEmitter<'a> {
         };
         if self.layouts.variants.contains_key(&ast::Ident::from(name)) {
             let variant_ty = format!("%variant.{name}");
-            let tmp = self.fresh_temp();
-            self.emit(&format!("{tmp} = alloca {variant_ty}"));
+            let tmp = {
+                let _s = self.fresh_temp();
+                self.entry_allocas.push_str(&format!(
+                    "  {_s} = alloca {variant_ty}
+"
+                ));
+                _s
+            };
             self.emit(&format!("store {variant_ty} zeroinitializer, ptr {tmp}"));
             ("ptr".into(), tmp)
         } else if self.layouts.structs.contains_key(&ast::Ident::from(name)) {
@@ -50,8 +56,9 @@ impl<'a> FnEmitter<'a> {
     /// 会读到垃圾 → ACCESS_VIOLATION。与 struct 返回堆化先例一致
     /// （见 `materialize_null_return` 注释）。
     fn emit_iface_ret_heap_copy(&mut self, src: &str) -> (String, String) {
-        let fat = self.fresh_temp();
-        self.emit(&format!("{fat} = call ptr @calloc(i64 1, i64 16)"));
+        // RFC 051 D2：接口值恒为**堆 fat 盒**（rt_iface_box_create，ARC 对象）——
+        // 不再存在「指向本帧 alloca」的 fat，返回前无需堆化拷贝：null 保 null、
+        // 非 null 原样直返（盒本身持引用，其生命周期由槽位 rc 管理，S3 配对）。
         let isnull = self.fresh_temp();
         self.emit(&format!("{isnull} = icmp eq ptr {src}, null"));
         let copy_bb = self.fresh_label();
@@ -61,35 +68,13 @@ impl<'a> FnEmitter<'a> {
             "br i1 {isnull}, label %{null_bb}, label %{copy_bb}"
         ));
         self.emit(&format!("{copy_bb}:"));
-        let oa = self.fresh_temp();
-        self.emit(&format!(
-            "{oa} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 0"
-        ));
-        let soa = self.fresh_temp();
-        self.emit(&format!(
-            "{soa} = getelementptr inbounds {{ ptr, ptr }}, ptr {src}, i32 0, i32 0"
-        ));
-        let obj = self.fresh_temp();
-        self.emit(&format!("{obj} = load ptr, ptr {soa}"));
-        self.emit(&format!("store ptr {obj}, ptr {oa}"));
-        let va = self.fresh_temp();
-        self.emit(&format!(
-            "{va} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 1"
-        ));
-        let sva = self.fresh_temp();
-        self.emit(&format!(
-            "{sva} = getelementptr inbounds {{ ptr, ptr }}, ptr {src}, i32 0, i32 1"
-        ));
-        let it = self.fresh_temp();
-        self.emit(&format!("{it} = load ptr, ptr {sva}"));
-        self.emit(&format!("store ptr {it}, ptr {va}"));
         self.emit(&format!("br label %{join}"));
         self.emit(&format!("{null_bb}:"));
         self.emit(&format!("br label %{join}"));
         self.emit(&format!("{join}:"));
         let result = self.fresh_temp();
         self.emit(&format!(
-            "{result} = phi ptr [ {fat}, %{copy_bb} ], [ null, %{null_bb} ]"
+            "{result} = phi ptr [ {src}, %{copy_bb} ], [ null, %{null_bb} ]"
         ));
         ("ptr".into(), result)
     }
@@ -795,8 +780,14 @@ impl<'a> FnEmitter<'a> {
                                 TypeId::Double => 8,
                                 _ => unreachable!(),
                             };
-                            let tmp = self.fresh_temp();
-                            self.emit(&format!("{tmp} = alloca {slot_ty}"));
+                            let tmp = {
+                                let _s = self.fresh_temp();
+                                self.entry_allocas.push_str(&format!(
+                                    "  {_s} = alloca {slot_ty}
+"
+                                ));
+                                _s
+                            };
                             self.emit(&format!(
                                 "call void @rt_task_result_value(ptr {task_val}, ptr {tmp}, i32 {size})"
                             ));
@@ -1023,8 +1014,14 @@ impl<'a> FnEmitter<'a> {
             }
             "i64" | "double" | "float" => {
                 let size: i32 = if ty == "float" { 4 } else { 8 };
-                let slot = self.fresh_temp();
-                self.emit(&format!("{slot} = alloca {ty}"));
+                let slot = {
+                    let _s = self.fresh_temp();
+                    self.entry_allocas.push_str(&format!(
+                        "  {_s} = alloca {ty}
+"
+                    ));
+                    _s
+                };
                 self.emit(&format!("store {ty} {val}, ptr {slot}"));
                 self.emit(&format!(
                     "{task} = call ptr @rt_task_from_value(ptr {slot}, i32 {size})"
@@ -1048,8 +1045,14 @@ impl<'a> FnEmitter<'a> {
             }
             "i64" | "double" | "float" => {
                 let size: i32 = if ty == "float" { 4 } else { 8 };
-                let slot = self.fresh_temp();
-                self.emit(&format!("{slot} = alloca {ty}"));
+                let slot = {
+                    let _s = self.fresh_temp();
+                    self.entry_allocas.push_str(&format!(
+                        "  {_s} = alloca {ty}
+"
+                    ));
+                    _s
+                };
                 self.emit(&format!("store {ty} {val}, ptr {slot}"));
                 self.emit(&format!(
                     "call void @rt_task_set_result_value(ptr {task_ptr}, ptr {slot}, i32 {size})"
@@ -2120,6 +2123,21 @@ impl<'a> FnEmitter<'a> {
             "object" => TypeId::Object,
             other => TypeId::Named(other.into()),
         }
+    }
+
+    /// 发射**临时 scratch alloca**（提升至函数 entry 块，见 `entry_allocas`/
+    /// `flush_entry_allocas`）。
+    ///
+    /// 非 entry 块的固定大小 alloca 在 -O0 下被 LLVM/ISel 降为**动态栈分配**
+    ///（`__chkstk` 探针 + `sub rsp, N`），只在函数返回时随帧回收——出现在循环
+    /// 体内即每轮泄漏槽位大小：接口 `!= null` 比较的 dummy 槽 16B/轮，~64k 轮
+    /// 耗尽 1MB 主线程栈 → 0xC00000FD（mem-probe9 E2 实证：60k 过 / 65k 溢）。
+    /// 槽为即刻消费的 scratch（写后读、跨轮覆写），entry 提升语义等价。
+    pub(super) fn scratch_alloca(&mut self, ty: &str) -> String {
+        let name = self.fresh_temp();
+        self.entry_allocas
+            .push_str(&format!("  {name} = alloca {ty}\n"));
+        name
     }
 
     /// Assign 是否应对 ARC 管理的 class 局部拷贝做 retain（非所有权移交）。

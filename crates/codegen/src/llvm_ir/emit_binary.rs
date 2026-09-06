@@ -364,6 +364,21 @@ impl<'a> FnEmitter<'a> {
         }
     }
 
+    /// 拼接操作数是否须对象→字符串拆盒：操作数静态槽位为 `Object`/`Object?`
+    ///（typed 约定字符串对象 = ArcBox）。仅 Local 局部可查类型表；Field/其它
+    /// 形状无静态类型 → false（透传，历史行为）。
+    fn concat_unbox_object_operand(&self, op: Option<&MirOperand>) -> bool {
+        let Some(MirOperand::Local(id)) = op else {
+            return false;
+        };
+        let ty = self.local_type(*id);
+        match &ty {
+            TypeId::Object => true,
+            TypeId::Nullable { inner } => matches!(**inner, TypeId::Object),
+            _ => false,
+        }
+    }
+
     /// Emit `string + primitive` concatenation.
     /// One operand is string (already ptr), the other is a non-string primitive
     /// (int, double, etc.) that must be converted to string first.
@@ -393,6 +408,15 @@ impl<'a> FnEmitter<'a> {
     /// If the value is already ptr, return it unchanged.
     fn convert_to_string(&mut self, op: Option<&MirOperand>, lty: &str, lval: &str) -> String {
         if lty == "ptr" {
+            // 拼接的 object 槽位（typed 约定字符串对象 = ArcBox）须先拆盒取裸串：
+            // rt_str_concat 直读盒内存（refcount/vtable 字节，strlen 首 NUL 即截）
+            // → 链尾产出空串/垃圾内容（chord Waterfall idx36 内容取证：
+            // `"[" + payload + "]"` payload 为盒 → 结果 ''）。
+            if self.concat_unbox_object_operand(op) {
+                let tmp = self.fresh_temp();
+                self.emit(&format!("{tmp} = call ptr @rt_string_unbox(ptr {lval})"));
+                return tmp;
+            }
             return lval.to_string();
         }
         // `char` 与 `byte`/`int` 在 LLVM 同为 i32，但拼接语义不同：
@@ -511,28 +535,39 @@ impl<'a> FnEmitter<'a> {
         // 安全读 obj：fat 为 null 时 select 到 dummy alloca，避免对 null 解引用 UB。
         // 此时 obj 读自 dummy（undef），但其结果被下方 `lnull | …` 以 lnull 为准
         // 短路，不产生误判。
+        //
+        // dummy 槽必须**提升到 entry 块**（entry_allocas，函数体发射结束后统一
+        // flush）：非 entry 块的固定大小 alloca 会被 LLVM/ISel 降为动态栈分配
+        //（__chkstk 探针 + `sub rsp, N`），且只在函数返回时一并回收——接口
+        // `!= null` 出现在循环体内时每轮泄漏 16B 栈帧，~64k 轮耗尽 1MB 主线程栈
+        // → 0xC00000FD（mem-probe9 E2 实证：60k 通过 / 65k 溢出，反汇编
+        // `mov $0x10,%eax; call __chkstk; sub %rax,%rsp` 定位）。
+        // RFC 051 D2：堆 fat 盒 obj 位于 +16。dummy 槽扩为 32B（{ptr×4}）——
+        // 保证 select 到 dummy 时 +16 读在界内（内容 undef，被 lnull/rnull 短路）。
         let dummy_l = self.fresh_temp();
-        self.emit(&format!("{dummy_l} = alloca {{ ptr, ptr }}"));
+        self.entry_allocas
+            .push_str(&format!("  {dummy_l} = alloca {{ ptr, ptr, ptr, ptr }}\n"));
         let safe_l = self.fresh_temp();
         self.emit(&format!(
             "{safe_l} = select i1 {lnull}, ptr {dummy_l}, ptr {lval}"
         ));
         let ol_addr = self.fresh_temp();
         self.emit(&format!(
-            "{ol_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {safe_l}, i32 0, i32 0"
+            "{ol_addr} = getelementptr inbounds i8, ptr {safe_l}, i32 16"
         ));
         let olv = self.fresh_temp();
         self.emit(&format!("{olv} = load ptr, ptr {ol_addr}"));
 
         let dummy_r = self.fresh_temp();
-        self.emit(&format!("{dummy_r} = alloca {{ ptr, ptr }}"));
+        self.entry_allocas
+            .push_str(&format!("  {dummy_r} = alloca {{ ptr, ptr, ptr, ptr }}\n"));
         let safe_r = self.fresh_temp();
         self.emit(&format!(
             "{safe_r} = select i1 {rnull}, ptr {dummy_r}, ptr {rval}"
         ));
         let or_addr = self.fresh_temp();
         self.emit(&format!(
-            "{or_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {safe_r}, i32 0, i32 0"
+            "{or_addr} = getelementptr inbounds i8, ptr {safe_r}, i32 16"
         ));
         let orv = self.fresh_temp();
         self.emit(&format!("{orv} = load ptr, ptr {or_addr}"));

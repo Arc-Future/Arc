@@ -118,6 +118,7 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
 
     // Dictionary<K,V> (generic: void* key/value + hash/eq fn pointers)
     out.push_str("declare ptr  @rt_dict_create(ptr, ptr)\n");
+    out.push_str("declare ptr  @rt_dict_create_owned(ptr, ptr)\n");
     out.push_str("declare void @rt_dict_ensure_capacity(ptr, i32)\n");
     out.push_str("declare void @rt_dict_set(ptr, ptr, ptr)\n");
     out.push_str("declare ptr  @rt_dict_get(ptr, ptr)\n");
@@ -128,6 +129,7 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     out.push_str("declare i32  @rt_dict_count(ptr)\n");
     out.push_str("declare i32  @rt_dict_remove(ptr, ptr)\n");
     out.push_str("declare void @rt_dict_clear(ptr)\n");
+    out.push_str("declare void @rt_dict_destroy(ptr)\n");
     out.push_str("declare ptr  @rt_dict_keys(ptr)\n");
     out.push_str("declare ptr  @rt_dict_values(ptr)\n");
     out.push_str("declare ptr  @rt_dict_get_enumerator(ptr)\n");
@@ -191,6 +193,7 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
 
     // SortedDictionary<K, V> (Phase 3) — 红黑树实现的有序映射
     out.push_str("declare ptr  @rt_sorted_dict_create(ptr)\n");
+    out.push_str("declare ptr  @rt_sorted_dict_create_owned(ptr)\n");
     out.push_str("declare void @rt_sorted_dict_destroy(ptr)\n");
     out.push_str("declare void @rt_sorted_dict_clear(ptr)\n");
     out.push_str("declare i32  @rt_sorted_dict_count(ptr)\n");
@@ -246,6 +249,9 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     out.push_str("declare ptr  @rt_concurrent_dict_create(ptr, ptr, i32)\n");
     out.push_str("declare ptr  @rt_concurrent_dict_create_level(ptr, ptr, i32)\n");
     out.push_str("declare ptr  @rt_concurrent_dict_create_level_cap(ptr, ptr, i32, i32)\n");
+    out.push_str("declare ptr  @rt_concurrent_dict_create_owned(ptr, ptr, i32)\n");
+    out.push_str("declare ptr  @rt_concurrent_dict_create_level_owned(ptr, ptr, i32)\n");
+    out.push_str("declare ptr  @rt_concurrent_dict_create_level_cap_owned(ptr, ptr, i32, i32)\n");
     out.push_str("declare i32  @rt_concurrent_dict_try_add(ptr, ptr, ptr)\n");
     out.push_str("declare i32  @rt_concurrent_dict_try_get(ptr, ptr, ptr)\n");
     out.push_str("declare i32  @rt_concurrent_dict_try_update(ptr, ptr, ptr, ptr)\n");
@@ -259,6 +265,7 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     out.push_str("declare i32  @rt_concurrent_dict_contains(ptr, ptr)\n");
     out.push_str("declare i32  @rt_concurrent_dict_count(ptr)\n");
     out.push_str("declare void @rt_concurrent_dict_clear(ptr)\n");
+    out.push_str("declare void @rt_concurrent_dict_destroy(ptr)\n");
     out.push_str("declare ptr  @rt_concurrent_dict_keys(ptr)\n");
     out.push_str("declare ptr  @rt_concurrent_dict_values(ptr)\n");
     out.push_str("declare ptr  @rt_concurrent_dict_to_array(ptr)\n");
@@ -366,6 +373,7 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     out.push_str("declare i32  @rt_list_remove(ptr, ptr)\n");
     out.push_str("declare void @rt_list_reverse(ptr)\n");
     out.push_str("declare i32  @rt_list_eq_str(ptr, ptr)\n");
+    out.push_str("declare i32  @rt_list_eq_iface(ptr, ptr)\n");
     out.push_str("declare void @rt_list_arc_inc_ref(ptr)\n");
     out.push_str("declare void @rt_list_arc_dec_ref(ptr)\n");
 
@@ -578,6 +586,8 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     // 包装/提取，使 `o is string` 可识别且其它类型判别安全。
     out.push_str("declare ptr @rt_string_box(ptr) nounwind\n");
     out.push_str("declare ptr @rt_string_unbox(ptr) nounwind\n");
+    // RFC 051 D2: interface fat box（rt_type.c）——堆 fat 盒 = 真 ARC 对象。
+    out.push_str("declare ptr @rt_iface_box_create(ptr, ptr) nounwind\n");
 
     // Runtime-length array ABI (RFC 015 Phase B)
     out.push_str("declare ptr  @rt_array_create(i32, i32) nounwind\n");

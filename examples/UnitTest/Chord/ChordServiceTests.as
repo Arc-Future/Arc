@@ -17,12 +17,14 @@ public class ChordServiceTests
     {
         ChordContext app = new ChordContext();
         ChordContext childA = app.Tone(ctx => { });
-        ChordContext childB = app.Tone(ctx => { });
+        // 非后代根上下文：隔离边界（RFC 045 D3——服务沿祖先链上溯，仅后代可见；
+        // 同根子音 childA/childB 拓扑相同，孤立断言需无亲缘的旁观根）。
+        ChordContext outsider = new ChordContext();
         app.Provide("svc", "value");
         Assert.True(app.HasService("svc"));
         Assert.True(childA.HasService("svc"));
         Assert.Equal("value", (string)childA.GetService("svc"));
-        Assert.False(childB.HasService("svc"));
+        Assert.False(outsider.HasService("svc"));
     }
 
     [Fact]

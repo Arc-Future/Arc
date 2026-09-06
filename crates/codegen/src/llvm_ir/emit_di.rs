@@ -247,12 +247,30 @@ impl<'a> FnEmitter<'a> {
             .iter()
             .map(|params| params.iter().map(|p| p.to_string()).collect())
             .collect();
-        if ctors.len() <= 1 {
-            return ctors.into_iter().next().unwrap_or_default();
+        // 可服务形参门（.NET CallSiteFactory 语义）：参数须为已注册
+        // class/interface（含泛型 mono 名）——string/基元/数组等注册面外
+        // 类型非服务依赖，携带者的解析恒落空（隐式 ''）。`Greeter()` +
+        // `Greeter(string)` 并存时旧「参数最多者」恒选中 (string) → 字段空串
+        //（chord TypedResolve_DynamicShadowsDI NAME=[] 实证）。全候选不可
+        // 服务时回退全量旧规则（最大兼容）。
+        let serviceable = |name: &str| {
+            self.layouts.classes.contains_key(name) || self.layouts.interfaces.contains_key(name)
+        };
+        let injectable: Vec<&Vec<String>> = ctors
+            .iter()
+            .filter(|c| c.iter().all(|p| serviceable(p)))
+            .collect();
+        let pool: Vec<Vec<String>> = if !injectable.is_empty() {
+            injectable.into_iter().cloned().collect()
+        } else {
+            ctors.clone()
+        };
+        if pool.len() <= 1 {
+            return pool.into_iter().next().unwrap_or_default();
         }
 
-        let max_len = ctors.iter().map(Vec::len).max().unwrap_or(0);
-        let tied: Vec<&Vec<String>> = ctors.iter().filter(|c| c.len() == max_len).collect();
+        let max_len = pool.iter().map(Vec::len).max().unwrap_or(0);
+        let tied: Vec<&Vec<String>> = pool.iter().filter(|c| c.len() == max_len).collect();
         if tied.len() == 1 {
             return tied[0].clone();
         }
@@ -498,15 +516,11 @@ impl<'a> FnEmitter<'a> {
                     // 此处构造堆盒胖指针，并按对象 runtime type_id 动态选 itable
                     //（与 `emit_make_iface_dyn` 同构）。
                     out.push_str(&format!(
-                        "  %dep{i}_fat = call ptr @calloc(i64 1, i64 16)\n"
+                        "  %dep{i}_fat = call ptr @rt_iface_box_create(ptr %dep{i}, ptr null)\n"
                     ));
                     out.push_str(&format!("  call void @rt_arc_inc(ptr %dep{i})\n"));
                     out.push_str(&format!(
-                        "  %dep{i}_oa = getelementptr inbounds {{ ptr, ptr }}, ptr %dep{i}_fat, i32 0, i32 0\n"
-                    ));
-                    out.push_str(&format!("  store ptr %dep{i}, ptr %dep{i}_oa\n"));
-                    out.push_str(&format!(
-                        "  %dep{i}_vs = getelementptr inbounds {{ ptr, ptr }}, ptr %dep{i}_fat, i32 0, i32 1\n"
+                        "  %dep{i}_vs = getelementptr inbounds i8, ptr %dep{i}_fat, i32 24\n"
                     ));
                     out.push_str(&format!("  store ptr null, ptr %dep{i}_vs\n"));
                     out.push_str(&format!(

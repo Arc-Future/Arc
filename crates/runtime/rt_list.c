@@ -33,6 +33,21 @@ int32_t rt_list_eq_str(const void* a, const void* b) {
     return strcmp(sa, sb) == 0 ? 1 : 0;
 }
 
+int32_t rt_list_eq_iface(const void* a, const void* b) {
+    /* RFC 051 S3a 语义补全：接口元素相等 = **底层对象身份**（fat 盒 obj@+16），
+     * 对标 .NET EqualityComparer<I>.Default 的引用相等（非 IEquatable 时）。
+     * 每次 class→iface 转换产生新盒——按盒指针比较会使
+     * `List<I>.Remove(同对象的另一盒)`/Contains 恒 miss
+     * （illusory component_store FAIL:remove 实证：Add 一盒、Remove 传
+     * 调用边界重装的新盒）。双空相等、单空不等。 */
+    const void* box_a = a ? *(const void* const*)a : NULL;
+    const void* box_b = b ? *(const void* const*)b : NULL;
+    if (box_a == box_b) return 1;
+    if (!box_a || !box_b) return 0;
+    return *(const void* const*)((const char*)box_a + 16)
+        == *(const void* const*)((const char*)box_b + 16);
+}
+
 /* ---- Phase 4: built-in ARC slot callbacks for class-type elements ---- */
 
 void rt_list_arc_inc_ref(void* slot) {

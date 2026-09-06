@@ -401,15 +401,10 @@ public class ChordContext : IChordContext {
 
     // ── D1/D7/D12 安装音 ──
 
-    /// <summary>安装音（函数形态，无清理需求）：创建子上下文并立即 Apply。</summary>
-    public ChordContext Tone(Action<ChordContext> apply) {
-        return this.Tone(apply, null);
-    }
-
-    /// <summary>安装音（函数形态 + 配置）。</summary>
-    public ChordContext Tone(Action<ChordContext> apply, object? config) {
-        return this.ToneImpl(null, apply, null, config, new string[0], "tone");
-    }
+    // 声明序 = λ 实参的「首适用」选择序（RFC 045 λ 感知重载分派）：**值体 λ**
+    //（`ctx => Cleanup(ctx)`）适用 Func 清理形态与 Action 形态二者——Func 形态
+    // 须先于 Action 声明才能命中；void 体 λ（块体无尾返回）仅适用 Action 形态，
+    // 声明序不影响其分派（λ 感知扫描按委托返回 Void 与否过滤候选）。
 
     /// <summary>安装音（函数形态，返回撤销句柄作为清理动作）。</summary>
     public ChordContext Tone(Func<ChordContext, IDisposable> apply) {
@@ -419,6 +414,16 @@ public class ChordContext : IChordContext {
     /// <summary>安装音（函数形态，返回撤销句柄 + 配置）。</summary>
     public ChordContext Tone(Func<ChordContext, IDisposable> apply, object? config) {
         return this.ToneImpl(null, null, apply, config, new string[0], "tone");
+    }
+
+    /// <summary>安装音（函数形态，无清理需求）：创建子上下文并立即 Apply。</summary>
+    public ChordContext Tone(Action<ChordContext> apply) {
+        return this.Tone(apply, null);
+    }
+
+    /// <summary>安装音（函数形态 + 配置）。</summary>
+    public ChordContext Tone(Action<ChordContext> apply, object? config) {
+        return this.ToneImpl(null, apply, null, config, new string[0], "tone");
     }
 
     /// <summary>安装音（对象形态）。</summary>
@@ -503,9 +508,12 @@ public class ChordContext : IChordContext {
             fresh.Stop();
             throw new Exception("Arc.Chord: reload 失败（新音已回滚，旧音保持运行）: " + fresh._scope.Error);
         }
+        // D8 原位替换：Dispose 只撤销旧音副作用、不移出子列表——旧音须显式移出
+        // 树，新音（Tone 顺次追加于尾部）摘除后插回旧音原位置，保持音序。
+        oldContext.Dispose();
+        this._children.Remove(oldContext);
         this._children.Remove(fresh);
         this._children.Insert(index, fresh);
-        oldContext.Dispose();
         return fresh;
     }
 
@@ -525,6 +533,15 @@ public class ChordContext : IChordContext {
         ChordContext tx = new ChordContext(this, "transaction", null);
         tx._applied = true;
         tx._isTransaction = true;
+        // RFC 045 D6：事务副作用落**父上下文注册表面**（服务/事件/配置/瀑布共享
+        // 父注册表对象），仅副作用账本（_effects）与子上下文/挂起列表保持独立。
+        // 否则事务内 Provide/On/SetConfig 只写 tx 自带注册表，Commit 迁移的只是
+        // 已执行的空条目 → 服务/事件对父上下文永不可见（Commit 原子合并语义失效）。
+        // 回滚/未提交释放路径不变：tx 账本逆序撤销即从共享注册表面移除副作用。
+        tx._services = this._services;
+        tx._events = this._events;
+        tx._config = this._config;
+        tx._waterfalls = this._waterfalls;
         return tx;
     }
 
@@ -741,7 +758,11 @@ public class ChordContext : IChordContext {
             }
             return;
         }
-        if (p._reactive && !all) {
+        if (p._ran && p._reactive && (vanished || !all)) {
+            // RFC 045 D4：已执行的反应式注入——任一依赖消失（vanished：注入时
+            // 在场、现不可达）即回滚回调效果区间并等待重新可用。`all` 仅由
+            // 「注入时即缺失」的依赖清除；已执行注入的全部依赖注入时在场，
+            // 消失只体现于 vanished——旧条件 `!all` 恒假，回滚永不触发。
             p.RevertEffects();
             p._ran = false;
             p._effectStart = 0;

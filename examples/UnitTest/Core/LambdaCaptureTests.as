@@ -4,12 +4,12 @@ using Arc;
 using Arc.QIF;
 
 /// <summary>
-/// Lambda 鎹曡幏璇箟鍗曞厓娴嬭瘯锛氳鐩?LambdaCapture 绀轰緥鐨勫叏閮ㄥ満鏅€?
-/// L1: class ByRef 鎹曡幏锛堟寚閽堣涔夛級
-/// L2: int ByValue 鎹曡幏锛堝揩鐓ц涔夛級
-/// L3: 娣峰悎鎹曡幏锛坈lass ByRef + int ByValue 鍚岄棴鍖咃級
-/// L3: this 鎹曡幏锛堟樉寮?this.Base / 闅愬紡 bare Base锛?
-/// L3: 寰幆鍙橀噺鎹曡幏锛坕nt ByValue 蹇収锛?
+/// Lambda 捕获语义单元测试：覆盖 LambdaCapture 示例的全部场景。
+/// L1: class ByRef 捕获（指针语义）
+/// L2: int ByValue 捕获（快照语义）
+/// L3: 混合捕获（class ByRef + int ByValue 同闭包）
+/// L3: this 捕获（显式 this.Base / 隐式 bare Base）
+/// L3: 循环变量捕获（int ByValue 快照）
 /// </summary>
 
 class CaptureCounter {

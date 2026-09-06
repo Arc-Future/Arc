@@ -132,11 +132,12 @@ pub(super) enum IfaceScanMode {
 /// 每次具体类→接口转换物化独立 fat 盒（`emit_make_iface` heap box），
 /// `rt_list_index_of`/`rt_list_contains`/`rt_list_remove` 的指针相等对
 /// 「同对象不同盒」恒判不等——C# 语义下接口引用相等 = 底层对象身份相等
-/// （`emit_iface_equality` 同规则）。本循环逐元素解盒（fat[0] = obj）与
-/// 查询方 obj 比对。`prefix` 隔离块/临时命名（同一 stub define 体内唯一）；
-/// `item_addr` 为元素槽（槽内是 fat 盒地址，查询侧双重解盒与扫描侧对称）。
-/// 文本以 `br label %{prefix}.hdr` 开头（拼入调用方的 entry 块尾部，phi 前驱
-/// 为 stub 的 `entry` 块），以 `%{prefix}.res` phi 结尾。
+/// （`emit_iface_equality` 同规则）。本循环逐元素解盒（**obj @ 盒 +16**，
+/// D2 32B 布局：rc/weak/vtable 头 + obj@16 + itable@24）与查询方 obj 比对。
+/// `prefix` 隔离块/临时命名（同一 stub define 体内唯一）；`item_addr` 为元素
+/// 槽（槽内是 fat 盒地址，查询侧双重解盒与扫描侧对称）。文本以
+/// `br label %{prefix}.hdr` 开头（拼入调用方的 entry 块尾部，phi 前驱为
+/// stub 的 `entry` 块），以 `%{prefix}.res` phi 结尾。
 pub(super) fn iface_list_identity_scan_ir(
     prefix: &str,
     handle: &str,
@@ -156,7 +157,8 @@ pub(super) fn iface_list_identity_scan_ir(
     format!(
         "  %{p}.out = alloca ptr, align 8\n\
          \x20 %{p}.qbox = load ptr, ptr {item_addr}\n\
-         \x20 %{p}.q = load ptr, ptr %{p}.qbox\n\
+         \x20 %{p}.qo = getelementptr inbounds i8, ptr %{p}.qbox, i32 16\n\
+         \x20 %{p}.q = load ptr, ptr %{p}.qo\n\
          \x20 br label %{p}.hdr\n\
          {p}.hdr:\n\
          \x20 %{p}.iv = phi i32 [ 0, %entry ], [ %{p}.next, %{p}.adv ]\n\
@@ -169,7 +171,8 @@ pub(super) fn iface_list_identity_scan_ir(
          \x20 %{p}.en = icmp eq ptr %{p}.e, null\n\
          \x20 br i1 %{p}.en, label %{p}.adv, label %{p}.ld\n\
          {p}.ld:\n\
-         \x20 %{p}.eobj = load ptr, ptr %{p}.e\n\
+         \x20 %{p}.eo = getelementptr inbounds i8, ptr %{p}.e, i32 16\n\
+         \x20 %{p}.eobj = load ptr, ptr %{p}.eo\n\
          \x20 %{p}.hit = icmp eq ptr %{p}.eobj, %{p}.q\n\
          \x20 br i1 %{p}.hit, label %{p}.found, label %{p}.adv\n\
          {p}.found:\n\
@@ -750,6 +753,15 @@ impl<'a> FnEmitter<'a> {
         };
 
         if name.contains("__ctor") {
+            // RFC 051 S3b：值所有权字典（class/接口 V）用 rt_dict_create_owned——
+            // 存储侧自持 +1（set 覆盖/remove/clear/destroy 释放条目值）；标量/
+            // string 值字典沿用 rt_dict_create（无 ARC 维护）。与各写臂的
+            // inc 判定同源（list_elem_is_ref），保证每实例化创建/写入一致。
+            let create_fn = if list_elem_is_ref(&v_suf, self.layouts) {
+                "@rt_dict_create_owned"
+            } else {
+                "@rt_dict_create"
+            };
             // capacity ctor → create + rt_dict_ensure_capacity（H2 facade 预分配）。
             let rest = name.strip_prefix("__ctor::").unwrap_or(name);
             let arity = rest.rsplit_once('_').and_then(|(_, suf)| {
@@ -763,7 +775,7 @@ impl<'a> FnEmitter<'a> {
                 Some(1) => format!(
                     "define void @{mangled}(ptr %self, i32 %capacity) {{\n\
                      entry:\n\
-                     \x20 %handle = call ptr @rt_dict_create(ptr {hash_fn}, ptr {eq_fn})\n\
+                     \x20 %handle = call ptr {create_fn}(ptr {hash_fn}, ptr {eq_fn})\n\
                      \x20 call void @rt_dict_ensure_capacity(ptr %handle, i32 %capacity)\n\
                      \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                      \x20 store ptr %handle, ptr %hp\n\
@@ -773,7 +785,7 @@ impl<'a> FnEmitter<'a> {
                 _ => format!(
                     "define void @{mangled}(ptr %self) {{\n\
                      entry:\n\
-                     \x20 %handle = call ptr @rt_dict_create(ptr {hash_fn}, ptr {eq_fn})\n\
+                     \x20 %handle = call ptr {create_fn}(ptr {hash_fn}, ptr {eq_fn})\n\
                      \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                      \x20 store ptr %handle, ptr %hp\n\
                      \x20 ret void\n\
@@ -806,11 +818,9 @@ impl<'a> FnEmitter<'a> {
                 } else {
                     (String::new(), "%value".to_string())
                 };
-                let retain = if list_elem_is_ref(&v_suf, self.layouts) {
-                    format!("  call void @rt_arc_inc(ptr {val_arg})\n")
-                } else {
-                    String::new()
-                };
+                // RFC 051 S3b：ref 值（class/接口）字典经 rt_dict_create_owned 创建，
+                // 存储侧 inc 在 rt_dict_set 内部（插入/覆盖）；此处不再预 inc——
+                // 否则与存储侧 +1 重复（覆盖自覆盖等路径净额失衡）。
                 format!(
                     "define void @{mangled}(ptr %self, {k_ty} %key, {v_ty} %value) {{\n\
                      entry:\n\
@@ -818,7 +828,6 @@ impl<'a> FnEmitter<'a> {
                      {val_ir}\
                      \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                      \x20 %handle = load ptr, ptr %hp\n\
-                     {retain}\
                      \x20 call void @rt_dict_set(ptr %handle, ptr {key_arg}, ptr {val_arg})\n\
                      \x20 ret void\n\
                      }}\n"
@@ -984,6 +993,13 @@ impl<'a> FnEmitter<'a> {
                          }}\n"
                     )
                 } else {
+                    // 与 emit_builtin TryGetValue 同源：class 值经 out 槽移交须 retain
+                    //（out 局部在调用方 epilogue dec——缺 inc 时 rc=1 值被提前释放）。
+                    let retain = if list_elem_is_ref(&v_suf, self.layouts) {
+                        "  call void @rt_arc_inc(ptr %rp)\n"
+                    } else {
+                        ""
+                    };
                     format!(
                         "define i1 @{mangled}(ptr %self, {k_ty} %key, ptr %out) {{\n\
                          entry:\n\
@@ -993,6 +1009,7 @@ impl<'a> FnEmitter<'a> {
                          \x20 %slot = alloca ptr, align 8\n\
                          \x20 %r = call i32 @rt_dict_try_get_value(ptr %handle, ptr {key_arg}, ptr %slot)\n\
                          \x20 %rp = load ptr, ptr %slot\n\
+                         {retain}\
                          \x20 store ptr %rp, ptr %out\n\
                          \x20 %b = icmp ne i32 %r, 0\n\
                          \x20 ret i1 %b\n\
@@ -1014,6 +1031,9 @@ impl<'a> FnEmitter<'a> {
                 } else {
                     (String::new(), "%value".to_string())
                 };
+                // RFC 051 S3b：ref 值字典（rt_dict_create_owned）存储侧 inc 在
+                // rt_dict_try_add 内部（仅命中时）；重复键失败不存储也不 inc
+                //（旧 codegen 先 inc 后失败 → 孤儿 +1 泄漏）。
                 format!(
                     "define i1 @{mangled}(ptr %self, {k_ty} %key, {v_ty} %value) {{\n\
                      entry:\n\
@@ -1088,11 +1108,31 @@ impl<'a> FnEmitter<'a> {
                     None
                 }
             });
+            // RFC 051 S3d：类值（class/接口 V）→ create_owned 变体——存储侧
+            // 自持 +1（插入锁内 inc，remove/覆盖/clear/destroy 配对释放）；
+            // 读臂借用 retain 移入 runtime（锁内 inc），本文件各臂不再 inc/dec。
+            // 标量 / string 值沿用 legacy create（无 ARC 维护）。
+            let owned = list_elem_is_ref(&v_suf, self.layouts);
+            let fn_plain = if owned {
+                "@rt_concurrent_dict_create_owned"
+            } else {
+                "@rt_concurrent_dict_create"
+            };
+            let fn_level = if owned {
+                "@rt_concurrent_dict_create_level_owned"
+            } else {
+                "@rt_concurrent_dict_create_level"
+            };
+            let fn_cap = if owned {
+                "@rt_concurrent_dict_create_level_cap_owned"
+            } else {
+                "@rt_concurrent_dict_create_level_cap"
+            };
             return match arity {
                 None => format!(
                     "define void @{mangled}(ptr %self) {{\n\
                      entry:\n\
-                     \x20 %handle = call ptr @rt_concurrent_dict_create(ptr {hash_fn}, ptr {eq_fn}, i32 31)\n\
+                     \x20 %handle = call ptr {fn_plain}(ptr {hash_fn}, ptr {eq_fn}, i32 31)\n\
                      \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                      \x20 store ptr %handle, ptr %hp\n\
                      \x20 ret void\n\
@@ -1101,7 +1141,7 @@ impl<'a> FnEmitter<'a> {
                 Some(1) => format!(
                     "define void @{mangled}(ptr %self, i32 %concurrencyLevel) {{\n\
                      entry:\n\
-                     \x20 %handle = call ptr @rt_concurrent_dict_create_level(ptr {hash_fn}, ptr {eq_fn}, i32 %concurrencyLevel)\n\
+                     \x20 %handle = call ptr {fn_level}(ptr {hash_fn}, ptr {eq_fn}, i32 %concurrencyLevel)\n\
                      \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                      \x20 store ptr %handle, ptr %hp\n\
                      \x20 ret void\n\
@@ -1110,7 +1150,7 @@ impl<'a> FnEmitter<'a> {
                 Some(2) => format!(
                     "define void @{mangled}(ptr %self, i32 %concurrencyLevel, i32 %capacity) {{\n\
                      entry:\n\
-                     \x20 %handle = call ptr @rt_concurrent_dict_create_level_cap(ptr {hash_fn}, ptr {eq_fn}, i32 %concurrencyLevel, i32 %capacity)\n\
+                     \x20 %handle = call ptr {fn_cap}(ptr {hash_fn}, ptr {eq_fn}, i32 %concurrencyLevel, i32 %capacity)\n\
                      \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                      \x20 store ptr %handle, ptr %hp\n\
                      \x20 ret void\n\
@@ -1119,7 +1159,7 @@ impl<'a> FnEmitter<'a> {
                 Some(_) => format!(
                     "define void @{mangled}(ptr %self) {{\n\
                      entry:\n\
-                     \x20 %handle = call ptr @rt_concurrent_dict_create(ptr {hash_fn}, ptr {eq_fn}, i32 31)\n\
+                     \x20 %handle = call ptr {fn_plain}(ptr {hash_fn}, ptr {eq_fn}, i32 31)\n\
                      \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                      \x20 store ptr %handle, ptr %hp\n\
                      \x20 ret void\n\
@@ -1164,6 +1204,8 @@ impl<'a> FnEmitter<'a> {
             "TryAdd" => {
                 let (key_ir, key_arg) = key_box("%key", "k");
                 let (val_ir, val_arg) = val_box("%value", "v");
+                // RFC 051 S3d：owned（类值）存储侧锁内 +1——本臂不再预 inc
+                //（dup-fail 不产生孤儿 +1；释放由 remove/覆盖/clear/destroy 配对）。
                 format!(
                     "define i1 @{mangled}(ptr %self, {k_ty} %key, {v_ty} %value) {{\n\
                      entry:\n\
@@ -1212,6 +1254,9 @@ impl<'a> FnEmitter<'a> {
                          }}\n"
                     )
                 } else {
+                    // RFC 051 S3d：借用 retain 由 runtime 在 stripe 锁内完成
+                    //（owned 读臂）——调用侧不再 inc（锁外 inc 与 remove/覆盖
+                    // 的锁内释放存在交错悬垂窗口，随 S3d 收敛）。
                     format!(
                         "define i1 @{mangled}(ptr %self, {k_ty} %key, ptr %out) {{\n\
                          entry:\n\
@@ -1231,11 +1276,7 @@ impl<'a> FnEmitter<'a> {
             "set_Item" => {
                 let (key_ir, key_arg) = key_box("%key", "k");
                 let (val_ir, val_arg) = val_box("%value", "v");
-                let retain = if list_elem_is_ref(&v_suf, self.layouts) {
-                    format!("  call void @rt_arc_inc(ptr {val_arg})\n")
-                } else {
-                    String::new()
-                };
+                // RFC 051 S3d：owned 存储侧锁内 +1（覆盖旧值由 runtime 配对释放）
                 format!(
                     "define void @{mangled}(ptr %self, {k_ty} %key, {v_ty} %value) {{\n\
                      entry:\n\
@@ -1243,7 +1284,6 @@ impl<'a> FnEmitter<'a> {
                      {val_ir}\
                      \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                      \x20 %handle = load ptr, ptr %hp\n\
-                     {retain}\
                      \x20 call void @rt_concurrent_dict_set(ptr %handle, ptr {key_arg}, ptr {val_arg})\n\
                      \x20 ret void\n\
                      }}\n"
@@ -1275,11 +1315,8 @@ impl<'a> FnEmitter<'a> {
                          }}\n"
                     )
                 } else {
-                    let retain = if list_elem_is_ref(&v_suf, self.layouts) {
-                        "  call void @rt_arc_inc(ptr %r)\n"
-                    } else {
-                        ""
-                    };
+                    // RFC 051 S3d：借用 retain 由 runtime 在 stripe 锁内完成
+                    //（owned 读臂）——调用侧不再 inc（见 TryGetValue 注释）。
                     format!(
                         "define {v_ty} @{mangled}(ptr %self, {k_ty} %key) {{\n\
                          entry:\n\
@@ -1287,7 +1324,6 @@ impl<'a> FnEmitter<'a> {
                          \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                          \x20 %handle = load ptr, ptr %hp\n\
                          \x20 %r = call ptr @rt_concurrent_dict_get_or_default(ptr %handle, ptr {key_arg})\n\
-                         {retain}\
                          \x20 ret {v_ty} %r\n\
                          }}\n"
                     )
@@ -1487,7 +1523,7 @@ impl<'a> FnEmitter<'a> {
         let elem_suf = parse_list_elem(class_name).unwrap_or("int");
         let elem_ty = list_elem_llvm_ty(elem_suf, self.layouts);
         let elem_size = list_elem_size(elem_suf, self.layouts);
-        let eq_fn = match list_eq_fn(elem_suf) {
+        let eq_fn = match list_eq_fn(elem_suf, self.layouts) {
             Some(f) => format!("ptr {f}"),
             None => "ptr null".to_string(),
         };
@@ -2312,7 +2348,7 @@ impl<'a> FnEmitter<'a> {
         let elem_suf = parse_stack_elem(class_name).unwrap_or("int");
         let elem_ty = dict_kv_llvm_ty(elem_suf, self.layouts);
         let elem_size = list_elem_size(elem_suf, self.layouts);
-        let eq_fn = match list_eq_fn(elem_suf) {
+        let eq_fn = match list_eq_fn(elem_suf, self.layouts) {
             Some(f) => format!("ptr {f}"),
             None => "ptr null".to_string(),
         };
@@ -2566,10 +2602,19 @@ impl<'a> FnEmitter<'a> {
         let cmp_fn = dict_cmp_fn(&k_suf);
 
         if name.contains("__ctor") {
+            // RFC 051 S3c：值所有权字典（class/接口 V）用 rt_sorted_dict_create_owned
+            // ——存储侧自持 +1（set 覆盖/remove/clear/destroy 释放条目值）；标量/
+            // string 值沿用 rt_sorted_dict_create（无 ARC 维护）。与各读臂 inc
+            // 判定同源（list_elem_is_ref），保证每实例化创建/写入一致。
+            let create_fn = if list_elem_is_ref(&v_suf, self.layouts) {
+                "@rt_sorted_dict_create_owned"
+            } else {
+                "@rt_sorted_dict_create"
+            };
             return format!(
                 "define void @{mangled}(ptr %self) {{\n\
                  entry:\n\
-                 \x20 %handle = call ptr @rt_sorted_dict_create(ptr {cmp_fn})\n\
+                 \x20 %handle = call ptr {create_fn}(ptr {cmp_fn})\n\
                  \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                  \x20 store ptr %handle, ptr %hp\n\
                  \x20 ret void\n\
@@ -2630,6 +2675,13 @@ impl<'a> FnEmitter<'a> {
                          }}\n"
                     )
                 } else {
+                    // RFC 051 S3c：ref 值（class/接口）借用返回须 retain（调用方
+                    // 局部 epilogue dec 配对）——与 dict get_Item 同源。
+                    let retain = if list_elem_is_ref(&v_suf, self.layouts) {
+                        "  call void @rt_arc_inc(ptr %r)\n"
+                    } else {
+                        ""
+                    };
                     format!(
                         "define {v_ty} @{mangled}(ptr %self, {k_ty} %key) {{\n\
                          entry:\n\
@@ -2637,6 +2689,7 @@ impl<'a> FnEmitter<'a> {
                          \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                          \x20 %handle = load ptr, ptr %hp\n\
                          \x20 %r = call ptr @rt_sorted_dict_get(ptr %handle, ptr {key_arg})\n\
+                         {retain}\
                          \x20 ret {v_ty} %r\n\
                          }}\n"
                     )
@@ -2740,7 +2793,7 @@ impl<'a> FnEmitter<'a> {
         let elem_suf = parse_linked_list_elem(class_name).unwrap_or("int");
         let elem_ty = list_elem_llvm_ty(elem_suf, self.layouts);
         let elem_size = list_elem_size(elem_suf, self.layouts);
-        let eq_fn = match list_eq_fn(elem_suf) {
+        let eq_fn = match list_eq_fn(elem_suf, self.layouts) {
             Some(f) => format!("ptr {f}"),
             None => "ptr null".to_string(),
         };

@@ -372,7 +372,7 @@ impl<'a> FnEmitter<'a> {
         // for capacity overload, so handle both cases here like StringBuilder.
         if let Some(elem_suf) = parse_list_elem(class) {
             let elem_size = list_elem_size(elem_suf, self.layouts);
-            let eq_fn = match list_eq_fn(elem_suf) {
+            let eq_fn = match list_eq_fn(elem_suf, self.layouts) {
                 Some(f) => format!("ptr {f}"),
                 None => "ptr null".to_string(),
             };
@@ -1634,18 +1634,18 @@ impl<'a> FnEmitter<'a> {
     ) -> TyVal {
         let ret_ty = llvm_type_of(expected, self.layouts);
 
-        // Fat pointer: { ptr obj, ptr vtable }
-        // recv is a stack alloca holding { ptr, ptr }
+        // RFC 051 D2：接口值 = 堆 fat 盒指针（ARC 对象 32B：rc@0/weak@4/vt@8 +
+        // obj@16/itable@24）。recv 为盒指针；obj/itable 读 +16/+24。
         let obj_addr = self.fresh_temp();
         self.emit(&format!(
-            "{obj_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {recv}, i32 0, i32 0"
+            "{obj_addr} = getelementptr inbounds i8, ptr {recv}, i32 16"
         ));
         let obj = self.fresh_temp();
         self.emit(&format!("{obj} = load ptr, ptr {obj_addr}"));
 
         let vtbl_addr = self.fresh_temp();
         self.emit(&format!(
-            "{vtbl_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {recv}, i32 0, i32 1"
+            "{vtbl_addr} = getelementptr inbounds i8, ptr {recv}, i32 24"
         ));
         let vtbl = self.fresh_temp();
         self.emit(&format!("{vtbl} = load ptr, ptr {vtbl_addr}"));

@@ -170,11 +170,18 @@ typedef struct {
 
 static const void* const __arc_string_vtable[] = {
     &rt_typeinfo_string,   /* slot0: RtTypeInfo* for string（RFC 018 D5 布局） */
-    NULL,
+    NULL,                  /* slot1: 无 finalizer（header-only drop） */
+    NULL,                  /* slot2: 无字段 walker——非循环候选。缺位时收集器
+                            * 门 `vt && vt[2]` 越界读 rodata（随二进制布局翻
+                            * 转）→ 字符串盒误入候选队列被试删/误放 → UAF
+                            *（chord waterfall 家族 0xC0000005 布局翻转根因） */
 };
 
 void* rt_string_box(const char* s) {
-    ArcStringBox* b = (ArcStringBox*)malloc(sizeof(ArcStringBox));
+    // calloc（非 malloc）：ArcHeader 视图含 weakcount@4——arc_class_place(Object)=true
+    // 后 object 槽对盒做 rt_arc_dec 时读 weakcount 判「保留头等 Weak 观察」；malloc
+    // 垃圾字若非零 → 盒永不释放（泄漏）。零初始化 → weakcount=0 → 正常释放路径。
+    ArcStringBox* b = (ArcStringBox*)calloc(1, sizeof(ArcStringBox));
     if (!b) return NULL;
     atomic_init(&b->refcount, 1);
     b->vtable = __arc_string_vtable;
@@ -187,6 +194,43 @@ const char* rt_string_unbox(void* obj) {
     ArcStringBox* b = (ArcStringBox*)obj;
     if (b->vtable != __arc_string_vtable) return NULL;
     return b->str;
+}
+
+// =====================================================================
+// RFC 051 D2: interface fat box —— 接口值生命周期（设计见 docs/rfc/051）
+// =====================================================================
+// 堆 fat 盒 = 真 ARC 对象（string-box 先例 + ArcHeader 对齐）：
+//   { refcount@0, weakcount@4, vtable@8, obj@16, itable@24 }（32B）
+// 盒 rc = 接口值引用计数（槽位模板与类值同律）；盒死亡（rc 1→0）经 vt[1]
+// finalizer 释放盒对 obj 的引用——obj 无其它引用即归零释放。vt[2] = NULL：
+// 盒非循环候选（环由 obj 自身 walker 承载，盒只是视图）。
+typedef struct {
+    _Atomic int32_t refcount;
+    _Atomic int32_t weakcount;
+    const void* vtable;     /* = __arc_iface_box_vtable */
+    void*       obj;        /* @16 */
+    const void* itable;     /* @24 */
+} RtIfaceBox;
+
+static void rt_iface_box_release(void* p) {
+    RtIfaceBox* b = (RtIfaceBox*)p;
+    rt_arc_dec(b->obj);     /* 盒持 obj 一引用：盒灭 → 释放 */
+}
+
+static const void* const __arc_iface_box_vtable[] = {
+    &rt_typeinfo_object,    /* slot0: typeinfo 占位（防意外 rt_obj_isa 解引用） */
+    rt_iface_box_release,   /* slot1: finalizer */
+    NULL,                   /* slot2: 无字段 walker——非循环候选 */
+};
+
+void* rt_iface_box_create(void* obj, const void* itable) {
+    RtIfaceBox* b = (RtIfaceBox*)calloc(1, sizeof(RtIfaceBox));
+    if (!b) return NULL;
+    atomic_init(&b->refcount, 1);
+    b->vtable = __arc_iface_box_vtable;
+    b->obj = obj;
+    b->itable = itable;
+    return b;
 }
 
 // =====================================================================

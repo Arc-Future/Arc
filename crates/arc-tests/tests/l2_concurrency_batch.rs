@@ -88,6 +88,71 @@ void Main() {
 "#,
             ),
             (
+                // RFC 051 S3c：Monitor 重入记账回归（rt_monitor owner/depth）。
+                // POSIX 路径此前嵌套 lock 自死锁（Windows CS 原生可重入）——
+                // 本 case 在非重入实现下必然死锁 → watchdog 杀批 → FAIL，
+                // 是重入语义的直接判别器。
+                "lock_reentrant",
+                r#"using Arc;
+using Arc.Threading;
+
+class Box {
+    public int V;
+    public Box(int v) { this.V = v; }
+}
+
+int ReenterLevels(Lock l, int level) {
+    int total = 1;
+    lock (l) {
+        if (level > 0) {
+            total = total + ReenterLevels(l, level - 1);
+        }
+    }
+    return total;
+}
+
+void Main() {
+    Lock l = new Lock();
+    int x = 0;
+    lock (l) {
+        lock (l) {
+            x = 1;
+        }
+        x = x + 10;
+        if (!Monitor.TryEnter(l)) {
+            Console.WriteLine("ARC_CASE:lock_reentrant:FAIL:try-enter-under-reentry");
+            return;
+        }
+        Monitor.Exit(l);
+        x = x + 100;
+        Box bg = new Box(0);
+        Thread t = new Thread(() => {
+            lock (l) {
+                bg.V = 99;
+            }
+        });
+        t.Start();
+        Thread.Sleep(80);
+        if (bg.V == 99) {
+            Console.WriteLine("ARC_CASE:lock_reentrant:FAIL:bg-not-blocked-while-held");
+            return;
+        }
+    }
+    t.Join();
+    if (x != 111 || bg.V != 99) {
+        Console.WriteLine("ARC_CASE:lock_reentrant:FAIL:x=" + x + " bg=" + bg.V);
+        return;
+    }
+    int levels = ReenterLevels(l, 4);
+    if (levels != 5) {
+        Console.WriteLine("ARC_CASE:lock_reentrant:FAIL:levels=" + levels);
+        return;
+    }
+    Console.WriteLine("ARC_CASE:lock_reentrant:PASS");
+}
+"#,
+            ),
+            (
                 "concurrent_eh",
                 r#"using Arc;
 using Arc.Collections.Concurrent;

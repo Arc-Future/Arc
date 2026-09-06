@@ -172,7 +172,7 @@ impl BorrowChecker {
                 let _ = self.check_expr(&expr.node, false);
                 self.check_block(body);
             }
-            // RFC 004 M2/M7锛氬０鏄庣洰鏍囪繘 bindings锛堝惈宓屽锛夛紱寮冨厓涓嶇粦瀹氾紱鏍￠獙鍙冲€笺€?
+            // RFC 004 M2/M7：声明目标进 bindings（含嵌套）；弃元不绑定；校验右值。
             Stmt::DeconstructAssign {
                 declare,
                 targets,

@@ -13,6 +13,13 @@
 //
 // hash 编码：0=空，1=墓碑，≥2=占用（缓存 hash）。
 // 负载因子超过 0.75 时 2× 扩容（int_keys 4×）。容量 2 的幂（位掩码）。
+//
+// RFC 051 S3b：值所有权两档——
+//   rt_dict_create（legacy）：runtime 不维护值 ARC（标量 inttoptr / string char*）；
+//   rt_dict_create_owned：值必须是 ArcHeader 对象（class / 接口 fat 盒）。插入时
+//     存储侧 rt_arc_inc；set 覆盖旧值、remove、clear、destroy 时对被移除条目值
+//     rt_arc_dec（空值安全；先清槽再 dec，防 finalizer 重入读到半死槽）。
+//     旧版 create 的 blob 释放语义不变（destroy 只 free 表）。
 
 #include "rt_abi.h"
 #include <stdlib.h>
@@ -38,6 +45,9 @@ typedef struct RtDict {
     rt_hash_fn hash;
     rt_eq_fn eq;
     int32_t int_keys;       /* 0=gen, 1=int32, 2=int64 key column */
+    int32_t owned;          /* RFC 051 S3b: 1=值所有权字典（rt_dict_create_owned）——
+                               set 覆盖/remove/clear/destroy 释放条目值（rt_arc_dec）；
+                               0=legacy（标量/string 值，不维护 ARC） */
 } RtDict;
 
 uint32_t rt_hash_str(void* key) {
@@ -297,11 +307,12 @@ static void rt_dict_grow_if_needed(RtDict* d) {
     rt_dict_rehash(d, new_cap);
 }
 
-void* rt_dict_create(rt_hash_fn hash, rt_eq_fn eq) {
+static void* rt_dict_create_impl(rt_hash_fn hash, rt_eq_fn eq, int32_t owned) {
     RtDict* d = (RtDict*)calloc(1, sizeof(RtDict));
     if (!d) return NULL;
     d->hash = hash;
     d->eq = eq;
+    d->owned = owned;
     d->int_keys = (hash == rt_hash_int && eq == rt_eq_int) ? 1
                 : (hash == rt_hash_long && eq == rt_eq_int) ? 2 : 0;
     {
@@ -314,6 +325,14 @@ void* rt_dict_create(rt_hash_fn hash, rt_eq_fn eq) {
     d->size = 0;
     d->tombstones = 0;
     return d;
+}
+
+void* rt_dict_create(rt_hash_fn hash, rt_eq_fn eq) {
+    return rt_dict_create_impl(hash, eq, 0);
+}
+
+void* rt_dict_create_owned(rt_hash_fn hash, rt_eq_fn eq) {
+    return rt_dict_create_impl(hash, eq, 1);
 }
 
 void rt_dict_ensure_capacity(void* dict, int32_t capacity) {
@@ -335,17 +354,34 @@ void rt_dict_set(void* dict, void* key, void* value) {
     uint32_t tagged = rt_dict_tag_hash(rt_dict_raw_hash(d, key));
     int32_t idx = rt_dict_probe(d, key, tagged);
     if (idx >= 0) {
-        d->values[idx] = value;
+        /* RFC 051 S3b：覆盖既有条目——owned 时新值先 inc（new==old 自覆盖
+         * 净零）、槽位先写新值、旧值后 dec（旧值 finalizer 重入读到新值）。 */
+        if (d->owned) {
+            rt_arc_inc(value);
+            void* old = d->values[idx];
+            d->values[idx] = value;
+            rt_arc_dec(old);
+        } else {
+            d->values[idx] = value;
+        }
         return;
     }
     if (rt_dict_should_resize(d)) {
         rt_dict_grow_if_needed(d);
         idx = rt_dict_probe(d, key, tagged);
         if (idx >= 0) {
-            d->values[idx] = value;
+            if (d->owned) {
+                rt_arc_inc(value);
+                void* old = d->values[idx];
+                d->values[idx] = value;
+                rt_arc_dec(old);
+            } else {
+                d->values[idx] = value;
+            }
             return;
         }
     }
+    if (d->owned) rt_arc_inc(value); /* 存储侧自持 +1（codegen 不再预 inc） */
     rt_dict_insert_at(d, -idx - 1, key, value, tagged);
 }
 
@@ -354,12 +390,13 @@ int32_t rt_dict_try_add(void* dict, void* key, void* value) {
     RtDict* d = (RtDict*)dict;
     uint32_t tagged = rt_dict_tag_hash(rt_dict_raw_hash(d, key));
     int32_t idx = rt_dict_probe(d, key, tagged);
-    if (idx >= 0) return 0;
+    if (idx >= 0) return 0; /* 重复键不存储：owned 亦不 inc（无孤儿 +1） */
     if (rt_dict_should_resize(d)) {
         rt_dict_grow_if_needed(d);
         idx = rt_dict_probe(d, key, tagged);
         if (idx >= 0) return 0;
     }
+    if (d->owned) rt_arc_inc(value);
     rt_dict_insert_at(d, -idx - 1, key, value, tagged);
     return 1;
 }
@@ -420,6 +457,7 @@ int32_t rt_dict_remove(void* dict, void* key) {
     uint32_t tagged = rt_dict_tag_hash(rt_dict_raw_hash(d, key));
     int32_t idx = rt_dict_probe(d, key, tagged);
     if (idx < 0) return 0;
+    void* removed = d->values[idx];
     d->hashes[idx] = RT_DICT_HASH_TOMB;
     if (d->int_keys == 1) {
         ((int32_t*)d->keys)[idx] = 0;
@@ -428,15 +466,25 @@ int32_t rt_dict_remove(void* dict, void* key) {
     } else {
         ((void**)d->keys)[idx] = NULL;
     }
-    d->values[idx] = NULL;
+    d->values[idx] = NULL; /* 先清槽再 dec：值 finalizer 重入不读半死槽 */
     d->size--;
     d->tombstones++;
+    if (d->owned) rt_arc_dec(removed); /* RFC 051 S3b：释放被移除条目值 */
     return 1;
 }
 
 void rt_dict_clear(void* dict) {
     if (!dict) return;
     RtDict* d = (RtDict*)dict;
+    if (d->owned) {
+        /* RFC 051 S3b：owned 清空须释放每个活条目值（先清槽再 dec）。 */
+        for (int32_t i = 0; i < d->capacity; i++) {
+            if (d->hashes[i] < 2u) continue;
+            void* v = d->values[i];
+            d->values[i] = NULL;
+            rt_arc_dec(v);
+        }
+    }
     memset(d->hashes, 0, (size_t)d->capacity * sizeof(uint32_t));
     memset(d->keys, 0, rt_dict_key_bytes(d, d->capacity));
     memset(d->values, 0, rt_dict_val_bytes(d->capacity));
@@ -447,6 +495,14 @@ void rt_dict_clear(void* dict) {
 void rt_dict_destroy(void* dict) {
     if (!dict) return;
     RtDict* d = (RtDict*)dict;
+    if (d->owned) {
+        for (int32_t i = 0; i < d->capacity; i++) {
+            if (d->hashes[i] < 2u) continue;
+            void* v = d->values[i];
+            d->values[i] = NULL;
+            rt_arc_dec(v);
+        }
+    }
     rt_dict_free_tables(d->hashes, d->keys, d->values);
     free(d);
 }

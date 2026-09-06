@@ -1,19 +1,19 @@
-// RFC 029 M6锛欱itmap 缁樺埗鍥惧厓鈥斺€擠rawFillRect / DrawLine / DrawText锛坧artial 鎵╁睍锛夈€?
+// RFC 029 M6：Bitmap 绘制图元——DrawFillRect / DrawLine / DrawText（partial 扩展）。
 //
-// 璁捐锛堝榻?RFC 029 搂1.4 鈶?+ 搂3 M6锛夛細
-//   - `public partial class Bitmap` 鎵╁睍锛氬～鍏呯煩褰?/ Bresenham 绾挎 / 鏂囨湰鍏夋爡鍖栥€?
-//   - DrawText 閫?UTF-8 鐮佺偣锛堥瀛楄妭鍖洪棿鍒嗙被 + 涔樺姞缁勫悎锛?*绂佷綅杩愮畻**鈥斺€?
-//     Arc 琛ㄨ揪寮忔枃娉曞皻鏈?parse BitAnd/绉讳綅锛涗笌 rt_font.c 鐨?UTF-8 瑙ｇ爜璇箟涓€鑷达級锛?
-//     姣忕爜鐐规杩?= MeasureTextWidth(璇ュ簭鍒?銆?
-//   - DrawGlyph锛歯ull 鏌ヨ瀛楀舰鍖呭洿鐩?鈫?List<byte>+ToArray 棰勫垎閰?alpha 缂撳啿
-//     锛?*绂?`new T[expr]` 鍔ㄦ€佸昂瀵?*锛夆啋 濉厖 鈫?alpha 娣峰悎鍐欏叆鐩爣鍍忕礌銆?
+// 设计（对齐 RFC 029 §1.4 ④ + §3 M6）：
+//   - `public partial class Bitmap` 扩展：填充矩形 / Bresenham 线段 / 文本光栅化。
+//   - DrawText 逐 UTF-8 码点（首字节区间分类 + 乘加组合，**禁位运算**——
+//     Arc 表达式文法尚未 parse BitAnd/移位；与 rt_font.c 的 UTF-8 解码语义一致），
+//     每码点步进 = MeasureTextWidth(该序列)。
+//   - DrawGlyph：null 查询字形包围盒 → List<byte>+ToArray 预分配 alpha 缓冲
+//     （**禁 `new T[expr]` 动态尺寸**）→ 填充 → alpha 混合写入目标像素。
 
 namespace Arc.Drawing;
 
 using Arc.Collections;
 
 public partial class Bitmap {
-    /// <summary>濉厖鐭╁舰 [x, x+w) 脳 [y, y+h)锛岃秴鐣屽儚绱犲拷鐣ャ€?/summary>
+    /// <summary>填充矩形 [x, x+w) × [y, y+h)，超界像素忽略。</summary>
     public void DrawFillRect(int x, int y, int w, int h, RgbColor color) {
         if (w <= 0 || h <= 0) {
             return;
@@ -33,7 +33,7 @@ public partial class Bitmap {
         }
     }
 
-    /// <summary>Bresenham 绾挎 (x1,y1)鈫?x2,y2)锛岃秴鐣屽儚绱犲拷鐣ャ€?/summary>
+    /// <summary>Bresenham 线段 (x1,y1)→(x2,y2)，超界像素忽略。</summary>
     public void DrawLine(int x1, int y1, int x2, int y2, RgbColor color) {
         int dx = x2 - x1;
         int dy = y2 - y1;
@@ -67,7 +67,7 @@ public partial class Bitmap {
         }
     }
 
-    /// <summary>鎸?UTF-8 鐮佺偣搴忓垪缁樺埗鏂囨湰锛岃捣濮?(x, y) 涓哄熀绾垮乏渚ч《鐐广€?/summary>
+    /// <summary>按 UTF-8 码点序列绘制文本，起始 (x, y) 为基线左侧顶点。</summary>
     public void DrawText(Font font, string text, int x, int y, RgbColor color) {
         if (font == null || text == null) {
             return;
@@ -116,7 +116,7 @@ public partial class Bitmap {
         }
     }
 
-    /// <summary>缁樺埗鍗曚釜瀛楀舰锛坅lpha 娣峰悎锛夈€傚瓧褰㈢己澶?/ 鍖呭洿鐩掍负绌烘椂闈欓粯璺宠繃銆?/summary>
+    /// <summary>绘制单个字形（alpha 混合）。字形缺失 / 包围盒为空时静默跳过。</summary>
     private void DrawGlyph(Font font, int codepoint, int x, int y, RgbColor color) {
         int w = 0;
         int h = 0;

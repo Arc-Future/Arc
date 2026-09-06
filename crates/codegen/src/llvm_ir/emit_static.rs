@@ -1442,7 +1442,7 @@ impl<'a> ModuleEmitter<'a> {
         if arity == 0 && obj_init.is_none() {
             if let Some(elem_suf) = crate::llvm_ir::types::parse_list_elem(&type_name) {
                 let elem_size = crate::llvm_ir::types::list_elem_size(elem_suf, self.layouts);
-                let eq_fn = crate::llvm_ir::types::list_eq_fn(elem_suf)
+                let eq_fn = crate::llvm_ir::types::list_eq_fn(elem_suf, self.layouts)
                     .map(|f| format!("ptr {f}"))
                     .unwrap_or_else(|| "ptr null".to_string());
                 let arc_inc = crate::llvm_ir::types::list_arc_inc_fn(elem_suf, self.layouts)

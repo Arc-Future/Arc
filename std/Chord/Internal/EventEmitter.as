@@ -17,10 +17,11 @@ internal class EventEmitter {
 
     /// <summary>订阅事件；返回退订句柄（惰性移除：置 dead，Emit 尾部紧凑）。</summary>
     internal IDisposable Add(string name, Action<object?> listener, bool prepend, bool once) {
-        List<ListenerEntry> list = new List<ListenerEntry>();
-        if (_listeners.ContainsKey(name)) {
-            list = _listeners[name];
-        } else {
+        // TryGetValue 单次哈希查找（Dictionary 文档：零 ContainsKey+Get 双重查找）；
+        // 旧实现先 `new List()` 再按分支覆盖——每次 Add 都产生一次即刻释放的死分配
+        //（ARC_DBG_UAF 取证：Add 内 dec-to-zero 的 List_ListenerEntry 即此物）。
+        List<ListenerEntry> list = null;
+        if (!_listeners.TryGetValue(name, out list)) {
             list = new List<ListenerEntry>();
             _listeners.Add(name, list);
         }

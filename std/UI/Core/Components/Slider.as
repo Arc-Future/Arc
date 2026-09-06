@@ -146,7 +146,7 @@ public class Slider : InputElement {
     // ValueChanged 是值变更事件处理器名（指向 .arml.as partial class 中的方法）。
     // 事件路由系统（Signal 路由 vs Command 模式）由后续独立 RFC 处理。
 
-    /// <summary>鍊煎彉鏇翠簨浠跺鐞嗗櫒鍚嶏紙.arml.as partial class 涓殑鏂规硶鍚嶏級銆</summary>
+    /// <summary>值变更事件处理器名（.arml.as partial class 中的方法名）。</summary>
     /// <summary>值变更事件处理器名（.arml.as partial class 中的方法名）。
     /// RFC 037 §5.3 起事件通道由 <c>Signal&lt;double&gt; ValueChanged</c> 承载，
     /// 本 string 占位字段更名 ValueChangedHandler 让出事件名——ARML typeck 未注册

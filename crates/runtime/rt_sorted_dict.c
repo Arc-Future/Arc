@@ -6,7 +6,11 @@
 // 设计契约：
 //   - 比较函数 cmp_fn 返回 int32_t： <0 表示 a<b，0 表示相等，>0 表示 a>b。
 //     标量键以指针位装箱（inttoptr；rt_cmp_int 比较 intptr），string 用 rt_cmp_str。
-//   - 节点内存由 runtime 拥有；key/value 通过 void* 传递，runtime 不维护 ARC。
+//   - 节点内存由 runtime 拥有；key/value 通过 void* 传递，legacy 变体不维护 ARC。
+//     值所有权变体 `rt_sorted_dict_create_owned`（RFC 051 S3c）：值须为
+//     ArcHeader 对象（class / 接口 fat 盒）——插入/覆盖存储侧 +1；覆盖旧值 /
+//     remove / clear / destroy 释放被移除条目值（rt_arc_dec）；try/Add 重复键
+//     失败不存储也不 inc。标量 / string 值字典必须用 legacy create（语义同旧版）。
 //   - 红黑树不变量同 CLRS 第 13 章；sentinel NIL 简化边界处理。
 //
 // Stable 公开面（SortedDictionary.as + sorted_dictionary_e2e）：
@@ -34,6 +38,12 @@ typedef struct RtSortedDict {
     RtSdNode*  nil;            /* 哨兵 NIL，所有叶子指向它 */
     int32_t    size;
     rt_cmp_fn  cmp;
+    int32_t    owned;          /* RFC 051 S3c：值所有权（rt_sorted_dict_create_owned）
+                                  ——插入/覆盖存储侧 +1；覆盖旧值/remove/clear/destroy
+                                  释放被移除条目值（rt_arc_dec）。标量/string 值字典
+                                  必须用 rt_sorted_dict_create（无 ARC 维护）。 */
+    int32_t    clearing;       /* 树遍历释放中：值 finalizer 重入 clear/destroy 时
+                                  no-op（防遍历中节点被嵌套释放） */
 } RtSortedDict;
 
 /* ---- 内部辅助 ---- */
@@ -50,11 +60,21 @@ static RtSdNode* rt_sd_new_node(RtSortedDict* d, void* key, void* value) {
     return n;
 }
 
-static void rt_sd_free_subtree(RtSortedDict* d, RtSdNode* n) {
+static void rt_sd_free_subtree_inner(RtSortedDict* d, RtSdNode* n) {
     if (n == d->nil) return;
-    rt_sd_free_subtree(d, n->left);
-    rt_sd_free_subtree(d, n->right);
+    rt_sd_free_subtree_inner(d, n->left);
+    rt_sd_free_subtree_inner(d, n->right);
+    /* RFC 051 S3c：owned 树清空/销毁前释放条目值（值 finalizer 重入经
+     * clearing 守卫 no-op，遍历中的节点内存保持完整直至各自 free）。 */
+    if (d->owned) rt_arc_dec(n->value);
     free(n);
+}
+
+static void rt_sd_free_subtree(RtSortedDict* d, RtSdNode* n) {
+    if (d->clearing) return; /* 嵌套释放（值 finalizer 重入）no-op */
+    d->clearing = 1;
+    rt_sd_free_subtree_inner(d, n);
+    d->clearing = 0;
 }
 
 /* 中序遍历收集 key/value 到数组 */
@@ -218,7 +238,7 @@ static void rt_sd_transplant(RtSortedDict* d, RtSdNode* u, RtSdNode* v) {
 
 /* ---- 公共 ABI ---- */
 
-void* rt_sorted_dict_create(rt_cmp_fn cmp) {
+static void* rt_sorted_dict_create_impl(rt_cmp_fn cmp, int32_t owned) {
     RtSortedDict* d = (RtSortedDict*)calloc(1, sizeof(RtSortedDict));
     if (!d) rt_panic("oom");
     d->nil = (RtSdNode*)calloc(1, sizeof(RtSdNode));
@@ -235,7 +255,18 @@ void* rt_sorted_dict_create(rt_cmp_fn cmp) {
     d->root        = d->nil;
     d->size        = 0;
     d->cmp         = cmp;
+    d->owned       = owned;
     return d;
+}
+
+void* rt_sorted_dict_create(rt_cmp_fn cmp) {
+    return rt_sorted_dict_create_impl(cmp, 0);
+}
+
+/* RFC 051 S3c：值所有权变体——值须为 ArcHeader 对象（class / 接口 fat 盒）；
+ * 存储侧自持 +1（见文件头注释）。 */
+void* rt_sorted_dict_create_owned(rt_cmp_fn cmp) {
+    return rt_sorted_dict_create_impl(cmp, 1);
 }
 
 void rt_sorted_dict_destroy(void* handle) {
@@ -282,7 +313,9 @@ int32_t rt_sorted_dict_try_get(void* handle, void* key, void** out_value) {
 }
 
 /* 内部插入：返回新节点指针与是否新增。
- * is_overwrite=1 时覆盖已有 value，不增加 size。 */
+ * is_overwrite=1 时覆盖已有 value，不增加 size。
+ * RFC 051 S3c：owned 时存储侧 inc（新节点 / 覆盖新值先 inc）、覆盖旧值后 dec
+ *（槽先写新值再释放旧值——旧值 finalizer 重入读到新值）。 */
 static RtSdNode* rt_sd_insert(RtSortedDict* d, void* key, void* value, int32_t overwrite) {
     RtSdNode* y = d->nil;
     RtSdNode* x = d->root;
@@ -291,11 +324,21 @@ static RtSdNode* rt_sd_insert(RtSortedDict* d, void* key, void* value, int32_t o
         y = x;
         c = d->cmp(key, x->key);
         if (c == 0) {
-            if (overwrite) x->value = value;
+            if (overwrite) {
+                if (d->owned) {
+                    rt_arc_inc(value);
+                    void* old = x->value;
+                    x->value = value;
+                    rt_arc_dec(old);
+                } else {
+                    x->value = value;
+                }
+            }
             return x;
         }
         x = c < 0 ? x->left : x->right;
     }
+    if (d->owned) rt_arc_inc(value);
     RtSdNode* z = rt_sd_new_node(d, key, value);
     z->parent = y;
     if (y == d->nil)       d->root = z;
@@ -324,6 +367,7 @@ int32_t rt_sorted_dict_remove(void* handle, void* key) {
     RtSortedDict* d = (RtSortedDict*)handle;
     RtSdNode* z = rt_sd_search(d, key);
     if (!z) return 0;
+    void* removed = z->value; /* RFC 051 S3c：owned 移除后释放条目值 */
 
     RtSdNode* y = z;
     RtSdNode* x;
@@ -355,6 +399,8 @@ int32_t rt_sorted_dict_remove(void* handle, void* key) {
     /* 修复 nil->parent 防止悬挂指针 */
     d->nil->parent = d->nil;
     d->size--;
+    /* 树已一致（z 摘除、size 已减）后释放值——finalizer 重入对一致树操作安全 */
+    if (d->owned) rt_arc_dec(removed);
     return 1;
 }
 

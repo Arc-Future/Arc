@@ -60,7 +60,8 @@ void rt_env_init(int argc, char** argv) {
 
 #ifdef _WIN32
 static LONG WINAPI rt_env_crash_probe_veh(EXCEPTION_POINTERS* ep) {
-    static const DWORD hard[] = { 0xC0000005, 0xC000001D, 0xC0000094, 0xC00000FD, 0xC0000409 };
+    static const DWORD hard[] = { 0xC0000005, 0xC000001D, 0xC0000094, 0xC00000FD, 0xC0000409,
+                                  0xC0000374 /* STATUS_HEAP_CORRUPTION：堆损坏取证 */ };
     DWORD code = ep->ExceptionRecord->ExceptionCode;
     int hard_hit = 0;
     for (int i = 0; i < (int)(sizeof(hard) / sizeof(hard[0])); i++) {

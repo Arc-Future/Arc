@@ -163,7 +163,7 @@ public class FrameworkElement : Element {
         set { this.SetValue<object>(StyleProperty, value); }
     }
 
-    /// <summary>鏈湴璧勬簮瀛楀吀銆</summary>
+    /// <summary>本地资源字典。</summary>
     public object Resources {
         get { return this.GetValue<object>(ResourcesProperty); }
         set { this.SetValue<object>(ResourcesProperty, value); }

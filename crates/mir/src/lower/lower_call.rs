@@ -17,6 +17,33 @@ pub(super) fn try_lower_delegate_invoke(
     if !is_delegate_type(&callee_ty) {
         return None;
     }
+    // 嵌套委托 mangle 名（`Named("Func_object_Func_object_object_object")` 类）
+    // 归一为结构性 `TypeId::Func`：codegen `delegate_ret_type` 对嵌套 mangle
+    // 弃权 → IndirectCall 回落 i32 → handler 返回指针被截断（Waterfall idx36：
+    // RunAt `call i32 %fn` + `inttoptr` 取证）。委托调用的形参元数 = 实参数，
+    // arity 感知 demangle（与形参解析同源）在此给出精确结构。
+    //
+    // **仅嵌套名归一**：简单委托名保持 Named 走既有 codegen 简单尾段拆分。
+    //（2026-09-05 全量结构性化曾在缺 string→object 转换时引入内容空串回归；
+    // concat 拆盒 + 委托实参装箱落地后与窄化版组合复测——见 CHANGELOG。）
+    let callee_ty = match &callee_ty {
+        TypeId::Named(n) => {
+            let name = n.as_str();
+            let is_nested = name
+                .find('_')
+                .and_then(|i| name.get(i + 1..))
+                .is_some_and(|rest| rest.contains("Func_") || rest.contains("Action_"));
+            if (name.starts_with("Func_") || name.starts_with("Action_")) && is_nested {
+                typeck::demangle_func_type_with(name, args.len(), &|s| {
+                    ctx.registry.types.contains_key(s)
+                })
+                .unwrap_or(callee_ty)
+            } else {
+                callee_ty
+            }
+        }
+        _ => callee_ty,
+    };
     // 委托返回类型：结果临时须按真实返回类型建（否则 Void 本地 → codegen 以
     // i32 存储，`_disposer = _callback()` 的 IDisposable 指针被 ptrtoint 截断
     // x64 高位 → 0xC0000005，chord Provide/Revert 链路实测）。
@@ -43,11 +70,37 @@ pub(super) fn try_lower_delegate_invoke(
             id
         }
     };
-    let mut call_args = Vec::with_capacity(args.len());
+    let mut call_args: Vec<MirOperand> = Vec::with_capacity(args.len());
     for (i, a) in args.iter().enumerate() {
-        let (mut p, op) = lower_arg_operand(builder, &a.node, ctx);
+        // λ 实参按「实参位自身的委托形参类型」传期望（形参类型、返回契约）——
+        // 缺省时 λ 未标注形参落 TypeId::Int 回退 → 对象指针被 i32 化截断
+        //（RunAt `next = (p) => ...` 的 p 被 `load i32 + inttoptr` → payload
+        // 垃圾指针 → 下游字符串操作 0xC0000005，chord Waterfall idx36 家族）。
+        let expected: (Option<Vec<TypeId>>, Option<TypeId>) = match &a.node {
+            Expr::Lambda(l) => params
+                .as_ref()
+                .and_then(|ps| ps.get(i))
+                .map(|pt| {
+                    delegate_expected_for_lambda(pt, l.params.len(), &|s| {
+                        ctx.registry.types.contains_key(s)
+                    })
+                })
+                .unwrap_or((None, None)),
+            _ => (None, None),
+        };
+        let (mut p, op) = lower_arg_operand_with_expected(
+            builder,
+            &a.node,
+            ctx,
+            expected.0.as_deref(),
+            expected.1.as_ref(),
+        );
         prep.append(&mut p);
         let op = if let Some(pt) = params.as_ref().and_then(|ps| ps.get(i)) {
+            // 委托实参的 string→object 装箱（idx36 家族）：object/object? 形参
+            // 槽位按 typed 约定收 ArcBox；raw 串直入后链尾拆箱读盒头 → 崩溃/
+            // 空串。与 typed 方法调用实参环（maybe_box_string_to_object）对齐。
+            let op = box_string_arg_for_delegate_param(builder, a, op, pt, ctx, &mut prep);
             let arg_ty = type_name_from_operand(&op, &a.node, ctx);
             maybe_box_iface(op, &arg_ty, pt, ctx)
         } else {
@@ -63,6 +116,31 @@ pub(super) fn try_lower_delegate_invoke(
         },
         ret_ty,
     ))
+}
+
+/// 委托实参位的 string→object 装箱（idx36 家族）。
+///
+/// 实参位形参类型为 `Object`/`Object?` 时，string 实参须经 `MirRvalue::Box`
+/// 入槽（typed 约定：object 槽持 ArcBox；raw 串直入 → 链尾拆箱读盒头 →
+/// 0xC0000005 / 空串内容）。复用 [`maybe_box_string_to_object`] 的 null 保留
+/// 与不重复装箱语义；非 object 形参位（string/接口等）原样透传。
+fn box_string_arg_for_delegate_param(
+    builder: &mut MirBuilder,
+    arg: &Spanned<Expr>,
+    op: MirOperand,
+    param_ty: &TypeId,
+    ctx: &mut LowerCtx,
+    prep: &mut Vec<MirStatement>,
+) -> MirOperand {
+    let is_object = |ty: &TypeId| {
+        matches!(ty, TypeId::Object) || matches!(ty, TypeId::Named(n) if n.as_str() == "object")
+    };
+    let pt: Option<&str> = match param_ty {
+        ty if is_object(ty) => Some("object"),
+        TypeId::Nullable { inner } if is_object(inner.as_ref()) => Some("object?"),
+        _ => None,
+    };
+    maybe_box_string_to_object(builder, arg, op, pt, ctx, prep)
 }
 
 /// string.Split 重载分派名（供 codegen）：
@@ -709,6 +787,51 @@ pub(super) fn maybe_box_string_to_object(
     MirOperand::Local(tmp)
 }
 
+/// 接口→object 实参拆盒（idx25 家族，typed/非泛型路径）。
+///
+/// 接口值 = `{obj, itable}` 16B fat 盒；`object`/`object?` 形参须收到**底层
+/// 对象指针**（obj 半，零分配）。缺拆盒时盒被当对象存入 object 槽——槽位
+/// ARC inc/dec（选项 A：`arc_class_place(Object)=true`）把盒内存当 refcount
+/// 原子写 → obj 半损坏 → 后续接口分派 0xC0000005（chord corpus idx25
+/// `Contribute_RegistryRoutesAndAutoReverts` VEH 取证；与 string→object 装箱
+/// 6d44d87e 同族的表示转换缺口）。codegen `UnboxIface` 为 null 安全 phi——
+/// null 接口值拆盒产出 null（接口 null = null 盒指针，槽语义与类一致）。
+///
+/// 泛型模板体 lowering 期 T 未知（`Named("T")` 非接口）不在此转换——由
+/// mono 克隆修复 `repair_clone_iface_arg_shapes`（lower.rs）按替换后的具体
+/// 局部类型补位。已带 UnboxIface/Box 节点或静态类型非接口时不重复。
+pub(super) fn maybe_unbox_iface_to_object(
+    arg: &Spanned<Expr>,
+    op: MirOperand,
+    param_ty: Option<&str>,
+    ctx: &LowerCtx,
+) -> MirOperand {
+    let Some(pt) = param_ty else {
+        return op;
+    };
+    if pt != "object" && pt != "object?" {
+        return op;
+    }
+    if matches!(op, MirOperand::UnboxIface { .. } | MirOperand::Iface { .. }) {
+        return op;
+    }
+    let ty = infer_type_from_spanned(arg, ctx);
+    let ty = match ty {
+        TypeId::Nullable { inner } => *inner,
+        other => other,
+    };
+    let TypeId::Named(iface) = ty else {
+        return op;
+    };
+    if !ctx.registry.is_interface(&iface) {
+        return op;
+    }
+    MirOperand::UnboxIface {
+        object: Box::new(op),
+        class: iface.to_string(),
+    }
+}
+
 /// 泛型方法实例化（`g.M<int>(…)`）调用目标的符号基底。
 ///
 /// 与静态路径 `user_type_static_method_sig` 一致：基底必须取**模板** link 名
@@ -794,6 +917,61 @@ fn base_call_target(
     (Some(impl_class.to_string()), Some(target))
 }
 
+/// 委托形参的返回契约（λ 实参 fn_ret 定型的单一来源）。
+///
+/// 按 λ 参数个数做 **arity 感知** demangle 取 ret（`demangle_func_type_with`
+/// 与形参 demangle 同一事实源）。`delegate_return_type` 无 arity 提示——
+/// 嵌套委托 mangle（`Func_object_Func_object_object_object` 类）回溯歧义，
+/// 可能返回**整个委托类型**而非 ret；λ fn_ret 按之定型 → 函数体按委托型
+/// 返回、调用方按 object 契约读 → ABI 错位（chord Waterfall idx36 家族：
+/// h1/h2 `ptrtoint ... to i32` + `ret i32`，x64 高位截断垃圾指针取证）。
+fn delegate_contract_ret(
+    param_ty: &Ident,
+    lambda_arity: usize,
+    is_known: &dyn Fn(&str) -> bool,
+) -> Option<TypeId> {
+    let pty = TypeId::Named(param_ty.clone());
+    if !lower_type::is_delegate_type(&pty) {
+        return None;
+    }
+    match typeck::demangle_func_type_with(param_ty.as_str(), lambda_arity, is_known) {
+        Some(TypeId::Func { ret, .. }) => Some(ret.as_ref().clone()),
+        _ => None,
+    }
+}
+
+/// 委托形参 TypeId → 该实参位 λ 的期望（形参类型 + 返回契约）。
+///
+/// 结构性 `TypeId::Func` 直取；mangle 名（`Named("Func_...")`）走与
+/// [`delegate_contract_ret`] 同源的 arity 感知 demangle（嵌套委托歧义防御）。
+/// 供委托调用（`IndirectCall` 实参位为 Func/Action）的 λ 期望解析——缺省时
+/// λ 形参落 Int 回退 → 对象/字符串指针被 i32 截断（chord Waterfall idx36：
+/// `next = (p) => this.RunAt(...)` 的 p `load i32 + inttoptr` 取证）。
+fn delegate_expected_for_lambda(
+    param_ty: &TypeId,
+    lambda_arity: usize,
+    is_known: &dyn Fn(&str) -> bool,
+) -> (Option<Vec<TypeId>>, Option<TypeId>) {
+    let inner = match param_ty {
+        TypeId::Nullable { inner } => inner.as_ref(),
+        other => other,
+    };
+    match inner {
+        TypeId::Func { params, ret } => (Some(params.clone()), Some(ret.as_ref().clone())),
+        TypeId::Named(n) => {
+            let name = n.as_str();
+            if !(name.starts_with("Func_") || name.starts_with("Action_")) {
+                return (None, None);
+            }
+            match typeck::demangle_func_type_with(name, lambda_arity, is_known) {
+                Some(TypeId::Func { params, ret }) => (Some(params), Some(*ret)),
+                _ => (None, None),
+            }
+        }
+        _ => (None, None),
+    }
+}
+
 pub(super) fn method_call_rvalue(
     builder: &mut MirBuilder,
     receiver: &Spanned<Expr>,
@@ -857,14 +1035,42 @@ pub(super) fn method_call_rvalue(
                 .resolve_method_overload(recv_ty, method, &arg_types, &overload_ctx)
         };
         if strict.is_err() && has_lambda && type_args.is_empty() {
-            strict.or_else(|_| {
-                ctx.registry.resolve_method_overload_lambda_soft(
-                    recv_ty,
-                    method,
-                    &arg_types,
-                    &overload_ctx,
-                )
-            })
+            strict
+                .or_else(|_| {
+                    ctx.registry.resolve_method_overload_lambda_soft(
+                        recv_ty,
+                        method,
+                        &arg_types,
+                        &overload_ctx,
+                    )
+                })
+                .or_else(|_| {
+                    // RFC 045：soft 软匹配歧义（Action/Func 同 arity 双命中，如
+                    // `Tone(ctx => …)`）时按**声明序**选首个适用候选——值体 λ →
+                    // 值返回委托、void 体 λ 仅 Void 返回委托。typeck 侧 trial 已按
+                    // 同律绑定；MIR 此处镜像，防回退首签名（Func 形态前置后 void λ
+                    // 被 MIR 错绑 Func → funcApply 路径 AV，probe32 实证）。
+                    let shapes: Vec<Option<(usize, bool)>> = args
+                        .iter()
+                        .map(|a| match &a.node {
+                            Expr::Lambda(l) => Some((
+                                l.params.len(),
+                                match &l.body {
+                                    ast::LambdaBody::Block(b) => b.tail.is_none(),
+                                    ast::LambdaBody::Expr(_) => false,
+                                },
+                            )),
+                            _ => None,
+                        })
+                        .collect();
+                    ctx.registry.resolve_method_overload_lambda_trial(
+                        recv_ty,
+                        method,
+                        &arg_types,
+                        &shapes,
+                        &overload_ctx,
+                    )
+                })
         } else {
             strict
         }
@@ -912,21 +1118,17 @@ pub(super) fn method_call_rvalue(
         })
         .collect();
     // Lambda 实参的委托契约返回类型（`Func<R>` 形参名 → R；接口 R 时闭包
-    // 须产出 fat pointer，见 lower_lambda_to_fnptr）。
+    // 须产出 fat pointer，见 lower_lambda_to_fnptr）。arity 感知（见
+    // delegate_contract_ret：无 arity 回溯对嵌套委托歧义 → 整体委托型错位）。
     let expected_lambda_rets: Vec<Option<TypeId>> = args
         .iter()
         .enumerate()
         .map(|(i, a)| {
-            if let Expr::Lambda(_) = &a.node {
+            if let Expr::Lambda(l) = &a.node {
                 param_types.get(i).and_then(|p| {
-                    let pty = TypeId::Named(p.clone());
-                    if lower_type::is_delegate_type(&pty) {
-                        lower_type::delegate_return_type(&pty, &|s| {
-                            ctx.registry.types.contains_key(s)
-                        })
-                    } else {
-                        None
-                    }
+                    delegate_contract_ret(p, l.params.len(), &|s| {
+                        ctx.registry.types.contains_key(s)
+                    })
                 })
             } else {
                 None
@@ -1053,7 +1255,7 @@ pub(super) fn method_call_rvalue(
             match ext.sig.params.get(i).map(|p| p.ty.clone()) {
                 Some(pt) => {
                     let arg_ty = type_name_from_operand(&op, &a.node, ctx);
-                    maybe_box_iface(op, &arg_ty, &TypeId::Named(pt.into()), ctx)
+                    maybe_box_iface(op, &arg_ty, &TypeId::Named(pt), ctx)
                 }
                 None => op,
             }
@@ -1221,14 +1423,40 @@ pub(super) fn method_call_rvalue_with_prep(
                 .resolve_method_overload(recv_ty, method, &arg_types, &overload_ctx)
         };
         if strict.is_err() && has_lambda && type_args.is_empty() {
-            strict.or_else(|_| {
-                ctx.registry.resolve_method_overload_lambda_soft(
-                    recv_ty,
-                    method,
-                    &arg_types,
-                    &overload_ctx,
-                )
-            })
+            strict
+                .or_else(|_| {
+                    ctx.registry.resolve_method_overload_lambda_soft(
+                        recv_ty,
+                        method,
+                        &arg_types,
+                        &overload_ctx,
+                    )
+                })
+                .or_else(|_| {
+                    // RFC 045：soft 歧义时按声明序取首个适用候选（值体 λ → 值返回
+                    // 委托、void 体 λ 仅 Void 返回委托）——typeck trial 的 MIR 镜像，
+                    // 防首签名回退分叉（chord Func 前置后 void λ 错绑 Func 形态）。
+                    let shapes: Vec<Option<(usize, bool)>> = fixed_args
+                        .iter()
+                        .map(|a| match &a.node {
+                            Expr::Lambda(l) => Some((
+                                l.params.len(),
+                                match &l.body {
+                                    ast::LambdaBody::Block(b) => b.tail.is_none(),
+                                    ast::LambdaBody::Expr(_) => false,
+                                },
+                            )),
+                            _ => None,
+                        })
+                        .collect();
+                    ctx.registry.resolve_method_overload_lambda_trial(
+                        recv_ty,
+                        method,
+                        &arg_types,
+                        &shapes,
+                        &overload_ctx,
+                    )
+                })
         } else {
             strict
         }
@@ -1265,21 +1493,17 @@ pub(super) fn method_call_rvalue_with_prep(
         })
         .collect();
     // Lambda 实参的委托契约返回类型（`Func<R>` 形参名 → R；接口 R 时闭包
-    // 须产出 fat pointer，见 lower_lambda_to_fnptr）。
+    // 须产出 fat pointer，见 lower_lambda_to_fnptr）。arity 感知（见
+    // delegate_contract_ret：无 arity 回溯对嵌套委托歧义 → 整体委托型错位）。
     let expected_lambda_rets: Vec<Option<TypeId>> = args
         .iter()
         .enumerate()
         .map(|(i, a)| {
-            if let Expr::Lambda(_) = &a.node {
+            if let Expr::Lambda(l) = &a.node {
                 param_types.get(i).and_then(|p| {
-                    let pty = TypeId::Named(p.clone());
-                    if lower_type::is_delegate_type(&pty) {
-                        lower_type::delegate_return_type(&pty, &|s| {
-                            ctx.registry.types.contains_key(s)
-                        })
-                    } else {
-                        None
-                    }
+                    delegate_contract_ret(p, l.params.len(), &|s| {
+                        ctx.registry.types.contains_key(s)
+                    })
                 })
             } else {
                 None
@@ -1309,6 +1533,10 @@ pub(super) fn method_call_rvalue_with_prep(
             ctx,
             &mut prep,
         );
+        // 接口→object 实参拆盒（idx25 家族）：object/object? 形参直收接口 fat
+        // 盒 → 槽位 ARC inc/dec 写坏盒内存。typed 路径此处补；模板体 T 未知
+        // 的由 mono 克隆修复（lower.rs repair_clone_iface_arg_shapes）补位。
+        let op = maybe_unbox_iface_to_object(a, op, param_types.get(i).map(|s| s.as_str()), ctx);
         arg_ops.push(op);
     }
     if let Some(info) = params_span {
@@ -1419,7 +1647,7 @@ pub(super) fn method_call_rvalue_with_prep(
                     match ext.sig.params.get(i).map(|p| p.ty.clone()) {
                         Some(pt) => {
                             let arg_ty = type_name_from_operand(&op, &a.node, ctx);
-                            maybe_box_iface(op, &arg_ty, &TypeId::Named(pt.into()), ctx)
+                            maybe_box_iface(op, &arg_ty, &TypeId::Named(pt), ctx)
                         }
                         None => op,
                     }

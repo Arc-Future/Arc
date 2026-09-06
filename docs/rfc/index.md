@@ -83,6 +83,8 @@
 | [048 命名管道与本机 IPC](048-named-pipes.md) | 跨平台硬要求：`rt_pipe_*` 双后端（Windows named pipe / POSIX FIFO，语义收敛契约+名字规范化+双平台验证矩阵）、`Arc.Net.Pipes` 门面（NamedPipeServer/ClientStream : Stream）；字节流单一惯用法、与 Channels 分层关系、四期里程碑（M2 异步面前置 accept-null 债务回归门） | 传输面家族见 025；Reactor 见 009；ABI 约定见 014；进程内 MPMC 见 046 |
 | [049 Illusory 游戏引擎](049-illusory-engine.md) | VR 引擎：Actor+Component 对象模型、async 行为+`BehaviorRunner`（固定步长驱动）、`World`+`SimulationTick` 确定性仿真核心；VR 输入语义化/网络预测预留；std/Illusory/Core → `Arc.Illusory` 映射 | 异步见 009；渲染托底见 037；DB/internal 边界见 020/023；对象模型见 006 |
 | [050 统一对象头](050-unified-object-header.md) | runtime 句柄内存身份物理化：`{magic, kind, ...}` 16/24B 头 + `rt_arc_inc/dec` 三层守卫（下界哨兵/magic/kind）+ 模式 A 创建点宏化迁移；豁免清单降级为优化语义，逐案判定破洞（Nested 泛型/泛型 async 参数）物理封死；M-a/b/c 分期与回归红线 | ARC 见 005；冻结面流程见 036；模式全量归因见 stability review (internal record) |
+| [051 接口值生命周期与字典值所有权](051-iface-value-lifetime.md) | 接口 fat 盒释放缺口量化取证（433MB/3M 轮）；盒=真 ARC 对象（string-box 先例：rc/vt/obj@16/itable@24 + finalizer dec obj）；槽位模板（局部/字段/元素/env）纳入类值同律；字典条目值所有权 S3a–S3d 分期收口（dict/sorted/concurrent owned 变体） | ARC 见 005/006；rt_* 面见 014；冻结面流程见 036 |
+| [052 数组所有权与字典快照](052-array-ownership.md) | 运行时数组 = 裸 header+payload（rt_array.c）零释放站点的取证基线（arr/snap-probe 家族）；设计定案：数组对象 ArcHeader 化 + 全谱 drop 站点 + owned 快照逐元素 +1（.NET 快照语义）+ class/string 键所有权，分期 S1–S4 另排专项；**1.0 前按「已知限制」如实登记**（借用视图已文档化 + In-tree 用法审计） | 冻结面流程见 036；S3 家族收口登记见 051 §5；对象头演进见 050 |
 
 ---
 

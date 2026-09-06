@@ -165,6 +165,8 @@ class Square : Rectangle {
 
 接口类型的值是 **fat pointer**：`{ ptr obj, ptr itable }` 二元组（以 `ptr` 传递）。
 
+
+> **生命周期缺口（量化取证，设计见 [051](051-iface-value-lifetime.md)）**：堆 fat 盒当前无释放站点——盒创建 inc(obj) 后无配对 dec（接口局部/字段无 drop、盒无 ArcHeader/finalizer、收集器不可见）；class→iface 装箱 3M 轮 433MB（class-only 对照恒 0.7MB）。按 RFC 036 流程评审后实施：盒=真 ARC 对象（string-box 先例），槽位模板纳入类值同律。
 - class→interface 赋值经 `MakeIface`（静态类型已声明）或 `MakeIfaceDyn`（基类静态类型，runtime 按 `type_id` 选 itable）。
 - **继承接口传播**：派生类继承基类的接口实现并发射**自己的 itable**（`@.itable.{Derived}_{Iface}`），其槽位沿 override 链解析命中派生类实现；接口赋值/`is` 类型测试据此命中最派生实现，而非基类的直接声明 itable。
 - 接口方法调用只从已有 fat pointer 取 itable slot；**禁止**再按具体类重建 fat pointer。

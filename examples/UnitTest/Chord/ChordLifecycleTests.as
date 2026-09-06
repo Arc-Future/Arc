@@ -15,7 +15,9 @@ public class ChordLifecycleTests
     public void Tone_ObjectForm_AppliesAndCarriesConfig()
     {
         ChordContext app = new ChordContext();
-        ChordContext tone = app.Tone(new TagTone("tag", "cfg-value"));
+        // 配置经 Tone(ITone, config) 显式传入（RFC 045 D7——对象形态音以 Name
+        // 命名、config 经第二参数携带；单参形态无配置通道）。
+        ChordContext tone = app.Tone(new TagTone("tag", "cfg-value"), "cfg-value");
         Assert.True(tone.IsActive);
         Assert.Equal("tag", tone.Scope.Name);
         Assert.Equal("cfg-value", (string)tone.Scope.Config);
@@ -36,8 +38,10 @@ public class ChordLifecycleTests
         Assert.False(tone.IsActive);
         Assert.Equal((int)ScopeStatus.Failed, (int)tone.Scope.Status);
         Assert.Equal("apply boom", tone.Scope.Error);
-        Assert.Equal(1, log.Count);
-        Assert.Equal("reverted", log[0]);
+        // Effect 注册即执行（RFC 045 D2）+ D7 失败回滚 LIFO 撤销 → [installed, reverted]
+        Assert.Equal(2, log.Count);
+        Assert.Equal("installed", log[0]);
+        Assert.Equal("reverted", log[1]);
     }
 
     [Fact]
@@ -136,7 +140,8 @@ public class ChordLifecycleTests
         ChordContext fresh = app.Reload(oldTone, ctx => { ctx.Provide("svc", "v2"); });
         Assert.True(fresh.IsActive);
         Assert.True(oldTone.IsDisposed);
-        Assert.Equal("v2", (string)app.GetService("svc"));
+        // RFC 045 D3：子音服务仅其自身/后代可达（非宿主可见）——经 fresh 自身断言
+        Assert.Equal("v2", (string)fresh.GetService("svc"));
         Assert.Equal(3, app.ChildCount);
     }
 
@@ -153,7 +158,8 @@ public class ChordLifecycleTests
         }
         Assert.True(threw);
         Assert.False(oldTone.IsDisposed);
-        Assert.Equal("v1", (string)app.GetService("svc"));
+        // RFC 045 D3/D8：失败回滚保持旧音完整运行——其自有服务经旧音自身可达
+        Assert.Equal("v1", (string)oldTone.GetService("svc"));
         Assert.Equal(1, app.ChildCount);
     }
 

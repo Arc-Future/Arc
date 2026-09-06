@@ -249,8 +249,14 @@ impl<'a> FnEmitter<'a> {
         if let TypeId::Named(struct_name) = target_ty {
             if self.layouts.structs.contains_key(struct_name) {
                 let target_size = self.layouts.size_of_ty(struct_name) as i32;
-                let slot = self.fresh_temp();
-                self.emit(&format!("{slot} = alloca %struct.{struct_name}"));
+                let slot = {
+                    let _s = self.fresh_temp();
+                    self.entry_allocas.push_str(&format!(
+                        "  {_s} = alloca %struct.{struct_name}
+"
+                    ));
+                    _s
+                };
                 let status = self.fresh_temp();
                 self.emit(&format!(
                     "{status} = call i32 @rt_box_unbox(ptr {src_val}, i32 {target_size}, ptr {slot}, i32 {target_size})"
@@ -262,8 +268,14 @@ impl<'a> FnEmitter<'a> {
         let target_ty_str = llvm_type_of(target_ty, self.layouts);
 
         // 分配目标 slot（接收 unbox 后的字节）。
-        let slot = self.fresh_temp();
-        self.emit(&format!("{slot} = alloca {target_ty_str}"));
+        let slot = {
+            let _s = self.fresh_temp();
+            self.entry_allocas.push_str(&format!(
+                "  {_s} = alloca {target_ty_str}
+"
+            ));
+            _s
+        };
 
         // 调用 rt_box_unbox：运行时执行 size 校验 + memcpy。
         // 返回值：0 = 成功；-1 = null 指针；-2 = size mismatch（已 rt_panic，不会返回）。

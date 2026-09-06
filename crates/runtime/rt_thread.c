@@ -360,7 +360,11 @@ void rt_mutex_destroy(void* mutex) {
 #else
     pthread_mutex_destroy((pthread_mutex_t*)mutex);
 #endif
-    rt_obj_free(mutex);
+    /* rt_mutex_create 以 raw malloc 分配（SRWLOCK/pthread_mutex_t）——此处必须
+     * plain free。此前 rt_obj_free（opaque 头语义，头在块前 16B）会把释放点
+     * 前移 16B → 越界 free → 0xC0000374（首个调用方 = ConcurrentDictionary
+     * destroy 暴露；std Mutex.Dispose 同路径隐患一并消除）。 */
+    free(mutex);
 }
 
 /* ---- Semaphore ABI ----
@@ -480,7 +484,33 @@ typedef struct rt_monitor_obj {
     pthread_cond_t      cond;
 #endif
     int32_t             initialized;
+    /* RFC 009 §7.2 补强（Monitor 重入记账，u5 并发载入竞态修复配套）：
+     * C# Monitor 重入语义——`lock` 嵌套 / 同线程重入调用须可重入。
+     * 物理互斥仅在 depth 0→1 获取一次，嵌套只增 depth、不触碰物理锁；
+     * exit 仅在 depth 1→0 释放物理锁。两平台统一语义：
+     *   - Windows CRITICAL_SECTION 原生可重入——记账使 diag owner 在嵌套下精确；
+     *   - POSIX pthread_mutex 非重入——此前同线程嵌套 lock 直接自死锁
+     *     （与 Lock.as 文档「Monitor/lock 对标 C#」契约不符），此处补齐。
+     * owner = 持锁线程 id（Win: GetCurrentThreadId；POSIX: pthread_self 位拷贝，
+     * 仅用于同线程比较，不跨线程解释）。 */
+    uintptr_t           owner;
+    int32_t             depth;
 } rt_monitor_obj;
+
+static uintptr_t rt_mon_self_tid(void) {
+#ifdef _WIN32
+    return (uintptr_t)GetCurrentThreadId();
+#else
+    uintptr_t t = 0;
+    pthread_t self = pthread_self();
+    /* pthread_t 至 uintptr_t 位拷贝（glibc/musl/macOS 均 ≤ 指针宽；超宽平台
+     * 走占位——比较仅需同线程一致，本函数按同宽拷贝即可）。 */
+    if (sizeof(pthread_t) <= sizeof(uintptr_t)) {
+        memcpy(&t, &self, sizeof(pthread_t));
+    }
+    return t;
+#endif
+}
 
 void  rt_monitor_enter(void* obj) {
     rt_monitor_obj* m = (rt_monitor_obj*)obj;
@@ -496,6 +526,12 @@ void  rt_monitor_enter(void* obj) {
 #endif
         m->initialized = 1;
     }
+    uintptr_t tid = rt_mon_self_tid();
+    if (m->owner == tid) {
+        /* 同线程重入（嵌套 lock / 递归调用）——物理锁已持，仅增层 */
+        m->depth++;
+        return;
+    }
 #ifdef _WIN32
     if (!TryEnterCriticalSection(&m->mutex)) {
         /* 即将阻塞：登记等待者（转储呈现死锁图） */
@@ -503,17 +539,30 @@ void  rt_monitor_enter(void* obj) {
         EnterCriticalSection(&m->mutex);
         rt_mon_diag_waiter_end();
     }
-    rt_mon_diag_owner_set(obj);
 #else
     pthread_mutex_lock(&m->mutex);
 #endif
+    m->owner = tid;
+    m->depth = 1;
+    rt_mon_diag_owner_set(obj);
 }
 
 void  rt_monitor_exit(void* obj) {
     rt_monitor_obj* m = (rt_monitor_obj*)obj;
     if (!m || !m->initialized) return;
-#ifdef _WIN32
+    uintptr_t tid = rt_mon_self_tid();
+    if (m->owner != tid) {
+        /* 非持锁线程 exit：C# 抛 SynchronizationLockException；Arc 保持
+         * 静默 no-op（此前对非持锁者 LeaveCS/unlock 属未定义行为）。 */
+        return;
+    }
+    if (--m->depth > 0) {
+        return; /* 嵌套层：仅减层，物理锁留待最外层 */
+    }
+    m->depth = 0;
+    m->owner = 0;
     rt_mon_diag_owner_clear(obj);
+#ifdef _WIN32
     LeaveCriticalSection(&m->mutex);
 #else
     pthread_mutex_unlock(&m->mutex);
@@ -523,21 +572,45 @@ void  rt_monitor_exit(void* obj) {
 int32_t rt_monitor_try_enter(void* obj) {
     rt_monitor_obj* m = (rt_monitor_obj*)obj;
     if (!m || !m->initialized) return 0;
+    uintptr_t tid = rt_mon_self_tid();
+    if (m->owner == tid) {
+        m->depth++;
+        return 1;
+    }
 #ifdef _WIN32
-    return TryEnterCriticalSection(&m->mutex) ? 1 : 0;
+    if (!TryEnterCriticalSection(&m->mutex)) {
+        return 0;
+    }
 #else
-    return pthread_mutex_trylock(&m->mutex) == 0 ? 1 : 0;
+    if (pthread_mutex_trylock(&m->mutex) != 0) {
+        return 0;
+    }
 #endif
+    m->owner = tid;
+    m->depth = 1;
+    rt_mon_diag_owner_set(obj);
+    return 1;
 }
 
 void  rt_monitor_wait(void* obj) {
     rt_monitor_obj* m = (rt_monitor_obj*)obj;
     if (!m || !m->initialized) return;
+    uintptr_t tid = rt_mon_self_tid();
+    if (m->owner != tid) return; /* Wait 须在持锁线程（C# Monitor.Wait 语义） */
+    /* 等待期间释放全部重入层：物理锁仅获取一次，清 owner/depth 后
+     * cond 等待自动释放物理锁；唤醒后恢复单层持有（C# 恢复全部层；
+     * 恢复一层 + 外层多余 exit 为 no-op，安全降级）。 */
+    m->owner = 0;
+    m->depth = 0;
+    rt_mon_diag_owner_clear(obj);
 #ifdef _WIN32
     SleepConditionVariableCS(&m->cond, &m->mutex, INFINITE);
 #else
     pthread_cond_wait(&m->cond, &m->mutex);
 #endif
+    m->owner = tid;
+    m->depth = 1;
+    rt_mon_diag_owner_set(obj);
 }
 
 void  rt_monitor_pulse(void* obj) {

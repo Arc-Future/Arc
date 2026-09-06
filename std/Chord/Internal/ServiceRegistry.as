@@ -55,7 +55,13 @@ internal class ServiceRegistry {
                 return;   // 已被后续 Provide 覆盖：后写优先，撤销 no-op
             }
             entry._dead = true;
-            if (previous != null && !previous._dead) {
+            if (previous != null) {
+                // 恢复旧条目为当前：撤销「标记死亡」并重新挂载。旧实现保留
+                // `!previous._dead` 守卫——但 previous 恰在此 Provide 时被标死
+                //（阴影链构造），守卫恒假 → 恢复分支永不执行 → 撤销退化为
+                // Remove（Provide_RevertRestoresPrevious 语义违背，实证：'
+                // 撤销第二个 Provide 后 GetService 应回 v1 却得 null'）。
+                previous._dead = false;
                 _entries[name] = previous;
             } else {
                 _entries.Remove(name);

@@ -12,6 +12,30 @@ use mir::{MirOperand, MirRvalue};
 pub(crate) type TyVal = (String, String);
 
 impl<'a> FnEmitter<'a> {
+    /// 操作数静态值是否为接口 fat-pointer 盒。
+    ///
+    /// 供 `MirOperand::UnboxGeneric` 的接口具体目标臂判定：源已是接口值（盒）时
+    /// 透传（接口→接口形状同构）；源是 object/class 时才须经 rt_obj_to_iface
+    /// 组装新盒。以盒冒充对象走组装会解引用垃圾 itable → 0xC0000005。
+    ///
+    /// 覆盖 Local（查局部类型表；Nullable 剥开）；其余操作数形状（Field 字段
+    /// 读取 / ConstNull / 静态字段…）无局部表可查，按对象处理——模板 mono 体内
+    /// `(T)x` 的源在 lowering 时一律物化为 object 槽局部，Local 即全量覆盖。
+    fn operand_is_iface_value(&self, op: &MirOperand) -> bool {
+        let MirOperand::Local(id) = op else {
+            return false;
+        };
+        let ty = self.local_type(*id);
+        match ty {
+            TypeId::Named(n) => self.layouts.interfaces.contains_key(n.as_str()),
+            TypeId::Nullable { inner } => matches!(
+                *inner,
+                TypeId::Named(n) if self.layouts.interfaces.contains_key(n.as_str())
+            ),
+            _ => false,
+        }
+    }
+
     /// Emit an rvalue, returning (type, value). For void rvalues, returns ("void", "").
     pub fn emit_rvalue(&mut self, rv: &MirRvalue) -> TyVal {
         match rv {
@@ -398,10 +422,39 @@ impl<'a> FnEmitter<'a> {
                 // interface → 具体类转型：fat-pointer 盒 { ptr obj, ptr itable }
                 // 取首槽底层对象指针。盒本身无 ArcHeader，绝不可对盒做 rt_arc_inc/dec
                 // 或把盒地址当类对象（旧实现 → 0xC0000005 / 0xC0000409）。
+                //
+                // null 安全（2026-09-05 idx25 修复）：接口**值**可为 null（null 盒
+                // 指针，如 `IFoo? x = null` 直接传入 object? 形参）。旧实现裸
+                // `load ptr, ptr %box` 在 null 上解引用 → 0xC0000005；接口→object
+                // 拆盒（取 obj 半，零分配）须对 null 盒产出 null。与 emit_box 的
+                // string null 保留同款 phi 结构。
                 let (_, box_ptr) = self.emit_operand(object);
+                let isnull = self.fresh_temp();
+                self.emit(&format!("{isnull} = icmp eq ptr {box_ptr}, null"));
+                let null_bb = self.fresh_label();
+                let take_bb = self.fresh_label();
+                let join = self.fresh_label();
+                self.emit(&format!(
+                    "br i1 {isnull}, label %{null_bb}, label %{take_bb}"
+                ));
+                self.emit(&format!("{take_bb}:"));
+                // RFC 051 D2：堆 fat 盒 obj 位于 +16（盒 = ARC 对象：rc@0/weak@4/
+                // vt@8/obj@16/itable@24）。
+                let obj_addr = self.fresh_temp();
+                self.emit(&format!(
+                    "{obj_addr} = getelementptr inbounds i8, ptr {box_ptr}, i32 16"
+                ));
                 let obj = self.fresh_temp();
-                self.emit(&format!("{obj} = load ptr, ptr {box_ptr}"));
-                ("ptr".into(), obj)
+                self.emit(&format!("{obj} = load ptr, ptr {obj_addr}"));
+                self.emit(&format!("br label %{join}"));
+                self.emit(&format!("{null_bb}:"));
+                self.emit(&format!("br label %{join}"));
+                self.emit(&format!("{join}:"));
+                let result = self.fresh_temp();
+                self.emit(&format!(
+                    "{result} = phi ptr [ null, %{null_bb} ], [ {obj}, %{take_bb} ]"
+                ));
+                ("ptr".into(), result)
             }
             MirOperand::UnboxString { object } => {
                 // RFC 045 P2：object→string 拆箱（is string 收窄 / 窄化 Cast 的
@@ -453,7 +506,23 @@ impl<'a> FnEmitter<'a> {
                         (llvm_ty.to_string(), result)
                     }
                     _ => {
-                        // 引用类型（类/接口/泛型实例）：类型断言直接透传对象指针。
+                        // 引用类型（类/泛型实例）：类型断言直接透传对象指针。
+                        //
+                        // 接口具体目标（2026-09-05 idx25 修复）：模板 mono 克隆体的
+                        // `(T)obj` cast 在 lowering 期 T 未知 → UnboxGeneric 占位，
+                        // 单态化后 type_name 为接口名——obj→接口必须物化
+                        // `{obj, itable}` 胖盒（typed 路径由 iface_dest wrap /
+                        // lower_arg_operand Cast 臂补 MakeIfaceDyn，mono 克隆无此
+                        // 兜底 → 调用方把裸对象当胖盒解引用 → 0xC0000005）。
+                        // 经 runtime type_id 动态适配（rt_obj_to_iface，与
+                        // emit_make_iface_dyn 一致）。源已是接口值（盒）时透传
+                        //（接口→接口形状同构，不需组装；若以盒冒充对象走
+                        // rt_obj_to_iface 会解引用垃圾 itable）。
+                        if self.layouts.interfaces.contains_key(type_name.as_str())
+                            && !self.operand_is_iface_value(object)
+                        {
+                            return self.emit_make_iface_dyn(type_name, object, true);
+                        }
                         ("ptr".into(), src_val)
                     }
                 }

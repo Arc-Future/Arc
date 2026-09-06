@@ -658,6 +658,16 @@ pub(super) fn lower_expr_to_rvalue_with_binary(
                     .map(|(_, ty)| lower_type::is_delegate_type(ty))
                     .unwrap_or(false);
                 if is_func_local {
+                    // 委托局部（`next(x)`）→ IndirectCall：优先经
+                    // try_lower_delegate_invoke 全量处理（λ 期望、object 实参
+                    // string 装箱、接口实参包装）——旧直通分支裸物化实参，缺
+                    // 形参转换，raw 串入 object 槽 → 链尾拆箱读盒头崩溃/空串
+                    //（chord Waterfall idx36 家族）。try 失败回退旧直通。
+                    if let Some((dprep, drv, _ret_ty)) =
+                        try_lower_delegate_invoke(builder, func, args, ctx)
+                    {
+                        return (dprep, drv);
+                    }
                     let mut prep: Vec<MirStatement> = Vec::new();
                     let mut call_args: Vec<MirOperand> = Vec::with_capacity(args.len());
                     for a in args {

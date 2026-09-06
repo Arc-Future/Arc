@@ -78,8 +78,14 @@ impl<'a> FnEmitter<'a> {
         // 按值 load 进寄存器（`%struct.Vector3`），此时直接 GEP 会因寄存器非指针而
         // 触发 LLVM IR 错误。将按值结构体 spill 到栈槽后再取地址。
         let obj_ptr = if obj_ty.starts_with("%struct.") {
-            let spill = self.fresh_temp();
-            self.emit(&format!("{spill} = alloca {obj_ty}"));
+            let spill = {
+                let _s = self.fresh_temp();
+                self.entry_allocas.push_str(&format!(
+                    "  {_s} = alloca {obj_ty}
+"
+                ));
+                _s
+            };
             self.emit(&format!("store {obj_ty} {obj}, ptr {spill}"));
             spill
         } else {
@@ -157,8 +163,14 @@ impl<'a> FnEmitter<'a> {
         let len = elements.len() as i32;
 
         // 在栈上分配 field_sizes 数组（i32 per field）
-        let sizes_arr = self.fresh_temp();
-        self.emit(&format!("{sizes_arr} = alloca [{num_fields} x i32]"));
+        let sizes_arr = {
+            let _s = self.fresh_temp();
+            self.entry_allocas.push_str(&format!(
+                "  {_s} = alloca [{num_fields} x i32]
+"
+            ));
+            _s
+        };
         for (fidx, fl) in layout.fields.iter().enumerate() {
             let size = llvm_size_of_type_str(fl.ty.as_str()) as i32;
             let slot = self.fresh_temp();
@@ -289,8 +301,14 @@ impl<'a> FnEmitter<'a> {
                         } else {
                             ("double".to_string(), 8)
                         };
-                        let slot = self.fresh_temp();
-                        self.emit(&format!("{slot} = alloca {llvm_ty}"));
+                        let slot = {
+                            let _s = self.fresh_temp();
+                            self.entry_allocas.push_str(&format!(
+                                "  {_s} = alloca {llvm_ty}
+"
+                            ));
+                            _s
+                        };
                         self.emit(&format!(
                             "call void @rt_task_result_value(ptr {recv}, ptr {slot}, i32 {size})"
                         ));
@@ -341,28 +359,29 @@ impl<'a> FnEmitter<'a> {
         let vtable_name = format!("@.itable.{class}_{iface}");
         let tmp = self.fresh_temp();
         if heap {
-            self.emit(&format!("{tmp} = call ptr @calloc(i64 1, i64 16)"));
+            // RFC 051 D2: 堆 fat 盒 = 真 ARC 对象（rt_iface_box_create，32B：
+            // rc/weak/vt@8 + obj@16/itable@24）；非 _Box 源 inc（盒持引用，语义
+            // 同旧 calloc 路径），boxed struct 源为新鲜 rc=1 移交不 inc。读端按
+            // +16/+24 同步（S2 原子改集）。
+            if !class.ends_with("_Box") {
+                self.emit(&format!("call void @rt_arc_inc(ptr {obj})"));
+            }
+            self.emit(&format!(
+                "{tmp} = call ptr @rt_iface_box_create(ptr {obj}, ptr {vtable_name})"
+            ));
         } else {
             self.emit(&format!("{tmp} = alloca {{ ptr, ptr }}"));
+            let obj_addr = self.fresh_temp();
+            self.emit(&format!(
+                "{obj_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {tmp}, i32 0, i32 0"
+            ));
+            self.emit(&format!("store ptr {obj}, ptr {obj_addr}"));
+            let vtbl_addr = self.fresh_temp();
+            self.emit(&format!(
+                "{vtbl_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {tmp}, i32 0, i32 1"
+            ));
+            self.emit(&format!("store ptr {vtable_name}, ptr {vtbl_addr}"));
         }
-        // 堆盒 = 持引用（与 Task<接口> 装箱对偶）：盒可跨越创建帧存活
-        // （存入字段 / 传参后被 callee 保存），缺 retain 时创建方局部出口
-        // dec 会把 rc=1 对象提前释放 → 盒悬垂 → 接口分派解引用 UAF。
-        // `rt_arc_inc` 对 null 安全（`(I…)null` 转型）。boxed struct 已由
-        // `emit_box` 产出新鲜 rc=1 盒，无需再 inc（否则 +1 泄漏）。
-        if heap && !class.ends_with("_Box") {
-            self.emit(&format!("call void @rt_arc_inc(ptr {obj})"));
-        }
-        let obj_addr = self.fresh_temp();
-        self.emit(&format!(
-            "{obj_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {tmp}, i32 0, i32 0"
-        ));
-        self.emit(&format!("store ptr {obj}, ptr {obj_addr}"));
-        let vtbl_addr = self.fresh_temp();
-        self.emit(&format!(
-            "{vtbl_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {tmp}, i32 0, i32 1"
-        ));
-        self.emit(&format!("store ptr {vtable_name}, ptr {vtbl_addr}"));
         ("ptr".into(), tmp)
     }
 
@@ -377,25 +396,33 @@ impl<'a> FnEmitter<'a> {
     ) -> TyVal {
         let (_, obj) = self.emit_operand(object);
         let fat = self.fresh_temp();
-        if heap {
-            self.emit(&format!("{fat} = call ptr @calloc(i64 1, i64 16)"));
+        let vtbl_slot = if heap {
+            // RFC 051 D2：堆盒 = rt_iface_box_create（itable 后置解析写入 +24）；
+            // 盒持 obj 引用（rt_arc_inc null 安全，语义同旧 calloc 路径）。
+            self.emit(&format!("call void @rt_arc_inc(ptr {obj})"));
+            self.emit(&format!(
+                "{fat} = call ptr @rt_iface_box_create(ptr {obj}, ptr null)"
+            ));
+            let s = self.fresh_temp();
+            self.emit(&format!(
+                "{s} = getelementptr inbounds i8, ptr {fat}, i32 24"
+            ));
+            s
         } else {
             self.emit(&format!("{fat} = alloca {{ ptr, ptr }}"));
-        }
-        // 堆盒 = 持引用（与 `emit_make_iface` 一致；`rt_arc_inc` null 安全）。
-        if heap {
-            self.emit(&format!("call void @rt_arc_inc(ptr {obj})"));
-        }
-        let obj_addr = self.fresh_temp();
-        self.emit(&format!(
-            "{obj_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 0"
-        ));
-        self.emit(&format!("store ptr {obj}, ptr {obj_addr}"));
-        let vtbl_slot = self.fresh_temp();
-        self.emit(&format!(
-            "{vtbl_slot} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 1"
-        ));
-        self.emit(&format!("store ptr null, ptr {vtbl_slot}"));
+            let obj_addr = self.fresh_temp();
+            self.emit(&format!(
+                "{obj_addr} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 0"
+            ));
+            self.emit(&format!("store ptr {obj}, ptr {obj_addr}"));
+            let s = self.fresh_temp();
+            self.emit(&format!(
+                "{s} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 1"
+            ));
+            self.emit(&format!("store ptr null, ptr {s}"));
+            s
+        };
+        // `vtbl_slot` 指向盒 +24（堆）或 alloca 第二槽（栈），供解析后写入。
 
         // `(I)null` → null 接口引用（合法，不抛）；否则经 rt_obj_to_iface 动态
         // 查找 itable，失败（返回 null）→ InvalidCastException（非崩溃）。
@@ -443,38 +470,62 @@ impl<'a> FnEmitter<'a> {
         let (_, src_fat) = self.emit_operand(object);
         let fat = self.fresh_temp();
         if heap {
-            self.emit(&format!("{fat} = call ptr @calloc(i64 1, i64 16)"));
+            self.emit(&format!(
+                "{fat} = call ptr @rt_iface_box_create(ptr null, ptr null)"
+            ));
         } else {
             self.emit(&format!("{fat} = alloca {{ ptr, ptr }}"));
         }
 
-        let src_obj_a = self.fresh_temp();
-        self.emit(&format!(
-            "{src_obj_a} = getelementptr inbounds {{ ptr, ptr }}, ptr {src_fat}, i32 0, i32 0"
-        ));
+        // 源 obj/itable 读址：堆盒 +16/+24；栈 alloca {0,1}。
+        let (src_obj_a, src_it_a) = if heap {
+            let (oa, ia) = (self.fresh_temp(), self.fresh_temp());
+            self.emit(&format!(
+                "{oa} = getelementptr inbounds i8, ptr {src_fat}, i32 16"
+            ));
+            self.emit(&format!(
+                "{ia} = getelementptr inbounds i8, ptr {src_fat}, i32 24"
+            ));
+            (oa, ia)
+        } else {
+            let (oa, ia) = (self.fresh_temp(), self.fresh_temp());
+            self.emit(&format!(
+                "{oa} = getelementptr inbounds {{ ptr, ptr }}, ptr {src_fat}, i32 0, i32 0"
+            ));
+            self.emit(&format!(
+                "{ia} = getelementptr inbounds {{ ptr, ptr }}, ptr {src_fat}, i32 0, i32 1"
+            ));
+            (oa, ia)
+        };
         let obj = self.fresh_temp();
         self.emit(&format!("{obj} = load ptr, ptr {src_obj_a}"));
-        // 堆盒 = 持引用：adapt 生成新盒，与 `emit_make_iface` 的堆盒语义一致
-        // （`rt_arc_inc` null 安全）。
+        // 堆盒 = 持引用：adapt 生成新盒（rt_arc_inc null 安全，语义同旧路径）。
         if heap {
             self.emit(&format!("call void @rt_arc_inc(ptr {obj})"));
         }
-        let src_it_a = self.fresh_temp();
-        self.emit(&format!(
-            "{src_it_a} = getelementptr inbounds {{ ptr, ptr }}, ptr {src_fat}, i32 0, i32 1"
-        ));
         let src_it = self.fresh_temp();
         self.emit(&format!("{src_it} = load ptr, ptr {src_it_a}"));
 
-        let dst_obj_a = self.fresh_temp();
-        self.emit(&format!(
-            "{dst_obj_a} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 0"
-        ));
+        let (dst_obj_a, dst_vt) = if heap {
+            let (oa, ia) = (self.fresh_temp(), self.fresh_temp());
+            self.emit(&format!(
+                "{oa} = getelementptr inbounds i8, ptr {fat}, i32 16"
+            ));
+            self.emit(&format!(
+                "{ia} = getelementptr inbounds i8, ptr {fat}, i32 24"
+            ));
+            (oa, ia)
+        } else {
+            let (oa, ia) = (self.fresh_temp(), self.fresh_temp());
+            self.emit(&format!(
+                "{oa} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 0"
+            ));
+            self.emit(&format!(
+                "{ia} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 1"
+            ));
+            (oa, ia)
+        };
         self.emit(&format!("store ptr {obj}, ptr {dst_obj_a}"));
-        let dst_vt = self.fresh_temp();
-        self.emit(&format!(
-            "{dst_vt} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 1"
-        ));
         // Default: keep source itable if no candidate matches (should not happen).
         self.emit(&format!("store ptr {src_it}, ptr {dst_vt}"));
 
@@ -529,8 +580,14 @@ impl<'a> FnEmitter<'a> {
         struct_name: &str,
         fields: &[(String, MirOperand)],
     ) -> TyVal {
-        let tmp = self.fresh_temp();
-        self.emit(&format!("{tmp} = alloca %struct.{struct_name}"));
+        let tmp = {
+            let _s = self.fresh_temp();
+            self.entry_allocas.push_str(&format!(
+                "  {_s} = alloca %struct.{struct_name}
+"
+            ));
+            _s
+        };
         for (fname, fop) in fields {
             let (offset, field_ty) = self.struct_field_info(struct_name, fname);
             let (fty, fval) = self.emit_operand(fop);
@@ -624,8 +681,7 @@ impl<'a> FnEmitter<'a> {
         }
 
         // RFC 017 #8：含 spread — 运行时求和长度后 memcpy/store。
-        let total = self.fresh_temp();
-        self.emit(&format!("{total} = alloca i32"));
+        let total = self.scratch_alloca("i32");
         self.emit(&format!("store i32 0, ptr {total}"));
         let mut spread_ptrs: Vec<(String, String)> = Vec::new(); // (arr_tmp, len_tmp)
         for el in elements {
@@ -657,8 +713,7 @@ impl<'a> FnEmitter<'a> {
             "{tmp} = call ptr @rt_array_create(i32 {total_val}, i32 {elem_size})"
         ));
 
-        let idx = self.fresh_temp();
-        self.emit(&format!("{idx} = alloca i32"));
+        let idx = self.scratch_alloca("i32");
         self.emit(&format!("store i32 0, ptr {idx}"));
         let mut spread_i = 0usize;
         for el in elements {
@@ -708,8 +763,7 @@ impl<'a> FnEmitter<'a> {
                         _ => false,
                     };
                     if needs_arc_inc {
-                        let j = self.fresh_temp();
-                        self.emit(&format!("{j} = alloca i32"));
+                        let j = self.scratch_alloca("i32");
                         self.emit(&format!("store i32 0, ptr {j}"));
                         let loop_h = self.fresh_label();
                         let loop_b = self.fresh_label();
@@ -775,8 +829,14 @@ impl<'a> FnEmitter<'a> {
             if self.layouts.structs.get(name).is_some_and(|s| s.soa) {
                 let struct_name = name.as_str();
                 let layout = self.layouts.structs.get(struct_name).unwrap();
-                let tmp = self.fresh_temp();
-                self.emit(&format!("{tmp} = alloca %struct.{struct_name}"));
+                let tmp = {
+                    let _s = self.fresh_temp();
+                    self.entry_allocas.push_str(&format!(
+                        "  {_s} = alloca %struct.{struct_name}
+"
+                    ));
+                    _s
+                };
                 for (fidx, fl) in layout.fields.iter().enumerate() {
                     let fty = llvm_field_type(fl.ty.as_ref(), self.layouts);
                     let field_arr = self.fresh_temp();

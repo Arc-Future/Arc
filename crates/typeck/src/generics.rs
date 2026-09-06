@@ -2,7 +2,7 @@
 //!
 //! Name mangling convention (single type parameter): `{Def}_{arg}` where `arg` is the
 //! concrete type suffix (`int`, `bool`, `string`, or a named type like `User`).
-//! Examples: `Box<int>` 鈫?`Box_int`, `Identity<string>` 鈫?`Identity_string`.
+//! Examples: `Box<int>` → `Box_int`, `Identity<string>` → `Identity_string`.
 
 use ast::TypeId;
 use ast::*;
@@ -10,9 +10,9 @@ use indexmap::IndexMap;
 
 /// Suffix for one concrete type argument in a mangled symbol.
 ///
-/// 涓?`type_id_to_field_name` 淇濇寔涓€鑷达紝鎵€鏈夊鍚堢被鍨嬶紙Func/IEnumerable/
-/// IQueryable/Expression/Nullable/Task/Vector/Array/Ref锛夐兘鏈夋樉寮?case锛?
-/// 涓嶄娇鐢?`display().replace()` 浜х敓鍚嫭鍙?绠ご鐨勯潪娉?LLVM 鏍囪瘑绗︺€?
+/// 与 `type_id_to_field_name` 保持一致，所有复合类型（Func/IEnumerable/
+/// IQueryable/Expression/Nullable/Task/Vector/Array/Ref）都有显式 case，
+/// 不使用 `display().replace()` 产生含括号/箭头的非法 LLVM 标识符。
 pub fn mangle_type_suffix(ty: &TypeId) -> String {
     match ty {
         TypeId::Void => "void".into(),
@@ -29,7 +29,7 @@ pub fn mangle_type_suffix(ty: &TypeId) -> String {
         TypeId::UShort => "ushort".into(),
         TypeId::SByte => "sbyte".into(),
         TypeId::String => "string".into(),
-        // RFC 006 M1: object 鏍圭被鍨嬬殑 mangle 鍚庣紑
+        // RFC 006 M1: object 根类型的 mangle 后缀
         TypeId::Object => "object".into(),
         TypeId::Named(n) => n.to_string(),
         TypeId::Generic(n) => n.to_string(),
@@ -82,7 +82,7 @@ pub fn mangle_type_suffix(ty: &TypeId) -> String {
     }
 }
 
-/// Mangle a generic definition with concrete type arguments, e.g. `Box` + `[int]` 鈫?`Box_int`.
+/// Mangle a generic definition with concrete type arguments, e.g. `Box` + `[int]` → `Box_int`.
 pub fn mangle_generic(def: &str, args: &[TypeId]) -> String {
     if args.is_empty() {
         return def.to_string();
@@ -107,7 +107,7 @@ pub fn type_id_to_field_name(ty: &TypeId) -> Ident {
         TypeId::UShort => "ushort".into(),
         TypeId::SByte => "sbyte".into(),
         TypeId::String => "string".into(),
-        // RFC 006 M1: object 鏍圭被鍨嬩綔涓哄瓧娈靛悕鍚庣紑
+        // RFC 006 M1: object 根类型作为字段名后缀
         TypeId::Object => "object".into(),
         TypeId::Named(n) => n.clone(),
         TypeId::Generic(n) => n.clone(),
@@ -134,11 +134,11 @@ pub fn type_id_to_field_name(ty: &TypeId) -> Ident {
             format!("Expression_{}", type_id_to_field_name(inner)).into()
         }
         TypeId::Nullable { inner } => {
-            // 鍙┖寮曠敤绫诲瀷锛坄T?`锛夊綊绾︿负鍐呴儴绫诲瀷鍚嶏細`object?` 鈫?"object"銆乣ILogger?` 鈫?"ILogger"銆?
-            // 涓?`registry::type_path_name` 琛屼负涓€鑷粹€斺€擟# 涓彲绌哄紩鐢ㄧ被鍨嬩笌鍩虹绫诲瀷鍦ㄧ鍚?
-            // 鍏煎鎬т笂绛変环锛堜粎缂栬瘧鏈熸爣娉紝闈炵嫭绔嬬被鍨嬶級銆傚惁鍒?`sp.GetKeyedService(typeof(T), key)`
-            // 涓?`key: object?` 浼氳 mangle 涓?"Nullable_object"锛屼笌鎺ュ彛鍙傛暟 "object" 涓嶅尮閰嶏紝
-            // 瀵艰嚧閲嶈浇瑙ｆ瀽澶辫触銆佸洖閫€鍒版墿灞曟柟娉曡矾寰勮Е鍙戝弬鏁版暟閲忛敊璇€?
+            // 可空引用类型（`T?`）归约为内部类型名：`object?` → "object"、`ILogger?` → "ILogger"。
+            // 与 `registry::type_path_name` 行为一致——C# 中可空引用类型与基础类型在签名
+            // 兼容性上等价（仅编译期标注，非独立类型）。否则 `sp.GetKeyedService(typeof(T), key)`
+            // 中 `key: object?` 会被 mangle 为 "Nullable_object"，与接口参数 "object" 不匹配，
+            // 导致重载解析失败、回退到扩展方法路径触发参数数量错误。
             type_id_to_field_name(inner)
         }
         TypeId::Vector { elem, n } => {
@@ -434,7 +434,7 @@ pub fn substitute_class_def(
         if let Some(ret) = &mut m.node.sig.ret {
             ret.node = substitute_type_ast(&ret.node, map);
         }
-        // 闄愬埗 2 淇锛氭浛鎹㈡柟娉曚綋琛ㄨ揪寮忎腑鐨勭被鍨嬪弬鏁帮紙濡?`new T()` 鈫?`new Person()`锛?
+        // 限制 2 修复：替换方法体表达式中的类型参数（如 `new T()` → `new Person()`）
         if let Some(body) = &m.node.body {
             m.node.body = Some(substitute_block(body, map));
         }
@@ -443,10 +443,10 @@ pub fn substitute_class_def(
         for p in &mut ctor.node.params {
             p.ty.node = substitute_type_ast(&p.ty.node, map);
         }
-        // 闄愬埗 2 淇锛氭浛鎹㈡瀯閫犲嚱鏁颁綋琛ㄨ揪寮忎腑鐨勭被鍨嬪弬鏁?
+        // 限制 2 修复：替换构造函数体表达式中的类型参数
         ctor.node.body = substitute_block(&ctor.node.body, map);
     }
-    // Substitute type params in base list (e.g., `IComparable<T>` 鈫?`IComparable<int>`)
+    // Substitute type params in base list (e.g., `IComparable<T>` → `IComparable<int>`)
     for b in &mut c.bases {
         *b = substitute_type_ast(b, map);
     }
@@ -464,7 +464,7 @@ pub fn substitute_fn_def(f: &FnDef, mangled: &str, map: &IndexMap<Ident, TypeId>
     if let Some(ret) = &mut fn_def.ret {
         ret.node = substitute_type_ast(&ret.node, map);
     }
-    // 闄愬埗 2 淇锛氭浛鎹㈠嚱鏁颁綋琛ㄨ揪寮忎腑鐨勭被鍨嬪弬鏁?
+    // 限制 2 修复：替换函数体表达式中的类型参数
     if let Some(body) = &fn_def.body {
         fn_def.body = Some(substitute_block(body, map));
     }
@@ -495,10 +495,10 @@ pub fn resolve_instantiated_type_name(ty: &Type) -> Option<String> {
                 };
                 return Some(format!("Vector_{elem_suffix}_{n}"));
             }
-            // RFC 037 / RFC 009: Action<T1, ..., Tn> 鏄?Func<T1, ..., Tn, void> 鐨勮娉曠硸銆?
-            // 涓?typeck `lower_type` 淇濇寔涓€鑷达細mangle 鏃剁粺涓€璧?Func 璺緞锛?
-            // 浣?`Action<T, T>` 鈫?`Func_T_T_void`锛堣€岄潪 `Action_T_T`锛夛紝
-            // 淇濊瘉 List<Action<T, T>> 涓?List<Func<T, T, void>> 鍏变韩鍚屼竴鍗曟€佸寲瀹炰緥銆?
+            // RFC 037 / RFC 009: Action<T1, ..., Tn> 是 Func<T1, ..., Tn, void> 的语法糖。
+            // 与 typeck `lower_type` 保持一致：mangle 时统一走 Func 路径，
+            // 使 `Action<T, T>` → `Func_T_T_void`（而非 `Action_T_T`），
+            // 保证 List<Action<T, T>> 与 List<Func<T, T, void>> 共享同一单态化实例。
             if def == "Action" {
                 let params: Vec<TypeId> = generics
                     .iter()
@@ -520,23 +520,23 @@ pub fn resolve_instantiated_type_name(ty: &Type) -> Option<String> {
     }
 }
 
-/// RFC 037 M1: 灏嗗崟涓硾鍨嬪疄鍙?AST 鑺傜偣闄嶇骇涓?TypeId锛屾敮鎸佸祵濂楁硾鍨嬪疄渚嬪寲銆?
+/// RFC 037 M1: 将单个泛型实参 AST 节点降级为 TypeId，支持嵌套泛型实例化。
 ///
-/// 渚嬶細`Func<T, T, bool>` 涓瘡涓疄鍙傦紙`T`銆乣T`銆乣bool`锛夐€氳繃姝ゅ嚱鏁拌В鏋愩€?
-/// 宓屽娉涘瀷锛堝 `List<Func<T, T, bool>>` 鐨勫唴灞?`Func<T, T, bool>`锛夐€氳繃
-/// 閫掑綊璋冪敤 `resolve_instantiated_type_name` mangle 涓?`Func_T_T_bool`锛?
-/// 鍐嶅寘鎴?`Named("Func_T_T_bool")` 浣滃灞?`List` 鐨勫疄鍙傦紝鏈€缁?mangle 涓?`List_Func_T_T_bool`銆?
+/// 例：`Func<T, T, bool>` 中每个实参（`T`、`T`、`bool`）通过此函数解析。
+/// 嵌套泛型（如 `List<Func<T, T, bool>>` 的内层 `Func<T, T, bool>`）通过
+/// 递归调用 `resolve_instantiated_type_name` mangle 为 `Func_T_T_bool`，
+/// 再包成 `Named("Func_T_T_bool")` 作外层 `List` 的实参，最终 mangle 为 `List_Func_T_T_bool`。
 fn lower_generic_arg_to_type_id(ty: &Type) -> TypeId {
     match ty {
         Type::Named { path, generics } => {
-            // 绌烘硾鍨嬪疄鍙傦細鍩哄厓绫诲瀷鎴栫被鍨嬪弬鏁版爣璇嗙锛圱/U/V 绛夛級
+            // 空泛型实参：基元类型或类型参数标识符（T/U/V 等）
             if generics.is_empty() {
                 let n = path.last().cloned().unwrap_or_else(|| "unknown".into());
                 return match n.as_str() {
                     "int" => TypeId::Int,
                     "bool" => TypeId::Bool,
                     "string" => TypeId::String,
-                    // RFC 006 M1: 娉涘瀷瀹炲弬鏀寔 object 鏍圭被鍨?
+                    // RFC 006 M1: 泛型实参支持 object 根类型
                     "object" => TypeId::Object,
                     "void" => TypeId::Void,
                     "long" => TypeId::Long,
@@ -566,12 +566,12 @@ fn lower_generic_arg_to_type_id(ty: &Type) -> TypeId {
                     _ => TypeId::Named(n),
                 };
             }
-            // 宓屽娉涘瀷锛氶€掑綊 mangle 涓哄畬鏁村悕锛堝 Func_T_T_bool锛夛紝鍐嶅寘鎴?Named
+            // 嵌套泛型：递归 mangle 为完整名（如 Func_T_T_bool），再包成 Named
             resolve_instantiated_type_name(ty)
                 .map(|mangled| TypeId::Named(mangled.into()))
                 .unwrap_or(TypeId::Infer)
         }
-        // 澶嶅悎绫诲瀷瀹炲弬锛氳浆 TypeId 鍚庣敱 mangle_type_suffix 澶勭悊
+        // 复合类型实参：转 TypeId 后由 mangle_type_suffix 处理
         Type::Array { inner } => TypeId::Array {
             elem: Box::new(lower_generic_arg_to_type_id(&inner.node)),
         },
@@ -582,15 +582,15 @@ fn lower_generic_arg_to_type_id(ty: &Type) -> TypeId {
     }
 }
 
-// === 闄愬埗 2 淇锛氭柟娉曚綋绫诲瀷鍙傛暟鏇挎崲 ===
-// 鏀寔 `class Box<T> { T Make() { return new T(); } }` 瀹炰緥鍖栨椂
-// 鏂规硶浣撹〃杈惧紡涓殑绫诲瀷鍙傛暟琚纭浛鎹负鍏蜂綋绫诲瀷鍙傛暟銆?
+// === 限制 2 修复：方法体类型参数替换 ===
+// 支持 `class Box<T> { T Make() { return new T(); } }` 实例化时
+// 方法体表达式中的类型参数被正确替换为具体类型参数。
 
 fn sub_span_expr(e: &Spanned<Expr>, map: &IndexMap<Ident, TypeId>) -> Spanned<Expr> {
     Spanned::new(substitute_expr(&e.node, map), e.span)
 }
 
-/// 閫掑綊鏇挎崲琛ㄨ揪寮忎腑鐨勭被鍨嬪弬鏁般€?
+/// 递归替换表达式中的类型参数。
 pub(crate) fn substitute_expr(expr: &Expr, map: &IndexMap<Ident, TypeId>) -> Expr {
     use Expr as E;
     match expr {
@@ -625,9 +625,9 @@ pub(crate) fn substitute_expr(expr: &Expr, map: &IndexMap<Ident, TypeId>) -> Exp
             type_args,
             params_span,
         } => {
-            // RFC 004 M1锛歚T.Method(...)` 褰㈠紡鐨?static abstract 璋冪敤鈥斺€?
-            // 鑻?receiver 鏄硾鍨嬪弬鏁版爣璇嗙锛屾浛鎹负鍏蜂綋绫诲瀷鍚嶏紙濡?`int`锛夛紝
-            // 璁╁崟鎬佸寲鍚庣殑 typeck/codegen 鑳借瘑鍒负鍩哄厓绫诲瀷 static abstract 璋冪敤銆?
+            // RFC 004 M1：`T.Method(...)` 形式的 static abstract 调用——
+            // 若 receiver 是泛型参数标识符，替换为具体类型名（如 `int`），
+            // 让单态化后的 typeck/codegen 能识别为基元类型 static abstract 调用。
             let new_receiver = match &receiver.node {
                 E::Ident(name) if map.contains_key(name) => {
                     let ty = &map[name];
@@ -648,7 +648,7 @@ pub(crate) fn substitute_expr(expr: &Expr, map: &IndexMap<Ident, TypeId>) -> Exp
             }
         }
         E::Field { receiver, field } => {
-            // RFC 004 M1锛歚T.Prop` 褰㈠紡鐨?static abstract 灞炴€ц闂€斺€斿悓涓婃浛鎹€?
+            // RFC 004 M1：`T.Prop` 形式的 static abstract 属性访问——同上替换。
             let new_receiver = match &receiver.node {
                 E::Ident(name) if map.contains_key(name) => {
                     let ty = &map[name];
@@ -797,7 +797,7 @@ pub(crate) fn substitute_expr(expr: &Expr, map: &IndexMap<Ident, TypeId>) -> Exp
             elem_type: Spanned::new(substitute_type_ast(&elem_type.node, map), elem_type.span),
             length: Box::new(sub_span_expr(length, map)),
         },
-        // 鍙跺瓙鑺傜偣锛氭棤绫诲瀷鍙傛暟闇€鏇挎崲
+        // 叶子节点：无类型参数需替换
         E::IntLit(_)
         | E::FloatLit(_)
         | E::BoolLit(_)
@@ -821,14 +821,14 @@ pub(crate) fn substitute_expr(expr: &Expr, map: &IndexMap<Ident, TypeId>) -> Exp
                 })
                 .collect(),
         },
-        // `typeof(T)` 鈥?閫掑綊鏇挎崲绫诲瀷鍙傛暟锛圧FC 035 M1锛夈€?
+        // `typeof(T)` — 递归替换类型参数（RFC 035 M1）。
         E::TypeOf(ty) => E::TypeOf(Spanned::new(substitute_type_ast(&ty.node, map), ty.span)),
-        // `expr is pattern` 鈥?閫掑綊鏇挎崲瀛愯〃杈惧紡锛圧FC 036 M1锛夈€?
+        // `expr is pattern` — 递归替换子表达式（RFC 036 M1）。
         E::Is { expr, pattern } => E::Is {
             expr: Box::new(sub_span_expr(expr, map)),
             pattern: pattern.clone(),
         },
-        // RFC 006 M2锛歚with` 鈥?閫掑綊鏇挎崲鎺ユ敹鑰呬笌鍒濆鍖栧櫒銆?
+        // RFC 006 M2：`with` — 递归替换接收者与初始化器。
         E::With { receiver, inits } => E::With {
             receiver: Box::new(sub_span_expr(receiver, map)),
             inits: inits
@@ -839,7 +839,7 @@ pub(crate) fn substitute_expr(expr: &Expr, map: &IndexMap<Ident, TypeId>) -> Exp
     }
 }
 
-/// 閫掑綊鏇挎崲璇彞涓殑绫诲瀷鍙傛暟銆?
+/// 递归替换语句中的类型参数。
 pub(crate) fn substitute_stmt(stmt: &Stmt, map: &IndexMap<Ident, TypeId>) -> Stmt {
     use Stmt as S;
     match stmt {
@@ -966,7 +966,7 @@ pub(crate) fn substitute_stmt(stmt: &Stmt, map: &IndexMap<Ident, TypeId>) -> Stm
     }
 }
 
-/// 閫掑綊鏇挎崲鍧椾腑鐨勭被鍨嬪弬鏁帮紙璇彞 + 灏捐〃杈惧紡锛夈€?
+/// 递归替换块中的类型参数（语句 + 尾表达式）。
 pub(crate) fn substitute_block(block: &Block, map: &IndexMap<Ident, TypeId>) -> Block {
     Block {
         stmts: block
@@ -1024,7 +1024,7 @@ fn substitute_pattern(p: &Pattern, map: &IndexMap<Ident, TypeId>) -> Pattern {
         },
         Pattern::Null => Pattern::Null,
         Pattern::Var(n) => Pattern::Var(n.clone()),
-        // Pattern::Variant锛氫繚鐣?path/case/binding锛泃ype_args 涓殑绫诲瀷鍚嶆寜 map 鏇挎崲
+        // Pattern::Variant：保留 path/case/binding；type_args 中的类型名按 map 替换
         Pattern::Variant {
             path,
             type_args,

@@ -74,8 +74,8 @@ impl TypeChecker {
                 found: format!("{} parameter(s)", l.params.len()),
             });
         }
-        // RFC 009 M6: async lambda 鐨勮繑鍥炵被鍨嬫槸 `Task<T>`锛宐ody 鏈熸湜杩斿洖 `T`銆?
-        // 鍚屾椂璁剧疆 `in_async = true` 浣?body 鍐呯殑 `await` 鍚堟硶銆?
+        // RFC 009 M6: async lambda 的返回类型是 `Task<T>`，body 期望返回 `T`。
+        // 同时设置 `in_async = true` 使 body 内的 `await` 合法。
         let body_expected: TypeId = if l.is_async {
             ret.task_inner().cloned().unwrap_or(TypeId::Void)
         } else {
@@ -83,8 +83,8 @@ impl TypeChecker {
         };
         let prev_async = self.in_async;
         self.in_async = l.is_async;
-        // RFC 009 M6: block-body lambda 鐨?`return` 璇彞闇€瑕佹纭殑 return_slot銆?
-        // 鎺ㄥ叆 body_expected 浣?`return expr` 妫€鏌ヤ笌 lambda 杩斿洖绫诲瀷鍖归厤銆?
+        // RFC 009 M6: block-body lambda 的 `return` 语句需要正确的 return_slot。
+        // 推入 body_expected 使 `return expr` 检查与 lambda 返回类型匹配。
         self.return_slot.push(body_expected.clone());
         self.scopes.push(IndexMap::new());
         for (i, p) in l.params.iter().enumerate() {
@@ -135,7 +135,7 @@ impl TypeChecker {
         let mut typed_stmts = Vec::new();
         for stmt in &block.stmts {
             match &stmt.node {
-                // RFC 004 M2锛氬睍寮€涓?Let锛堝０鏄?寮冨厓锛? Deconstruct MethodCall
+                // RFC 004 M2：展开为 Let（声明/弃元）+ Deconstruct MethodCall
                 Stmt::DeconstructAssign {
                     declare,
                     targets,
@@ -145,7 +145,7 @@ impl TypeChecker {
                         self.check_deconstruct_assign(*declare, targets, value, stmt.span)?,
                     );
                 }
-                // RFC 005 搂7.3锛歚lock (expr) { }` 鈫?Enter + try/finally Exit
+                // RFC 005 §7.3：`lock (expr) { }` → Enter + try/finally Exit
                 Stmt::Lock { expr, body } => {
                     typed_stmts.extend(self.check_lock_stmt(expr, body, stmt.span)?);
                 }
@@ -185,14 +185,14 @@ impl TypeChecker {
                     .map(|t| self.lower_type(&t.node))
                     .transpose()?
                     .unwrap_or(TypeId::Infer);
-                // RFC 016 v2 M2 / RFC 016 M3锛氫繚瀛?check_expr 閲嶅啓鍚庣殑琛ㄨ揪寮?
-                // 锛堝 FFI 瑁呯鎻掑叆鐨?Expr::Box锛夛紝浼犻€掑埌 TypedStmt::Let銆?
-                // 浠呭湪璧?check_expr 鐨勮矾寰勶紙else 鍒嗘敮锛夋湁鍊硷紱鍏朵粬璺緞锛圠ambda/
-                // 绌洪泦鍚堬級淇濈暀鍘?init銆?
+                // RFC 016 v2 M2 / RFC 016 M3：保存 check_expr 重写后的表达式
+                // （如 FFI 装箱插入的 Expr::Box），传递到 TypedStmt::Let。
+                // 仅在走 check_expr 的路径（else 分支）有值；其他路径（Lambda/
+                // 空集合）保留原 init。
                 let mut rewritten_init: Option<Spanned<Expr>> = None;
                 let final_ty = if let Some(init) = init {
                     if matches!(declared, TypeId::Expression { .. }) {
-                        // RFC 008 M3锛氭柟娉曠粍 鈫?Expression 纭嫆缁濓紙椤绘樉寮?lambda锛夈€?
+                        // RFC 008 M3：方法组 → Expression 硬拒绝（须显式 lambda）。
                         if !matches!(init.node, Expr::Lambda(_)) {
                             self.reject_method_group_to_expression(&init.node)?;
                         }
@@ -214,8 +214,8 @@ impl TypeChecker {
                             self.canonical_type(&declared)
                         }
                     } else if let TypeId::Func { params, ret } = &declared {
-                        // RFC 004 M1锛氶潪 lambda 椤诲畬鏁存鏌ワ紱鏂规硶缁勮劚绯栦负 lambda銆?
-                        // 绂佹鏃ц涓猴細璺宠繃 init 瀵艰嚧 NoSuch/绛惧悕閿欓潤榛橀€氳繃銆?
+                        // RFC 004 M1：非 lambda 须完整检查；方法组脱糖为 lambda。
+                        // 禁止旧行为：跳过 init 导致 NoSuch/签名错静默通过。
                         if let Expr::Lambda(l) = &init.node {
                             self.check_func_lambda(l, params, ret)?;
                         } else if let Some((lambda, _)) =
@@ -241,12 +241,12 @@ impl TypeChecker {
                     ) && matches!(declared, TypeId::Array { .. })
                     {
                         // Empty collection `[]` with declared array type uses the declared
-                        // type (e.g., `int[] empty = []` 鈫?int[]). Only `var x = []` falls
+                        // type (e.g., `int[] empty = []` → int[]). Only `var x = []` falls
                         // back to object[].
                         self.canonical_type(&declared)
                     } else {
-                        // RFC 065锛氭樉寮忕被鍨嬪眬閮ㄤ笂鐨勭洰鏍囩被鍨?`new()`銆?
-                        // RFC 017锛歚List<T> x = [鈥;` 闆嗗悎鐩爣鑴辩硸銆?
+                        // RFC 065：显式类型局部上的目标类型 `new()`。
+                        // RFC 017：`List<T> x = […];` 集合目标脱糖。
                         let prepared = if !matches!(declared, TypeId::Infer) {
                             self.prepare_target_expr(&init.node, &declared, init.span)?
                         } else {
@@ -261,10 +261,10 @@ impl TypeChecker {
                             self.canonical_type(&declared)
                         } else {
                             let checked = self.check_expr(&prepared)?;
-                            // RFC 004 搂D9 / RFC 037 M2锛歵ypes_compatible 澶辫触鏃跺皾璇?
-                            // 闅愬紡 variant 鏋勯€狅紙濡?`ContentVariant c = "Click"` 鈫?
-                            // `ContentVariant.Text("Click")`锛夈€傛涔?/ 鏃犲尮閰嶅垯鍥為€€鍒?
-                            // 鍘熷绫诲瀷涓嶅尮閰嶉敊璇€?
+                            // RFC 004 §D9 / RFC 037 M2：types_compatible 失败时尝试
+                            // 隐式 variant 构造（如 `ContentVariant c = "Click"` →
+                            // `ContentVariant.Text("Click")`）。歧义 / 无匹配则回退到
+                            // 原始类型不匹配错误。
                             let (init_expr, init_ty) = if !matches!(declared, TypeId::Infer)
                                 && !self.types_compatible(&declared, &checked.ty)
                             {
@@ -307,9 +307,9 @@ impl TypeChecker {
                     && self.is_nullable_ref_type(&final_ty)
                     && !final_ty.is_nullable()
                 {
-                    // RFC 067锛歚Deconstruct(out 鈥?` 鑴辩硸鐢ㄧ殑 `__pos_*` / `__discard_*`
-                    // 鍦ㄥ悓鍧楅殢鍚庣敱 out 瀹炲弬璧嬪€硷紱涓?`check_deconstruct_assign` 鐩存彃
-                    // TypedStmt::Let{init:None} 瀵归綈锛屼笉鍦ㄦ纭嫆銆?
+                    // RFC 067：`Deconstruct(out …)` 脱糖用的 `__pos_*` / `__discard_*`
+                    // 在同块随后由 out 实参赋值；与 `check_deconstruct_assign` 直插
+                    // TypedStmt::Let{init:None} 对齐，不在此硬拒。
                     let synth = {
                         let s = name.as_str();
                         s.starts_with("__pos_") || s.starts_with("__discard_")
@@ -330,9 +330,9 @@ impl TypeChecker {
                 })
             }
             Stmt::Expr(e) => {
-                // RFC 016 v2 M2 / RFC 016 M3锛氫娇鐢?TypedExpr.expr 鑰岄潪鍘熷 expr锛?
-                // 淇濊瘉 typeck 閲嶅啓鍚庣殑 AST 鑺傜偣锛堝 FFI 瑁呯鎻掑叆鐨?Expr::Box銆?
-                // Cast鈫扷nbox 杞崲锛夎兘浼犻€掑埌 MIR lower銆?
+                // RFC 016 v2 M2 / RFC 016 M3：使用 TypedExpr.expr 而非原始 expr，
+                // 保证 typeck 重写后的 AST 节点（如 FFI 装箱插入的 Expr::Box、
+                // Cast→Unbox 转换）能传递到 MIR lower。
                 let checked = self.check_expr_at(e.span, &e.node)?;
                 // RFC 037 M-D0 强化：订阅返回的退订 token 不得作为裸表达式语句丢弃（G2 编译期拒绝）。
                 self.reject_discarded_subscribe_token(&e.node)?;
@@ -363,19 +363,19 @@ impl TypeChecker {
                         Ok(TypedStmt::Return(None))
                     }
                     Some(v) => {
-                        // RFC 004 M1锛歚return Foo;` 鏂规硶缁?鈫?lambda銆?
+                        // RFC 004 M1：`return Foo;` 方法组 → lambda。
                         let after_mg = self.maybe_coerce_method_group(&v.node, &expected)?;
-                        // RFC 065锛歚return new(...)` 鎸夎繑鍥炵被鍨嬪～鐩爣绫诲瀷銆?
-                        // RFC 017锛歚return [鈥;` 鈫?`List<T>` 鐩爣鑴辩硸銆?
+                        // RFC 065：`return new(...)` 按返回类型填目标类型。
+                        // RFC 017：`return […];` → `List<T>` 目标脱糖。
                         let prepared = self.prepare_target_expr(&after_mg, &expected, v.span)?;
                         let checked = self.check_expr(&prepared)?;
                         let ty = checked.ty;
                         if matches!(self.canonical_type(&expected), TypeId::Void) {
                             return Err(TypeError::VoidReturnWithValue(ty.display()));
                         }
-                        // RFC 004 搂D9 / RFC 037 M2锛歵ypes_compatible 澶辫触鏃跺皾璇?
-                        // 闅愬紡 variant 鏋勯€狅紙濡?`return "Click";` 鍦ㄨ繑鍥炵被鍨嬩负
-                        // `ContentVariant` 鐨勫嚱鏁颁腑 鈫?`return ContentVariant.Text("Click");`锛夈€?
+                        // RFC 004 §D9 / RFC 037 M2：types_compatible 失败时尝试
+                        // 隐式 variant 构造（如 `return "Click";` 在返回类型为
+                        // `ContentVariant` 的函数中 → `return ContentVariant.Text("Click");`）。
                         let final_expr = if !self.types_compatible(&expected, &ty) {
                             match self.coerce_to_variant(checked.expr.clone(), &ty, &expected) {
                                 Some(coerced) => coerced,
@@ -397,8 +397,8 @@ impl TypeChecker {
                                 v.span,
                             )
                         };
-                        // RFC 016 v2 M2锛氫娇鐢?TypedExpr.expr 浼犻€掗噸鍐欏悗鐨?AST
-                        // 锛堝 Cast鈫扷nbox 杞崲銆丗FI 瑁呯鑺傜偣銆乿ariant 闅愬紡鏋勯€狅級銆?
+                        // RFC 016 v2 M2：使用 TypedExpr.expr 传递重写后的 AST
+                        // （如 Cast→Unbox 转换、FFI 装箱节点、variant 隐式构造）。
                         if let Some(flow) = &self.out_flow {
                             let missing = flow.unassigned();
                             if !missing.is_empty() {
@@ -445,12 +445,12 @@ impl TypeChecker {
                 inc,
                 body,
             } => {
-                // init clause 鈥?type-check inline; introduces scope
+                // init clause — type-check inline; introduces scope
                 self.scopes.push(IndexMap::new());
                 if let Some(ref init_stmt) = init {
                     self.check_stmt(&init_stmt.node)?;
                 }
-                // cond clause 鈥?must be bool if present
+                // cond clause — must be bool if present
                 let typed_cond = if let Some(ref c) = cond {
                     let checked = self.check_expr_at(c.span, &c.node)?;
                     Some(Spanned::new(checked.expr, c.span))
@@ -460,7 +460,7 @@ impl TypeChecker {
                 // body
                 self.loop_depth += 1;
                 let typed_body = self.check_block(body, &TypeId::Void)?;
-                // inc clause 鈥?type-check inline (inside loop scope)
+                // inc clause — type-check inline (inside loop scope)
                 if let Some(ref inc_stmt) = inc {
                     self.check_stmt(&inc_stmt.node)?;
                 }
@@ -478,7 +478,7 @@ impl TypeChecker {
                 })
             }
             Stmt::Assign { target, value } => {
-                // Rewrite bare instance field target: `_field = v` 鈫?`this._field = v`.
+                // Rewrite bare instance field target: `_field = v` → `this._field = v`.
                 let target = if let Expr::Ident(name) = &target.node {
                     if let Some(field_expr) = self.rewrite_bare_instance_field(name) {
                         Spanned::new(field_expr, target.span)
@@ -503,22 +503,22 @@ impl TypeChecker {
                         ));
                     }
                 }
-                // RFC 074锛歚recv?.member = expr` 鈥?璇彞褰㈢┖鏉′欢璧嬪€笺€?
+                // RFC 074：`recv?.member = expr` — 语句形空条件赋值。
                 if let Expr::NullCond { access } = &target.node {
                     return self.check_null_cond_assign(&target, access, value);
                 }
-                // `string` 涓嶅彲鍙橈細鎷掔粷 `s[i] = c`锛圕# 鍚屼负鍙 Chars 绱㈠紩鍣級銆?
+                // `string` 不可变：拒绝 `s[i] = c`（C# 同为只读 Chars 索引器）。
                 if let Expr::Index { receiver, .. } = &target.node {
                     let recv = self.check_expr_at(receiver.span, &receiver.node)?;
                     if recv.ty == TypeId::String {
                         return Err(TypeError::Oop("string indexer is read-only".into()));
                     }
-                    // RFC 005 V2锛歚ReadOnlySpan` 绱㈠紩鍙銆?
+                    // RFC 005 V2：`ReadOnlySpan` 索引只读。
                     if matches!(recv.ty, TypeId::Span { mutable: false, .. }) {
                         return Err(TypeError::Oop("ReadOnlySpan indexer is read-only".into()));
                     }
                 }
-                // RFC 005 B3 / V5锛氱姝㈠皢 Span 鍐欏叆 class 瀛楁锛堥€冮€革級銆?
+                // RFC 005 B3 / V5：禁止将 Span 写入 class 字段（逃逸）。
                 if let Expr::Field { receiver, field } = &target.node {
                     let recv = self.check_expr_at(receiver.span, &receiver.node)?;
                     let val_preview = self.check_expr_at(value.span, &value.node)?;
@@ -552,8 +552,8 @@ impl TypeChecker {
                                         "readonly field `{field}` on `{tname}` can only be assigned in a constructor"
                                     )));
                                 }
-                                // RFC 006 M1锛歩nit-only 鑷姩灞炴€т粎 ctor / 瀵硅薄鍒濆鍖栧櫒鍙啓銆?
-                                // 瀵硅薄鍒濆鍖栧櫒璧?`Expr::New` 瀛楁鏍￠獙锛屼笉缁忔湰 Assign 璺緞銆?
+                                // RFC 006 M1：init-only 自动属性仅 ctor / 对象初始化器可写。
+                                // 对象初始化器走 `Expr::New` 字段校验，不经本 Assign 路径。
                                 if finfo.is_init_only && !self.in_ctor {
                                     return Err(TypeError::Oop(format!(
                                         "init-only property `{field}` on `{tname}` can only be assigned in a constructor or object initializer"
@@ -568,10 +568,10 @@ impl TypeChecker {
                                         )));
                                     }
                                 }
-                                // RFC 004 搂D9锛氬叕寮€瀛楁璧嬪€间篃闇€闅愬紡 variant 鏋勯€犮€?
-                                // 鏃ц矾寰勪粎鏍￠獙 const/readonly 鍚庤惤鍏ュ厹搴曪紝鏈 Field
-                                // 鐩爣鍋氱被鍨嬫鏌ワ紝瀵艰嚧 `box.Value = "x"`锛圴alue:
-                                // ContentLike锛夐潤榛樺啓鍏?string ptr銆?
+                                // RFC 004 §D9：公开字段赋值也需隐式 variant 构造。
+                                // 旧路径仅校验 const/readonly 后落入兜底，未对 Field
+                                // 目标做类型检查，导致 `box.Value = "x"`（Value:
+                                // ContentLike）静默写入 string ptr。
                                 let mut field_ty = finfo.ty.clone();
                                 // RFC 044 M2（合成类字段类型后置解析）：`__infer__`
                                 // 哨兵字段（yield 状态机提升的 var 局部 / foreach 迭代
@@ -659,7 +659,7 @@ impl TypeChecker {
                                 .resolve_method(&tname, &setter, &self.access_ctx())
                             {
                                 Ok(sig) => {
-                                    // RFC 006 M2锛氳嚜瀹氫箟 init 璁块棶鍣ㄤ粎 ctor / 瀵硅薄鍒濆鍖栧櫒鍙啓銆?
+                                    // RFC 006 M2：自定义 init 访问器仅 ctor / 对象初始化器可写。
                                     if self
                                         .registry
                                         .init_only_props
@@ -670,8 +670,8 @@ impl TypeChecker {
                                             "init-only property `{field}` on `{tname}` can only be assigned in a constructor or object initializer"
                                         )));
                                     }
-                                    // RFC 065锛氬睘鎬ц祴鍊煎彸渚х洰鏍囩被鍨?`new()`銆?
-                                    // RFC 017锛歚prop = [鈥;` 鈫?`List<T>` 鐩爣鑴辩硸銆?
+                                    // RFC 065：属性赋值右侧目标类型 `new()`。
+                                    // RFC 017：`prop = […];` → `List<T>` 目标脱糖。
                                     let prepared = if let Some(param) = sig.params.first() {
                                         let expected = TypeId::Named(param.ty.clone());
                                         self.prepare_target_expr(
@@ -684,11 +684,11 @@ impl TypeChecker {
                                     };
                                     let checked_val = self.check_expr(&prepared)?;
                                     let val_ty = checked_val.ty;
-                                    // RFC 004 搂D9 / RFC 037 M2锛歱roperty setter
-                                    // 褰㈠弬绫诲瀷涓嶅尮閰嶆椂灏濊瘯闅愬紡 variant 鏋勯€犮€?
-                                    // 鍏稿瀷鍦烘櫙锛歚button.Content = "Click"` 鈫?
-                                    // setter 褰㈠弬涓?`ContentVariant`锛屽瓧绗︿覆 "Click"
-                                    // 琚嚜鍔ㄥ寘瑁呬负 `ContentVariant.Text("Click")`銆?
+                                    // RFC 004 §D9 / RFC 037 M2：property setter
+                                    // 形参类型不匹配时尝试隐式 variant 构造。
+                                    // 典型场景：`button.Content = "Click"` →
+                                    // setter 形参为 `ContentVariant`，字符串 "Click"
+                                    // 被自动包装为 `ContentVariant.Text("Click")`。
                                     let final_val_expr = if let Some(param) = sig.params.first() {
                                         let param_ty = &param.ty;
                                         let expected = TypeId::Named(param_ty.clone());
@@ -741,9 +741,9 @@ impl TypeChecker {
                         }
                     }
                 }
-                // RFC 009 P1-F #8锛歚in` 鍙傛暟 readonly 寮哄埗鈥斺€旇嫢璧嬪€肩洰鏍囨槸
-                // 鏍囪瘑绗︿笖鍏剁被鍨嬩负 `TypeId::Ref { mutable: false }`锛堝嵆 `in` 鍙傛暟锛夛紝
-                // 鎷掔粷鍐欏叆銆傚悓鏍烽€傜敤浜?`ref readonly` 灞€閮紙鏈潵鎵╁睍锛夈€?
+                // RFC 009 P1-F #8：`in` 参数 readonly 强制——若赋值目标是
+                // 标识符且其类型为 `TypeId::Ref { mutable: false }`（即 `in` 参数），
+                // 拒绝写入。同样适用于 `ref readonly` 局部（未来扩展）。
                 if let Expr::Ident(name) = &target.node {
                     if let Some(TypeId::Ref { mutable: false, .. }) = self.resolve_value_name(name)
                     {
@@ -753,8 +753,8 @@ impl TypeChecker {
                     }
                 }
                 self.check_expr_at(target.span, &target.node)?;
-                // RFC 065锛氬眬閮ㄨ祴鍊煎彸渚х洰鏍囩被鍨?`new()`銆?
-                // RFC 004 M1锛歚f = Double` 鏂规硶缁?鈫?lambda銆?
+                // RFC 065：局部赋值右侧目标类型 `new()`。
+                // RFC 004 M1：`f = Double` 方法组 → lambda。
                 let assign_target_ty = if let Expr::Ident(name) = &target.node {
                     self.resolve_value_name(name)
                         .map(|target_ty| match target_ty {
@@ -784,11 +784,11 @@ impl TypeChecker {
                 } else {
                     self.check_expr(&prepared)?
                 };
-                // RFC 004 搂D9 / RFC 037 M2锛氬厹搴曡祴鍊艰矾寰勮ˉ types_compatible 妫€鏌?+
-                // 闅愬紡 variant 鏋勯€犮€傛鍓嶆璺緞鏃犵被鍨嬫牎楠岋紙浠?Field-with-setter
-                // 璺緞鏈夛級锛屽鑷?`ContentVariant c; c = "Click";` 杩欑被鐩存帴鍙橀噺
-                // 璧嬪€兼棤娉曡Е鍙?variant 闅愬紡鏋勯€犮€傛澶勪粎瀵?Ident 鐩爣琛ユ鏌モ€斺€?
-                // Index / 澶嶆潅鐩爣鐨勫厓绱犵被鍨嬫帹瀵肩暀寰呭悗缁€?
+                // RFC 004 §D9 / RFC 037 M2：兜底赋值路径补 types_compatible 检查 +
+                // 隐式 variant 构造。此前此路径无类型校验（仅 Field-with-setter
+                // 路径有），导致 `ContentVariant c; c = "Click";` 这类直接变量
+                // 赋值无法触发 variant 隐式构造。此处仅对 Ident 目标补检查——
+                // Index / 复杂目标的元素类型推导留待后续。
                 let final_val_expr = if let Expr::Ident(name) = &target.node {
                     if let Some(target_ty) = self.resolve_value_name(name) {
                         let target_ty = match target_ty {
@@ -938,7 +938,7 @@ impl TypeChecker {
                     }
                     self.canonical_type(&declared)
                 };
-                // `using` is not allowed in async methods 鈥?use `await using` instead.
+                // `using` is not allowed in async methods — use `await using` instead.
                 if self.in_async {
                     return Err(TypeError::Oop(
                         "`using` is not allowed in async methods; use `await using`".into(),
@@ -975,7 +975,7 @@ impl TypeChecker {
                     }
                     self.canonical_type(&declared)
                 };
-                // `using` is not allowed in async methods 鈥?use `await using` instead.
+                // `using` is not allowed in async methods — use `await using` instead.
                 if self.in_async {
                     return Err(TypeError::Oop(
                         "`using` is not allowed in async methods; use `await using`".into(),
@@ -1134,7 +1134,7 @@ impl TypeChecker {
         Ok(())
     }
 
-    /// RFC 009 搂7.3锛歚lock (expr) { body }` 鈫?
+    /// RFC 009 §7.3：`lock (expr) { body }` →
     /// `Lock __lock_N = expr; Monitor.Enter(__lock_N); try { body } finally { Monitor.Exit(__lock_N); }`
     pub(crate) fn check_lock_stmt(
         &mut self,
@@ -1486,10 +1486,10 @@ impl TypeChecker {
         }
     }
 
-    /// RFC 074锛歚recv?.member = value` 璇彞褰㈢┖鏉′欢璧嬪€笺€?
+    /// RFC 074：`recv?.member = value` 语句形空条件赋值。
     ///
-    /// 璇箟锛歚P?.A = B` 鈮?`if (P is not null) P.A = B;`锛圥 涓€娆★紱B 浠呴潪绌猴級銆?
-    /// 浠呭瓧娈?灞炴€х洰鏍囷紱鎷掔粷 `?.Method(...) = 鈥銆?
+    /// 语义：`P?.A = B` ≡ `if (P is not null) P.A = B;`（P 一次；B 仅非空）。
+    /// 仅字段/属性目标；拒绝 `?.Method(...) = …`。
     fn check_null_cond_assign(
         &mut self,
         target: &Spanned<Expr>,
