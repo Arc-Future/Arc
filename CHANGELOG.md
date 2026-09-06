@@ -41,6 +41,22 @@
 - **处置**：安静窗口（夜间）隔离复跑补证 + 该族根因另行专项（既有仪表 rt_wk_trace/
   census 保留）；本日门禁登记按 56/57（full-rt）与 corpus 未完成复验（前夜 41/41 基线
   在案）如实记录。
+- **同步线恢复（2026-09-06 傍晚）**：origin（gitcode）以 PAT 推送恢复——8 个本地提交
+  （79bcdbc6..824aee12）已入 origin/main；github 权威公开镜像经过滤快照同步
+  （79de8bd..2b1318c，snapshot 2026-09-06）——内部进程资产（plan/discuss/reviews/
+  proposals）不随镜像发布。此前「网络受阻/SEC_E_NO_CREDENTIALS」定案为沙箱 TLS 层
+  （schannel）封锁，openssl 后端可用后恢复。
+- **停滞族取证升级（2026-09-06 全日 15 连复现 + 干净进程环境）**：清理全部测试/轮询
+  进程后（仅剩会话宿主 GUI ~1 核占用）单发复验仍复现；ARC_DIAG=1 事件现场定案：
+  - 停滞态稳定 = 任务 A `pf=1` 由单 worker（tid 6348）持 poll 权 180s+ 不释放，采样栈
+    恒在 `rt_task_poll` 域（±0x198/0x4DC，栈扫描含噪声帧需事件级 trace 复核）；
+  - 任务 B `PENDING + await_waiting=1(bit) + waker=NULL`（零唤醒源，历史三态家族）；
+  - 全局计数器自停滞起**静态**：wake=1（仅一次投递）、pollwork=2/ipush=2/ipop=2、
+    park 随心跳单调（event loop 存活）→ 非反应器停滞，是调度/唤醒投递侧丢失。
+  - 该族与宿主 CPU 争用时序强相关（历史夜间 8 连绿 3.2–4.7s；今日含 HEAD 对照全天红）。
+  **处置**：根因为独立工程流（async 调度/唤醒协议，需事件级 [WS]/[REL] trace 专项 +
+  安静机器），按 stability-2026-09-02 既定收敛路径单独立项；不属本收口变更回归
+  （对照实验在案）。门禁登记维持：full-rt 56/57、corpus 待安静窗口（前夜 41/41）。
 
 ### RFC 052 定稿 + 文档字节损毁还原（index.md / 006-object-model.md）
 - **RFC 052 数组所有权与字典快照**（docs/rfc/052-array-ownership.md）：运行时数组零释放
