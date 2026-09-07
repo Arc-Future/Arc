@@ -28,6 +28,13 @@ public class NamedPipeClientStream : Stream {
     [Builtin(ABI = "rt_pipe_client_connect")]
     public bool Connect(int timeoutMs) { return false; }
 
+    /// <summary>
+    /// 异步接入（RFC 048 M2）：当前切片为同步 Connect 包装为已完成 Task；
+    /// 真 WaitNamedPipe 轮询异步另排。CancellationToken 提交前预检。
+    /// </summary>
+    [Builtin(ABI = "rt_pipe_client_connect_async")]
+    public Task<bool> ConnectAsync(int timeoutMs = -1, CancellationToken cancellationToken = default) { return null; }
+
     /// <summary>是否处于已连接状态。</summary>
     [Builtin(ABI = "rt_pipe_is_connected")]
     public bool IsConnected { get { return false; } }
@@ -45,6 +52,14 @@ public class NamedPipeClientStream : Stream {
     /// <summary>将缓冲区字节写入管道（短写补写至尽）。</summary>
     [Builtin(ABI = "rt_pipe_write")]
     public override void Write(byte[] buffer, int offset, int count) {}
+
+    /// <summary>Reactor 真异步读（RFC 048 M2）。</summary>
+    [Builtin(ABI = "rt_pipe_read_async")]
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default) { return null; }
+
+    /// <summary>Reactor 真异步写（RFC 048 M2）。</summary>
+    [Builtin(ABI = "rt_pipe_write_async")]
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default) { return null; }
 
     // ── Stream 抽象面剩余成员（管道不可寻址，诚实最小实现）──
 
@@ -74,6 +89,14 @@ public class NamedPipeClientStream : Stream {
 
     /// <summary>释放底层管道资源。</summary>
     public override void Dispose() {
+        this.Terminate();
+    }
+
+    /// <summary>
+    /// 关闭管道。模式 A 裸 <c>RtPipe*</c> 无 vtable——基类虚
+    /// <c>Dispose</c> 分派会 SEGV；覆写为直调 Terminate。
+    /// </summary>
+    public override void Close() {
         this.Terminate();
     }
 }

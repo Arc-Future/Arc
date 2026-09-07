@@ -130,6 +130,14 @@ int32_t rt_reactor_impl_submit_connect(void* backend, int32_t fd,
     return (ret < 0) ? -errno : 0;
 }
 
+int32_t rt_reactor_impl_submit_named_pipe_connect(void* backend, int32_t fd,
+                                                    void* user_data) {
+    (void)backend;
+    (void)fd;
+    (void)user_data;
+    return -1;
+}
+
 int32_t rt_reactor_impl_flush(void* backend) {
     (void)backend;
     return 0;

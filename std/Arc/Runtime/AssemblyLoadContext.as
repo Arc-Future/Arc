@@ -62,7 +62,7 @@ using Arc.Threading;
 ///   var asm = alc.LoadByName("myplugin");
 ///
 ///   Console.WriteLine(asm.PackageMeta.Name);    // "myplugin"
-///   Console.WriteLine(asm.PackageMeta.Version); // "1.0.0"
+///   Console.WriteLine(asm.PackageMeta.Version); // "0.1.0"
 ///
 ///   var result = asm.Entry<Config, Output>(config);
 public class AssemblyLoadContext

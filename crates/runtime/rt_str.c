@@ -14,6 +14,9 @@
 #include <time.h>
 #ifdef _WIN32
 #include <windows.h>
+#else
+/* MSVC 用 _strdup；POSIX 用 strdup。 */
+#define _strdup strdup
 #endif
 
 static int rt_str_char_in_set(unsigned char ch, const int32_t* chars, int32_t n);

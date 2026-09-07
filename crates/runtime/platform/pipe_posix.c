@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -248,6 +249,10 @@ int32_t rt_pipe_read(void* handle, void* buffer, int32_t length) {
     if (p == NULL || p->platform == NULL || buffer == NULL || length < 0 || p->closed) {
         return 0;
     }
+    /* 与 Windows 同策：服务端未完成 wait_connect 前禁止 Read（防未握手阻塞）。 */
+    if (p->is_server && !p->is_connected) {
+        return 0;
+    }
     int fd = ((RtPipePlatform*)p->platform)->read_fd;
     if (fd < 0) {
         return 0;
@@ -268,6 +273,9 @@ int32_t rt_pipe_read(void* handle, void* buffer, int32_t length) {
 int32_t rt_pipe_write(void* handle, const void* data, int32_t length) {
     RtPipe* p = (RtPipe*)handle;
     if (p == NULL || p->platform == NULL || data == NULL || length <= 0 || p->closed) {
+        return 0;
+    }
+    if (p->is_server && !p->is_connected) {
         return 0;
     }
     int fd = ((RtPipePlatform*)p->platform)->write_fd;
@@ -350,4 +358,169 @@ void rt_pipe_close(void* handle) {
      * Socket 同策 H1）。 */
     p->closed = 1;
     p->is_connected = 0;
+}
+
+/* ─── RFC 048 M2：Reactor 真异步（POSIX）───────────────────────────────────
+ *
+ * WaitForConnection：FIFO open(2) 无 ConnectNamedPipe/io_uring 等价物 → 专用
+ * 线程跑同步 wait_connect，完成后 rt_task_complete（与 FileStream 池卸载同族）。
+ * 依赖 io_uring eventfd wake（本会话收口）：跨线程 complete→spawn 必能打断
+ * 阻塞 enter，闭合先前「零唤醒源挂死」。
+ *
+ * Read/Write：io_uring IORING_OP_READ/WRITE 真 Reactor（与 socket 同路径）。
+ */
+
+#include <pthread.h>
+
+static int32_t rt_pipe_read_fd(RtPipe* p) {
+    if (p == NULL || p->platform == NULL) {
+        return -1;
+    }
+    return ((RtPipePlatform*)p->platform)->read_fd;
+}
+
+static int32_t rt_pipe_write_fd(RtPipe* p) {
+    if (p == NULL || p->platform == NULL) {
+        return -1;
+    }
+    return ((RtPipePlatform*)p->platform)->write_fd;
+}
+
+typedef struct RtPipeWaitConnectJob {
+    RtPipe* pipe;
+    RtTask* task;
+} RtPipeWaitConnectJob;
+
+static void* rt_pipe_wait_connect_thread(void* arg) {
+    RtPipeWaitConnectJob* job = (RtPipeWaitConnectJob*)arg;
+    int32_t ok = rt_pipe_server_wait_connect(job->pipe);
+    if (ok) {
+        rt_pipe_mark_connected(job->pipe);
+    }
+    job->task->int_result = ok ? 1 : 0;
+    rt_task_complete(job->task);
+    free(job);
+    return NULL;
+}
+
+void* rt_pipe_wait_connect_async(void* handle) {
+    RtPipe* p = (RtPipe*)handle;
+    if (p == NULL || !p->is_server || p->platform == NULL || p->closed) {
+        return NULL;
+    }
+    if (!rt_event_loop_current()) {
+        return NULL;
+    }
+    RtTask* task = rt_task_alloc();
+    if (!task) {
+        return NULL;
+    }
+    task->status = RT_TASK_PENDING;
+    RtPipeWaitConnectJob* job = (RtPipeWaitConnectJob*)malloc(sizeof(RtPipeWaitConnectJob));
+    if (!job) {
+        rt_task_release(task);
+        return NULL;
+    }
+    job->pipe = p;
+    job->task = task;
+    pthread_t th;
+    if (pthread_create(&th, NULL, rt_pipe_wait_connect_thread, job) != 0) {
+        free(job);
+        rt_task_release(task);
+        return NULL;
+    }
+    pthread_detach(th);
+    return task;
+}
+
+void* rt_pipe_read_async(void* handle, void* buffer, int32_t length) {
+    RtPipe* p = (RtPipe*)handle;
+    if (p == NULL || p->platform == NULL || buffer == NULL || length <= 0 || p->closed) {
+        return NULL;
+    }
+    if (p->is_server && !p->is_connected) {
+        return NULL;
+    }
+    void* loop = rt_event_loop_current();
+    void* reactor = loop ? rt_event_loop_get_reactor(loop) : NULL;
+    if (!reactor) {
+        return NULL;
+    }
+    int32_t fd = rt_pipe_read_fd(p);
+    if (fd < 0) {
+        return NULL;
+    }
+    RtTask* task = rt_task_alloc();
+    if (!task) {
+        return NULL;
+    }
+    task->status = RT_TASK_PENDING;
+    RtIoCompletion* compl = (RtIoCompletion*)calloc(1, sizeof(RtIoCompletion));
+    if (!compl) {
+        rt_task_release(task);
+        return NULL;
+    }
+    compl->task = task;
+    compl->op_type = RT_IO_OP_READ_BYTES;
+    compl->buf = buffer;
+    compl->buf_size = length;
+    rt_reactor_register(reactor, fd, 0);
+    /* FIFO 非寻道：offset=-1（与部分内核上 off=0 → -ESPIPE 规避）。 */
+    if (rt_reactor_submit_read(reactor, fd, buffer, (uint32_t)length, (uint64_t)-1, compl) != 0) {
+        free(compl);
+        rt_task_release(task);
+        return NULL;
+    }
+    return task;
+}
+
+void* rt_pipe_write_async(void* handle, const void* data, int32_t length) {
+    RtPipe* p = (RtPipe*)handle;
+    if (p == NULL || p->platform == NULL || data == NULL || length <= 0 || p->closed) {
+        return NULL;
+    }
+    if (p->is_server && !p->is_connected) {
+        return NULL;
+    }
+    void* loop = rt_event_loop_current();
+    void* reactor = loop ? rt_event_loop_get_reactor(loop) : NULL;
+    if (!reactor) {
+        return NULL;
+    }
+    int32_t fd = rt_pipe_write_fd(p);
+    if (fd < 0) {
+        return NULL;
+    }
+    RtTask* task = rt_task_alloc();
+    if (!task) {
+        return NULL;
+    }
+    task->status = RT_TASK_PENDING;
+    RtIoCompletion* compl = (RtIoCompletion*)calloc(1, sizeof(RtIoCompletion));
+    if (!compl) {
+        rt_task_release(task);
+        return NULL;
+    }
+    compl->task = task;
+    compl->op_type = RT_IO_OP_WRITE;
+    /* buffer 归调用方；勿写入 compl->buf（完成路径会 free）。 */
+    rt_reactor_register(reactor, fd, 0);
+    if (rt_reactor_submit_write(reactor, fd, data, (uint32_t)length, (uint64_t)-1, compl) != 0) {
+        free(compl);
+        rt_task_release(task);
+        return NULL;
+    }
+    return task;
+}
+
+void* rt_pipe_client_connect_async(void* handle, int32_t timeoutMs) {
+    /* 与 Windows 同：客户端 Connect 同步包装为已完成 Task（轮询 open 另排）。 */
+    RtTask* task = rt_task_alloc();
+    if (!task) {
+        return NULL;
+    }
+    int32_t ok = rt_pipe_client_connect(handle, timeoutMs);
+    task->int_result = ok ? 1 : 0;
+    rt_task_complete(task);
+    return task;
 }

@@ -525,13 +525,14 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     out.push_str("declare void @rt_throw(ptr)\n");
     out.push_str("declare ptr  @rt_get_exception()\n");
     out.push_str("declare ptr  @rt_format_stacktrace()\n");
-    // Zero-cost EH milestone ② (Windows SEH): native raise + C++ personality.
-    // `catch ptr null` (catch-all) needs no typeinfo; the minimal ThrowInfo
-    // (typeDescriptor RVA = 0) lives in rt_exc.c. `__CxxFrameHandler3` is the
-    // MSVC x64 personality function referenced by may-throw user functions.
+    // Zero-cost EH: personality + native raise helper declares.
+    // `catch ptr null` (catch-all) needs no typeinfo; Arc object is TLS
+    // (`rt_get_exception`). Windows SEH / POSIX Itanium (RFC 010).
     if is_windows {
         out.push_str("declare void @_CxxThrowException(ptr, ptr)\n");
         out.push_str("declare i32  @__CxxFrameHandler3(...)\n");
+    } else {
+        out.push_str("declare i32  @__gxx_personality_v0(...)\n");
     }
 
     // RFC 006 A3 S2/S3: `static readonly` 惰性初始化 guard（类级状态机）。
@@ -591,8 +592,16 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
 
     // Runtime-length array ABI (RFC 015 Phase B)
     out.push_str("declare ptr  @rt_array_create(i32, i32) nounwind\n");
+    out.push_str("declare ptr  @rt_array_create_refs(i32, i32) nounwind\n");
+    out.push_str("declare ptr  @rt_array_create_nested(i32, i32) nounwind\n");
     out.push_str("declare i32  @rt_array_length(ptr) nounwind readonly\n");
     out.push_str("declare void @rt_array_destroy(ptr) nounwind\n");
+    out.push_str("declare void @rt_array_retain(ptr) nounwind\n");
+    out.push_str("declare void @rt_array_release(ptr) nounwind\n");
+    out.push_str("declare void @rt_array_arc_inc_ref(ptr) nounwind\n");
+    out.push_str("declare void @rt_array_arc_dec_ref(ptr) nounwind\n");
+    out.push_str("declare ptr  @rt_array_obj_of(ptr) nounwind readonly\n");
+    out.push_str("declare ptr  @rt_array_payload_of(ptr) nounwind readonly\n");
     // P5-F: Array utility methods
     out.push_str("declare void @rt_array_copy(ptr, i32, ptr, i32, i32) nounwind\n");
     out.push_str("declare void @rt_array_clear(ptr, i32, i32) nounwind\n");
@@ -1214,6 +1223,12 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     out.push_str("declare i32  @rt_pipe_server_disconnect(ptr)\n");
     out.push_str("declare i32  @rt_pipe_is_connected(ptr)\n");
     out.push_str("declare void @rt_pipe_close(ptr)\n");
+    // RFC 048 M2：Reactor 真异步
+    out.push_str("declare ptr  @rt_pipe_wait_connect_async(ptr)\n");
+    out.push_str("declare ptr  @rt_pipe_read_async(ptr, ptr, i32)\n");
+    out.push_str("declare ptr  @rt_pipe_write_async(ptr, ptr, i32)\n");
+    out.push_str("declare ptr  @rt_pipe_client_connect_async(ptr, i32)\n");
+    out.push_str("declare void @rt_pipe_mark_connected(ptr)\n");
     // RFC 009 M2: Async network IO facade (returns RtTask* as completion token)
     out.push_str("declare ptr  @rt_socket_connect_async(ptr, ptr, i32)\n");
     out.push_str("declare ptr  @rt_socket_accept_async(ptr)\n");

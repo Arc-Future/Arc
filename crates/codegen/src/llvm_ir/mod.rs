@@ -64,7 +64,7 @@ use typeck::{ClassLayout, ProgramLayouts, StructLayout};
 
 use mangle::{
     clang_path, crypto_native_vendor_subdir, gui_subsystem_flags, mangle_fn_name, mangle_method,
-    platform_link_flags, target_os, wgpu_native_vendor_subdir, TargetOs,
+    platform_link_flags, platform_ui_link_flags, target_os, wgpu_native_vendor_subdir, TargetOs,
 };
 use string_pool::{collect_string_literals, emit_string_globals, StringConstAccumulator};
 
@@ -76,8 +76,8 @@ use self::types::{
     dict_kv_is_user_type, dict_kv_llvm_ty, dict_kv_ptr_to_scalar, dict_kv_scalar_to_ptr,
     dict_user_eq_fn, dict_user_hash_fn, dict_value_has_equals, iface_generic_root, int_rank,
     is_delegate_type, is_iface_name, is_opaque_runtime_handle, is_primitive_value_type,
-    is_unsigned_int_ty, list_arc_dec_fn, list_arc_inc_fn, list_elem_is_ref, list_elem_llvm_ty,
-    list_elem_size, list_eq_fn, llvm_align_of, llvm_field_type, llvm_size_of,
+    is_runtime_array_ty, is_unsigned_int_ty, list_arc_dec_fn, list_arc_inc_fn, list_elem_is_ref,
+    list_elem_llvm_ty, list_elem_size, list_eq_fn, llvm_align_of, llvm_field_type, llvm_size_of,
     llvm_size_of_type_str, llvm_type_of, nullable_aggregate_inner, nullable_value_llvm_type,
     parse_concurrent_dict_kv, parse_concurrent_single_elem, parse_dict_enumerator_kv,
     parse_dict_kv, parse_enumerator_elem, parse_linked_list_elem, parse_linked_list_node_elem,
@@ -252,18 +252,37 @@ fn stage_vendored_dll(src_dll: &Path, dest: &Path) {
     if staged_dll_matches(&effective, dest) {
         return;
     }
-    // 硬链接要求目标不存在：先清位（旧副本可能是普通文件或残留链接）。
-    let _ = fs::remove_file(dest);
-    if fs::hard_link(&effective, dest).is_ok() {
-        return;
+    if let Some(parent) = dest.parent() {
+        let _ = fs::create_dir_all(parent);
     }
-    // 跨卷 / 不支持硬链接 → 回退复制（RFC 017：回退保持构建不破）。
-    if let Err(e) = fs::copy(&effective, dest) {
+    // 先写入临时文件再原子替换——避免 `remove_file` 后 copy 失败留下空/半写
+    // 产物（WSL DrvFs `/mnt/d` 上 `fs::copy` 偶发 EPERM，曾致 "file too short"）。
+    let tmp = dest.with_extension("staging_tmp");
+    let _ = fs::remove_file(&tmp);
+    let placed = fs::hard_link(&effective, &tmp).is_ok()
+        || fs::copy(&effective, &tmp).is_ok()
+        || fs::read(&effective)
+            .ok()
+            .and_then(|bytes| fs::write(&tmp, bytes).ok())
+            .is_some();
+    if !placed {
+        let _ = fs::remove_file(&tmp);
         eprintln!(
-            "warning: stage_vendored_dll failed: {} -> {}: {e}",
+            "warning: stage_vendored_dll failed: {} -> {}",
             effective.display(),
             dest.display()
         );
+        return;
+    }
+    let _ = fs::remove_file(dest);
+    if fs::rename(&tmp, dest).is_err() {
+        // 同目录 rename 失败时再 copy 一次（极端 FS）
+        if fs::copy(&tmp, dest).is_err() {
+            if let Ok(bytes) = fs::read(&tmp) {
+                let _ = fs::write(dest, bytes);
+            }
+        }
+        let _ = fs::remove_file(&tmp);
     }
 }
 
@@ -574,8 +593,16 @@ pub fn compile_via_llvm_ir(
     };
 
     // Compile runtime C sources → object files.
-    let runtime_objs =
-        prepare_runtime_objects(&rt_base, &clang, &work_dir, level, target, debug_info)?;
+    // RFC 037 M2：非 UI 程序不编译 platform/ime（Linux 无 X11 头亦可跑 EH/pipe 冒烟）。
+    let runtime_objs = prepare_runtime_objects(
+        &rt_base,
+        &clang,
+        &work_dir,
+        level,
+        target,
+        debug_info,
+        needs_platform_window,
+    )?;
 
     // 用户「源实现」模块（`.ani` 内 `source` 声明）：把每个源实现 C 编译为 `.o`
     // 并链接。源实现模块的符号由本地 `.o` 提供 → 跳过外部 `-l<name>` 与外部库
@@ -615,12 +642,12 @@ pub fn compile_via_llvm_ir(
     let mut link_objs: Vec<&Path> = vec![&obj_path];
     for obj in &runtime_objs {
         let name = obj.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        // RFC 037 M1：`rt_wgpu_native.o`（wgpu ABI shim）不再无条件排除——
-        // `WgpuRender` 属 Arc.UI 库，任何引用它的程序都需解析 wgpu shim 符号。
-        // `-lwgpu_native` 已由 ensure_wgpu_native_link_lib 恒注入 + DLL 恒复制，
-        // 故始终链接不引入额外依赖；非 UI 可执行文件同样安全（静态导入库无符号则
-        // 不产生 wgpu_native.dll 运行时依赖）。
-        if (is_platform_runtime_object(name) || is_ui_ime_runtime_object(name))
+        // RFC 037 M2：platform / ime / wgpu shim 仅 UI 程序本地链接。
+        // 非 UI（EH/pipe 冒烟）跳过——Linux 无 `bin/linux` wgpu 资产时不得
+        // 强拉 `-lwgpu_native`；Windows 非 UI 亦免无谓 DLL 依赖。
+        if (is_platform_runtime_object(name)
+            || is_ui_ime_runtime_object(name)
+            || name == "rt_wgpu_native.o")
             && !needs_platform_window
         {
             continue;
@@ -676,9 +703,13 @@ pub fn compile_via_llvm_ir(
     }
     // RFC 037 / 窗口子系统：UI 可执行文件链接为 Windows GUI 子系统以消除
     // 运行时控制台窗口（黑框）。真实入口仍是 `main`（见 gui_subsystem_flags）。
+    // Linux：仅 UI 程序注入 `-lX11`（非 UI 冒烟 / 共享 runtime 不依赖 libX11）。
     if needs_platform_window {
         for flag in gui_subsystem_flags(target) {
             link_flags.push(flag);
+        }
+        for flag in platform_ui_link_flags(target) {
+            link_flags.push(flag.to_string());
         }
     }
     for path in &effective_lib_paths {
@@ -687,6 +718,10 @@ pub fn compile_via_llvm_ir(
     for lib in &native_link_libs {
         // 源实现模块不注入外部 `-l<name>`（符号由本地 `.o` 提供）。
         if native_source_impl.contains(lib.as_str()) {
+            continue;
+        }
+        // 非 UI：跳过 wgpu_native（.ani 可能在索引中，但无 vendor / 无 call）。
+        if !needs_platform_window && lib == "wgpu_native" {
             continue;
         }
         link_flags.push(format!("-l{lib}"));
@@ -1175,6 +1210,10 @@ fn prepare_user_native_objects(
 /// 共享 runtime object 缓存（按 target/opt_level/debug 键），避免并发构建
 /// 重复编译同一份 runtime 源码。`compile_via_llvm_ir`（编译 + 链接）与
 /// `link_objects_to_executable`（纯链接）共用此函数。
+///
+/// `include_platform`：RFC 037 M2——仅当 IR/目标 `.o` 引用 UI/窗口 ABI 时才编译
+/// `runtime-ui/platform/*` 与 `rt_ui_ime.c`。非 UI 程序跳过，避免 Linux 无
+/// `libx11-dev` 时 EH/pipe 等冒烟被 X11 头文件缺口阻断（链接侧本已按同条件剔除）。
 fn prepare_runtime_objects(
     rt_base: &Path,
     clang: &str,
@@ -1182,13 +1221,18 @@ fn prepare_runtime_objects(
     level: optimize::OptLevel,
     target: Option<&str>,
     debug_info: bool,
+    include_platform: bool,
 ) -> Result<Vec<PathBuf>, CodegenError> {
     let rt_dir = rt_base.join("runtime");
     let rt_sources: Vec<(PathBuf, PathBuf)> = if target.map(mangle::is_wasm_triple).unwrap_or(false)
     {
         vec![(rt_dir.join("rt_wasm_min.c"), work_dir.join("rt_wasm_min.o"))]
     } else {
-        let platform_sources = platform_backend_sources(rt_base, work_dir, target);
+        let platform_sources = if include_platform {
+            platform_backend_sources(rt_base, work_dir, target)
+        } else {
+            Vec::new()
+        };
         let sqlite3_c = rt_base.join("runtime-sqlite/sqlite3.c");
         let rt_image_c = rt_base.join("runtime-drawing/rt_image.c"); // RFC 029 M1
                                                                      // RFC 029 M2/M4/M6：qrcodegen（独立 TU，rt_qrcode.c 引用）· quirc 单 TU
@@ -1205,20 +1249,24 @@ fn prepare_runtime_objects(
             // rt_wgpu_native.c / rt_editor.c / rt_ui_ime.c 位于 runtime-ui 根目录，独立于
             // 非 UI 运行时（crates/runtime）与平台后端（runtime-ui/platform）。rt_wgpu_native.c
             // 命中下方循环内 vendoring `-I` 注入（按文件名 rt_wgpu_native.c 匹配）。
+            // rt_ui_ime 仅随 include_platform（与链接侧 is_ui_ime_runtime_object 门控一致）。
             .chain({
                 let ui_dir = rt_base.join("runtime-ui");
-                [
+                let mut ui_srcs: Vec<(&str, &str)> = vec![
                     ("rt_wgpu_native.c", "rt_wgpu_native.o"),
                     ("rt_editor.c", "rt_editor.o"),
-                    ("rt_ui_ime.c", "rt_ui_ime.o"),
-                ]
-                .iter()
-                .map(|(name, obj)| {
-                    let src = ui_dir.join(name);
-                    let obj = work_dir.join(obj);
-                    (src, obj)
-                })
-                .collect::<Vec<_>>()
+                ];
+                if include_platform {
+                    ui_srcs.push(("rt_ui_ime.c", "rt_ui_ime.o"));
+                }
+                ui_srcs
+                    .into_iter()
+                    .map(|(name, obj)| {
+                        let src = ui_dir.join(name);
+                        let obj = work_dir.join(obj);
+                        (src, obj)
+                    })
+                    .collect::<Vec<_>>()
             })
             .chain(std::iter::once((sqlite3_c, work_dir.join("sqlite3.o"))))
             .chain(std::iter::once((rt_image_c, work_dir.join("rt_image.o"))))
@@ -1270,6 +1318,10 @@ fn prepare_runtime_objects(
     // 编译选项的稳定分量（与下方编译分支的 `-I`/`-D` 注入一一对应；新增注入
     // 必须同步此处——见 rt_cache::flags_hash 维护规则）。
     let mut flags_extra: Vec<&str> = vec!["cc"]; // `-DARC_CYCLE_COLLECTION` 恒注入
+    if !mangle::is_windows_target(target) && !target.map(mangle::is_wasm_triple).unwrap_or(false) {
+        // 与 clang_compile 的 `-fPIC` / `-fexceptions` / `-D_GNU_SOURCE` 对齐
+        flags_extra.push("fpic");
+    }
     if rt_base.join("runtime-ui/wgpu-native/include").exists() {
         flags_extra.push("iwgpu");
     }
@@ -1449,9 +1501,52 @@ fn prepare_runtime_objects(
     Ok(runtime_objs)
 }
 
-/// RFC 037 M2：检测 LLVM IR 是否引用 crates/runtime-ui/platform 窗口/UI ABI 符号。
+/// RFC 037 M2：检测 LLVM IR 是否**调用** crates/runtime-ui/platform 窗口/UI ABI。
+///
+/// `runtime_decls` 恒发射 `declare … @rt_ui_*` / `@rt_window_*`，故不可用裸
+/// `contains("@rt_ui_")`——否则非 UI 程序也会被判为需要 platform，Linux 无
+/// X11 头时 EH/pipe 冒烟被误阻断。仅 `call` / `invoke` 行计为真引用。
 fn ir_needs_platform_window(ir: &str) -> bool {
-    ir.contains("@rt_ui_") || ir.contains("@__arc_window_") || ir.contains("@rt_window_")
+    ir.lines().any(|line| {
+        let t = line.trim_start();
+        if !(t.contains(" call ")
+            || t.starts_with("call ")
+            || t.contains(" invoke ")
+            || t.starts_with("invoke "))
+        {
+            return false;
+        }
+        t.contains("@rt_ui_") || t.contains("@__arc_window_") || t.contains("@rt_window_")
+    })
+}
+
+#[cfg(test)]
+mod platform_window_gate_tests {
+    use super::ir_needs_platform_window;
+
+    #[test]
+    fn declare_only_does_not_need_platform() {
+        let ir = "\
+declare ptr @rt_window_create(ptr, i32, i32)
+declare void @rt_ui_wake_ui_thread()
+define void @main() {
+  ret void
+}
+";
+        assert!(!ir_needs_platform_window(ir));
+    }
+
+    #[test]
+    fn call_rt_window_needs_platform() {
+        let ir = "\
+declare ptr @rt_window_create(ptr, i32, i32)
+define void @main() {
+  %w = call ptr @rt_window_create(ptr null, i32 1, i32 1)
+  ret void
+}
+";
+        assert!(ir_needs_platform_window(ir));
+    }
 }
 
 /// vendored 底座缺口归因（DX，`arc-vendor-001`）：非 Windows 目标链接错误中
@@ -1639,8 +1734,17 @@ pub fn link_objects_to_executable(
     };
     let shared_rt_input = shared_rt.as_ref().map(|a| a.link_input());
 
-    let runtime_objs =
-        prepare_runtime_objects(&rt_base, &clang, &work_dir, level, target, debug_info)?;
+    // RFC 037 M2：先判定 UI 需求再编译 platform（与 compile_via_llvm_ir 对偶）。
+    let needs_platform_window = objs_need_platform_window(objs);
+    let runtime_objs = prepare_runtime_objects(
+        &rt_base,
+        &clang,
+        &work_dir,
+        level,
+        target,
+        debug_info,
+        needs_platform_window,
+    )?;
 
     // 用户「源实现」模块（`.ani` 内 `source` 声明）：把每个源实现 C 编译为 `.o`
     // 并链接。源实现模块的符号由本地 `.o` 提供 → 跳过外部 `-l<name>` 与外部库
@@ -1692,12 +1796,13 @@ pub fn link_objects_to_executable(
         }
     }
 
-    // RFC 037 M1 修复：检测输入 `.o` 是否引用 UI/WGPU ABI 符号，决定是否
-    // 链接 platform/ime/wgpu runtime 对象与 GUI 子系统标志（与 compile_via_llvm_ir
-    // 路径的 `ir_needs_platform_window` / `needs_platform_window` 对偶）。
-    let needs_platform_window = objs_need_platform_window(objs);
+    // RFC 037 M1 修复：`needs_platform_window` 已在 prepare 前判定；此处仅注入
+    // GUI 子系统标志与 Linux `-lX11`（与 compile_via_llvm_ir 路径对偶）。
     if needs_platform_window {
         for flag in gui_subsystem_flags(target) {
+            link_flags.push(flag.to_string());
+        }
+        for flag in mangle::platform_ui_link_flags(target) {
             link_flags.push(flag.to_string());
         }
     }
@@ -1707,6 +1812,9 @@ pub fn link_objects_to_executable(
     for lib in &native_link_libs {
         // 源实现模块不注入外部 `-l<name>`（符号由本地 `.o` 提供）。
         if native_source_impl.contains(lib.as_str()) {
+            continue;
+        }
+        if !needs_platform_window && lib == "wgpu_native" {
             continue;
         }
         link_flags.push(format!("-l{lib}"));
@@ -1719,12 +1827,11 @@ pub fn link_objects_to_executable(
     }
     for obj in &runtime_objs {
         let name = obj.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        // RFC 037 M1：`rt_wgpu_native.o`（wgpu ABI shim）始终链接——
-        // `WgpuRender` 属 Arc.UI 库，任何引用它的程序都需解析 wgpu shim 符号；
-        // 非 UI 程序经 --gc-sections 回收无引用段，不产生 DLL 加载依赖。
-        // platform_* / rt_ui_ime：仅当输入 `.o` 引用 UI ABI 时链接，
-        // 与 compile_via_llvm_ir 的 `!needs_platform_window → skip` 对偶。
-        if (is_platform_runtime_object(name) || is_ui_ime_runtime_object(name))
+        // RFC 037 M2：platform / ime / wgpu shim 仅 UI 程序本地链接（与
+        // compile_via_llvm_ir 对偶）。
+        if (is_platform_runtime_object(name)
+            || is_ui_ime_runtime_object(name)
+            || name == "rt_wgpu_native.o")
             && !needs_platform_window
         {
             continue;
@@ -1856,8 +1963,10 @@ pub fn link_objects_to_dynamic_library(
     };
     let shared_rt_input = shared_rt.as_ref().map(|a| a.link_input());
 
-    let runtime_objs =
-        prepare_runtime_objects(&rt_base, &clang, &work_dir, level, target, debug_info)?;
+    // 插件 dll 永不链接 platform/ime——跳过编译。
+    let runtime_objs = prepare_runtime_objects(
+        &rt_base, &clang, &work_dir, level, target, debug_info, false,
+    )?;
 
     // RFC 016 M4（用户裁决简化 2026-08-03）：相对 `library` 基准 = 执行程序根目录。
     // 动态库链接阶段同样按 `-o` 输出目录解析，与 `compile_to_object` 的 IR 发射
@@ -2257,10 +2366,8 @@ impl<'a> ModuleEmitter<'a> {
         mut self,
         fns: &[(String, MirCfgBody)],
     ) -> Result<(String, Vec<StaticInitDiagnostic>), CodegenError> {
-        // POSIX try/catch 编译门（arc-eh-001）：Windows SEH 为 1.0 唯一实现面，
-        // 其余目标在发射前给出结构化错误，而非落到 emit_try_catch 深处 ICE。
-        // 作用域 = 本模块将发射的可达函数集，与旧 panic 触发面完全一致。
-        emit_cfg::reject_try_catch_outside_windows(fns, self.is_windows, self.file_path)?;
+        // Zero-cost EH：Windows SEH + POSIX Itanium（里程碑⑨）均已落地；
+        // try/catch 在两端经 invoke/landingpad|catchswitch 发射，无平台编译门。
 
         // 静态初始化器直 emit 路径的返回类型表（与 FnEmitter.fn_returns 同源构建）。
         self.fn_returns = fns
@@ -3263,14 +3370,21 @@ impl<'a> ModuleEmitter<'a> {
             // 遍历 class 类型字段（排除 opaque runtime handle），加载字段值
             // 并 `rt_arc_dec`。`rt_arc_dec` 归零时（M3）经 vtable slot 1 调用，
             // 统一释放嵌套 class 字段引用（解决 header-only drop 泄漏）。
-            let class_field_slots: Vec<(String, u32)> = class
+            let class_field_slots: Vec<(String, u32, bool)> = class
                 .fields
                 .iter()
                 .filter(|f| {
-                    self.layouts.classes.contains_key(f.ty.as_str())
-                        && !is_opaque_runtime_handle(f.ty.as_str())
+                    (self.layouts.classes.contains_key(f.ty.as_str())
+                        && !is_opaque_runtime_handle(f.ty.as_str()))
+                        || is_runtime_array_ty(f.ty.as_str(), &self.layouts)
                 })
-                .map(|f| (f.ty.to_string(), f.offset))
+                .map(|f| {
+                    (
+                        f.ty.to_string(),
+                        f.offset,
+                        is_runtime_array_ty(f.ty.as_str(), &self.layouts),
+                    )
+                })
                 .collect();
             let has_class_fields = !class_field_slots.is_empty();
             // RFC 051 S3b/S3c：容器句柄包装类（Dictionary_K_V / SortedDictionary_K_V）
@@ -3306,13 +3420,18 @@ impl<'a> ModuleEmitter<'a> {
                     "define linkonce_odr void @__finalize_{cname}(ptr %self) comdat {{\n"
                 ));
                 fin.push_str("entry:\n");
-                for (ty, off) in &class_field_slots {
+                for (ty, off, is_arr) in &class_field_slots {
                     // object pointer = %self + offset（header 16B + 字段偏移）。
                     let fld = format!("%__finalize_{cname}_f{off}");
                     fin.push_str(&format!("{fld} = getelementptr i8, ptr %self, i64 {off}\n"));
                     let val = format!("%__finalize_{cname}_v{off}");
                     fin.push_str(&format!("{val} = load ptr, ptr {fld}\n"));
-                    fin.push_str(&format!("call void @rt_arc_dec(ptr {val})\n"));
+                    if *is_arr {
+                        // RFC 052：数组字段 → rt_array_release（payload ARC）。
+                        fin.push_str(&format!("call void @rt_array_release(ptr {val})\n"));
+                    } else {
+                        fin.push_str(&format!("call void @rt_arc_dec(ptr {val})\n"));
+                    }
                     let _ = ty;
                 }
                 if let Some(destroy) = &container_release {
@@ -3338,12 +3457,25 @@ impl<'a> ModuleEmitter<'a> {
                     "define linkonce_odr void @__walk_{cname}(ptr %self, ptr %visit, ptr %ctx) comdat {{\n"
                 ));
                 walk.push_str("entry:\n");
-                for (ty, off) in &class_field_slots {
-                    let fld = format!("%__walk_{cname}_f{off}");
-                    walk.push_str(&format!("{fld} = getelementptr i8, ptr %self, i64 {off}\n"));
-                    let val = format!("%__walk_{cname}_v{off}");
-                    walk.push_str(&format!("{val} = load ptr, ptr {fld}\n"));
-                    walk.push_str(&format!("call void %visit(ptr %ctx, ptr {val})\n"));
+                for (ty, off, is_arr) in &class_field_slots {
+                    if *is_arr {
+                        // 数组对象参与环检测：经 payload→obj 交给 visit（class 元素环）。
+                        let fld = format!("%__walk_{cname}_f{off}");
+                        walk.push_str(&format!("{fld} = getelementptr i8, ptr %self, i64 {off}\n"));
+                        let payload = format!("%__walk_{cname}_p{off}");
+                        walk.push_str(&format!("{payload} = load ptr, ptr {fld}\n"));
+                        let obj = format!("%__walk_{cname}_o{off}");
+                        walk.push_str(&format!(
+                            "{obj} = call ptr @rt_array_obj_of(ptr {payload})\n"
+                        ));
+                        walk.push_str(&format!("call void %visit(ptr %ctx, ptr {obj})\n"));
+                    } else {
+                        let fld = format!("%__walk_{cname}_f{off}");
+                        walk.push_str(&format!("{fld} = getelementptr i8, ptr %self, i64 {off}\n"));
+                        let val = format!("%__walk_{cname}_v{off}");
+                        walk.push_str(&format!("{val} = load ptr, ptr {fld}\n"));
+                        walk.push_str(&format!("call void %visit(ptr %ctx, ptr {val})\n"));
+                    }
                     let _ = ty;
                 }
                 walk.push_str("ret void\n");

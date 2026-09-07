@@ -18,6 +18,8 @@
 #include <string.h>
 #ifdef _WIN32
 #include <intrin.h> /* _ReturnAddress（rt_task_poll NULL 契约取证） */
+#else
+#include <pthread.h>
 #endif
 
 /* 丢失唤醒取证诊断计数器（临时：定义于 rt_event_loop.c，定位后整体回收） */
@@ -30,6 +32,22 @@ extern _Atomic(uint64_t) g_diag_add_prop;
 #  define NOMINMAX
 #  include <windows.h> /* SEH: EXCEPTION_EXECUTE_HANDLER / EXCEPTION_CONTINUE_SEARCH */
 #endif
+
+static long rt_task_current_tid(void) {
+#if defined(_WIN32)
+    return (long)GetCurrentThreadId();
+#else
+    return (long)pthread_self();
+#endif
+}
+
+static void* rt_task_return_address(void) {
+#if defined(_WIN32)
+    return _ReturnAddress();
+#else
+    return __builtin_return_address(0);
+#endif
+}
 
 #if defined(_WIN32)
 /* rt_task_poll 的 SEH 边界过滤器（自包含，不依赖 rt_exc.c）：
@@ -272,7 +290,7 @@ void rt_task_release(void* state) {
                     (void*)t, (void*)t->resume,
                     atomic_load_explicit((_Atomic int32_t*)&t->status,
                                          memory_order_relaxed),
-                    (unsigned long)GetCurrentThreadId(), caller_rva);
+                    (unsigned long)rt_task_current_tid(), caller_rva);
         }
     }
     /* RFC 016 子项 M2：FAULTED Task 的异常所有权统一转移。
@@ -462,7 +480,7 @@ int32_t rt_task_poll(void* state) {
          * 错误以 default 值继续流转，爆炸点远离根因。改 fail-fast：取证现场
          * （返回地址）后响亮终止，错误在发生点暴露。运行时全部调用方已核
          * 具 NULL 预防（rt_combinator 遍历跳空 / rt_task_poll_work 预检）。 */
-        void* ret = _ReturnAddress();
+        void* ret = rt_task_return_address();
         fprintf(stderr, "[poll-null] rt_task_poll(NULL) — contract violation, ret=%p\n", ret);
         fflush(stderr);
         abort();
@@ -916,7 +934,7 @@ static void rt_wk_trace(char kind, void* inner, void* outer, int32_t st) {
     long long seq = atomic_fetch_add_explicit(&g_diag_wk_seq, 1,
                                               memory_order_relaxed);
     fprintf(stderr, "[WS] %c seq=%lld inner=%p outer=%p st=%d tid=%lu\n",
-            kind, seq, inner, outer, st, (unsigned long)GetCurrentThreadId());
+            kind, seq, inner, outer, st, (unsigned long)rt_task_current_tid());
 }
 
 /* waker 交接自旋锁（rt_combinator.c 等跨 TU 共用；声明见 rt_abi.h） */

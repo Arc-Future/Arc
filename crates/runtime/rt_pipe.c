@@ -65,6 +65,14 @@ void rt_pipe_state_free(void* state) {
     rt_obj_free(p);
 }
 
+void rt_pipe_mark_connected(void* handle) {
+    RtPipe* p = (RtPipe*)handle;
+    if (p == NULL || p->closed) {
+        return;
+    }
+    p->is_connected = 1;
+}
+
 #ifdef _WIN32
 #include "platform/pipe_windows.c"
 #else

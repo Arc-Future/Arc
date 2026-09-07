@@ -5337,6 +5337,14 @@ impl<'a> FnEmitter<'a> {
                 ));
                 ("i32".into(), tmp)
             }
+            "WaitForConnectionAsync" => {
+                // CT 参数当前未下沉到 rt（M2 最小切片）；与 socket async 同形返回 Task*。
+                let tmp = self.fresh_temp();
+                self.emit(&format!(
+                    "{tmp} = call ptr @rt_pipe_wait_connect_async(ptr {recv})"
+                ));
+                ("ptr".into(), tmp)
+            }
             "Connect" => {
                 let (_, timeout) =
                     self.emit_operand(&args.first().cloned().unwrap_or(MirOperand::ConstInt(-1)));
@@ -5345,6 +5353,15 @@ impl<'a> FnEmitter<'a> {
                     "{tmp} = call i32 @rt_pipe_client_connect(ptr {recv}, i32 {timeout})"
                 ));
                 ("i32".into(), tmp)
+            }
+            "ConnectAsync" => {
+                let (_, timeout) =
+                    self.emit_operand(&args.first().cloned().unwrap_or(MirOperand::ConstInt(-1)));
+                let tmp = self.fresh_temp();
+                self.emit(&format!(
+                    "{tmp} = call ptr @rt_pipe_client_connect_async(ptr {recv}, i32 {timeout})"
+                ));
+                ("ptr".into(), tmp)
             }
             "Read" => {
                 let (_, buffer) =
@@ -5363,6 +5380,23 @@ impl<'a> FnEmitter<'a> {
                 ));
                 ("i32".into(), tmp)
             }
+            "ReadAsync" => {
+                let (_, buffer) =
+                    self.emit_operand(&args.first().cloned().unwrap_or(MirOperand::ConstNull));
+                let (_, offset) =
+                    self.emit_operand(&args.get(1).cloned().unwrap_or(MirOperand::ConstInt(0)));
+                let (_, count) =
+                    self.emit_operand(&args.get(2).cloned().unwrap_or(MirOperand::ConstInt(0)));
+                let base = self.fresh_temp();
+                self.emit(&format!(
+                    "{base} = getelementptr inbounds i8, ptr {buffer}, i32 {offset}"
+                ));
+                let tmp = self.fresh_temp();
+                self.emit(&format!(
+                    "{tmp} = call ptr @rt_pipe_read_async(ptr {recv}, ptr {base}, i32 {count})"
+                ));
+                ("ptr".into(), tmp)
+            }
             "Write" => {
                 let (_, buffer) =
                     self.emit_operand(&args.first().cloned().unwrap_or(MirOperand::ConstNull));
@@ -5379,11 +5413,28 @@ impl<'a> FnEmitter<'a> {
                 ));
                 ("void".into(), String::new())
             }
+            "WriteAsync" => {
+                let (_, buffer) =
+                    self.emit_operand(&args.first().cloned().unwrap_or(MirOperand::ConstNull));
+                let (_, offset) =
+                    self.emit_operand(&args.get(1).cloned().unwrap_or(MirOperand::ConstInt(0)));
+                let (_, count) =
+                    self.emit_operand(&args.get(2).cloned().unwrap_or(MirOperand::ConstInt(0)));
+                let base = self.fresh_temp();
+                self.emit(&format!(
+                    "{base} = getelementptr inbounds i8, ptr {buffer}, i32 {offset}"
+                ));
+                let tmp = self.fresh_temp();
+                self.emit(&format!(
+                    "{tmp} = call ptr @rt_pipe_write_async(ptr {recv}, ptr {base}, i32 {count})"
+                ));
+                ("ptr".into(), tmp)
+            }
             "Disconnect" => {
                 self.emit(&format!("call i32 @rt_pipe_server_disconnect(ptr {recv})"));
                 ("void".into(), String::new())
             }
-            "Terminate" | "Dispose" => {
+            "Terminate" | "Dispose" | "Close" => {
                 self.emit(&format!("call void @rt_pipe_close(ptr {recv})"));
                 ("void".into(), String::new())
             }

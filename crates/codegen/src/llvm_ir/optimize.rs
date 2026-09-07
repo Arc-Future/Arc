@@ -134,6 +134,17 @@ pub fn clang_compile(
         cmd.arg("-g");
         cmd.args(["-gdwarf-5"]);
     }
+    // RFC 010 Itanium：landingpad / _Unwind_RaiseException 需要异常表；
+    // Windows SEH 路径由 MSVC personality 自带，不注入 -fexceptions。
+    if !mangle::is_windows_target(target) && !target.map(mangle::is_wasm_triple).unwrap_or(false) {
+        cmd.arg("-fexceptions");
+        // glibc：C11 严格模式不暴露 POSIX/GNU 扩展（open/setenv/CPU_SET…）；
+        // 注入 _GNU_SOURCE 使 runtime C 在 Linux 可编译（覆盖 _DEFAULT_SOURCE）。
+        cmd.arg("-D_GNU_SOURCE");
+        // RFC 017 共享 runtime（`.so` / `.dylib`）：对象须 PIC，否则链接时报
+        // `R_X86_64_TPOFF32 … recompile with -fPIC`。Windows 无此约束。
+        cmd.arg("-fPIC");
+    }
     if let Some(sflag) = sanitize_flag() {
         cmd.arg(&sflag);
     }

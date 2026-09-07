@@ -298,8 +298,10 @@ if ($BundleLlm) {
         Write-Warning "-BundleLlm requested but no clang found (ARC_CLANG / C:\Program Files\LLVM / PATH). Skipping LLVM bundle."
     } else {
         $clangBin = Split-Path $clang -Parent
-        & $clang --version | Select-Object -First 1
+        # 勿对 `--version` 管道 Select-Object：会污染 $LASTEXITCODE。
+        $clangVerLines = @(& $clang --version 2>&1)
         if ($LASTEXITCODE -ne 0) { throw "bundled clang failed its --version probe: $clang" }
+        if ($clangVerLines.Count -gt 0) { Write-Host ($clangVerLines[0].ToString()) }
         Copy-LlvmSlimSubset $clangBin (Join-Path $pkgDir "lib\llvm\bin")
         $bundledLlvm = $true
         $clangTool = if ($isUnixHost) { "clang" } else { "clang.exe" }

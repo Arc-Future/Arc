@@ -113,7 +113,8 @@ extern _Atomic(uint64_t) g_diag_repoll_iters;
 extern _Atomic(uint64_t) g_diag_complete_no_waker;
 
 /* ---- 自捕获栈（临时取证）：自旋超限时打印调用栈（dbghelp 运行时加载，
- * 无链接依赖；PDB 与 DLL 同目录时符号化）。一次性触发防刷屏。 ---- */
+ * 无链接依赖；PDB 与 DLL 同目录时符号化）。一次性触发防刷屏。
+ * Win32 专用；POSIX 仅打 tag（平台审计：此前 Windows API 无守卫）。 ---- */
 void rt_diag_btrace(const char* tag) {
     static _Atomic(uint32_t) taken;
     uint32_t exp = 0;
@@ -121,6 +122,7 @@ void rt_diag_btrace(const char* tag) {
             memory_order_acq_rel, memory_order_relaxed)) {
         return;
     }
+#ifdef _WIN32
     HMODULE dbgh = LoadLibraryA("dbghelp.dll");
     if (!dbgh) {
         fprintf(stderr, "[btrace] %s: dbghelp unavailable\n", tag);
@@ -171,6 +173,10 @@ void rt_diag_btrace(const char* tag) {
         }
     }
     fflush(stderr);
+#else
+    fprintf(stderr, "[btrace] %s: (POSIX stub — no dbghelp)\n", tag ? tag : "?");
+    fflush(stderr);
+#endif
 }
 
 /* 跨线程取栈：SuspendThread → GetThreadContext → StackWalk64 → SymFromAddr。

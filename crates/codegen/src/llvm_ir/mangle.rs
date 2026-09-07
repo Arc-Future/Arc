@@ -137,9 +137,12 @@ pub(super) fn platform_link_flags(target: Option<&str>) -> Vec<&'static str> {
             "-lbcrypt",
         ],
         TargetOs::Linux => vec![
-            "-lX11",
             // RFC 017: rt_library_load/sym/unload 依赖 libdl（dlopen/dlsym/dlclose）
             "-ldl",
+            // RFC 010 / 里程碑⑨：`__gxx_personality_v0` + Itanium unwind（libstdc++）
+            "-lstdc++",
+            // RFC 048 M2：POSIX wait_connect_async 线程卸载
+            "-lpthread",
         ],
         TargetOs::Macos => vec![
             "-framework",
@@ -148,6 +151,8 @@ pub(super) fn platform_link_flags(target: Option<&str>) -> Vec<&'static str> {
             "Foundation",
             "-framework",
             "CoreGraphics",
+            // RFC 010 / 里程碑⑨：`__gxx_personality_v0`（libc++）
+            "-lc++",
         ],
         TargetOs::Ohos => vec![],
         TargetOs::Host => {
@@ -174,8 +179,9 @@ pub(super) fn platform_link_flags(target: Option<&str>) -> Vec<&'static str> {
                 ]
             } else if cfg!(target_os = "linux") {
                 vec![
-                    "-lX11", // RFC 017: rt_library_load/sym/unload 依赖 libdl
-                    "-ldl",
+                    "-ldl", // RFC 017: rt_library_load/sym/unload
+                    "-lstdc++", // RFC 010 Itanium personality
+                    "-lpthread", // RFC 048 M2 pipe async
                 ]
             } else if cfg!(target_os = "macos") {
                 vec![
@@ -185,11 +191,24 @@ pub(super) fn platform_link_flags(target: Option<&str>) -> Vec<&'static str> {
                     "Foundation",
                     "-framework",
                     "CoreGraphics",
+                    "-lc++", // RFC 010 Itanium personality
                 ]
             } else {
                 vec![]
             }
         }
+    }
+}
+
+/// Linux X11 窗口后端链接标志（RFC 037 / runtime-ui/platform/linux）。
+///
+/// 仅当 `needs_platform_window` 为真时注入——共享 runtime 与非 UI 冒烟不得
+/// 依赖 `libX11`（CI/WSL 无 `libx11-dev` 亦可编过 EH/pipe）。
+pub(super) fn platform_ui_link_flags(target: Option<&str>) -> Vec<&'static str> {
+    match target_os(target) {
+        TargetOs::Linux => vec!["-lX11"],
+        TargetOs::Host if cfg!(target_os = "linux") => vec!["-lX11"],
+        _ => vec![],
     }
 }
 

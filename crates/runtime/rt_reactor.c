@@ -117,6 +117,11 @@ int32_t rt_reactor_submit_connect(void* reactor, int32_t fd,
     return rt_reactor_impl_submit_connect(reactor, fd, addr, addr_len, user_data);
 }
 
+int32_t rt_reactor_submit_named_pipe_connect(void* reactor, int32_t fd, void* user_data) {
+    if (!reactor) return -1;
+    return rt_reactor_impl_submit_named_pipe_connect(reactor, fd, user_data);
+}
+
 int32_t rt_reactor_submit_timeout(void* reactor, uint64_t timeout_ns, void* user_data) {
     if (!reactor) return -1;
     return rt_reactor_impl_submit_timeout(reactor, timeout_ns, user_data);

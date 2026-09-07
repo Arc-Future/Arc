@@ -44,9 +44,10 @@ if (-not (Test-Path (Join-Path $SyncDir ".git"))) {
     git clone "https://github.com/$Repo.git" $SyncDir
     if ($LASTEXITCODE -ne 0) { throw "clone https://github.com/$Repo.git failed" }
 }
-git -C $SyncDir fetch origin 2>&1 | Out-Null
-git -C $SyncDir reset --hard origin/main | Out-Null
-git -C $SyncDir clean -fd | Out-Null
+git -C $SyncDir fetch origin *> $null
+if ($LASTEXITCODE -ne 0) { throw "git fetch origin failed in $SyncDir" }
+git -C $SyncDir reset --hard origin/main *> $null
+git -C $SyncDir clean -fd *> $null
 git -C $SyncDir config user.name $AuthorName
 git -C $SyncDir config user.email $AuthorEmail
 

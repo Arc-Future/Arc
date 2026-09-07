@@ -635,7 +635,7 @@ mod tests {
         std::fs::create_dir_all(&inner).unwrap();
         std::fs::write(
             outer.join("arc.toml"),
-            "[package]\nname = \"outer\"\nversion = \"1.0.0\"\n",
+            "[package]\nname = \"outer\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
         // 嵌套目录自身无 arc.toml → 不向上行走，直接报错。

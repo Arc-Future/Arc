@@ -28,7 +28,7 @@ Arc = 可读性 × 编译期安全 × AOT 确定性 × 人机协作性
 
 ## 当前状态
 
-**Arc 1.0**（2026-09-04）——语言、编译器、标准库与运行时的首个稳定版：单一 `arc` 可执行文件 + 源码分发的标准库 + 随包 runtime C 源码（首次构建经内容寻址缓存按需编译），AOT 编译至原生机器码，无 JIT 运行时。当前仍处于活跃演进期，不宣称 C# 完备对等；版本历史见 [CHANGELOG](CHANGELOG.md)，成熟度治理见[成熟度宪章](docs/rfc/036-maturity.md)。
+**Arc 0.1**（当前发布线）——语言、编译器、标准库与运行时的首个对外预正式版本：单一 `arc` 可执行文件 + 源码分发的标准库 + 随包 runtime C 源码（首次构建经内容寻址缓存按需编译），AOT 编译至原生机器码，无 JIT 运行时。曾于 2026-09-04 以「1.0」口径登记功能面；现按诚实成熟度将对外版本号收敛为 **0.1**（能力不撤回）。当前仍处于活跃演进期，不宣称 C# 完备对等；版本历史见 [CHANGELOG](CHANGELOG.md)，成熟度治理见[成熟度宪章](docs/rfc/036-maturity.md)。
 
 - **里程碑**：F0–M3 ✅（资产不回滚）；M4 可排期未开工；M5–Mn 逐层自举（HIR / typeck / codegen）推进中。
 
@@ -132,9 +132,9 @@ arc/
 
 - [CHANGELOG](CHANGELOG.md)
 
-## 安装 / SDK（可发布候选）
+## 安装 / SDK（0.1 预正式）
 
-Arc 提供 .NET CLI 观感的命令行工具与 SDK 能力，当前为**可发布候选**（非正式发布）：
+Arc 提供 .NET CLI 观感的命令行工具与 SDK 能力。当前对外发布线为 **0.1.0**（预正式；曾误标 1.0，现已纠偏）。二进制包见 [GitHub Releases](https://github.com/Arc-Future/Arc/releases)；公网 `static.arc.dev` 仍为占位，可用 `ARC_RELEASE_BASE` 指向 Release 下载根：
 
 - `arc env` — 环境变量与 SDK 布局
 

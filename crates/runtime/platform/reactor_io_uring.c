@@ -19,7 +19,7 @@
 
 #if defined(__linux__)
 
-#include "rt_abi.h"
+#include "../rt_abi.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -30,7 +30,16 @@
 #include <sys/uio.h>
 #include <linux/io_uring.h>
 #include <sys/socket.h>
+#include <sys/eventfd.h>
+#include <poll.h>
 #include <netinet/in.h>
+
+/* poll 交付时跳过：跨线程 wake / 等待预算 timeout（EventLoop 见 NULL 亦跳过，
+ * 但需区分以便 drain eventfd / 重武装 POLL_ADD）。 */
+static char g_iouring_ud_wake;
+static char g_iouring_ud_timeout;
+#define RT_IOURING_UD_WAKE    ((void*)&g_iouring_ud_wake)
+#define RT_IOURING_UD_TIMEOUT ((void*)&g_iouring_ud_timeout)
 
 /* ---- io_uring raw syscall wrappers ---- */
 
@@ -78,6 +87,11 @@ typedef struct RtReactorIoUring {
 
     /* RFC 009 M7：链式操作状态 */
     int link_next;                  /* 下一 SQE 是否设置 IOSQE_IO_LINK */
+
+    /* RFC 009 M6：跨线程唤醒（对齐 IOCP PostQueuedCompletionStatus）。
+     * eventfd + IORING_OP_POLL_ADD；wake 写 eventfd → 阻塞 enter 立即返回。 */
+    int wake_fd;
+    int wake_poll_armed;            /* 1 = 已提交未完成的 POLL_ADD */
 } RtReactorIoUring;
 
 /* ---- impl 接口实现 ---- */
@@ -142,10 +156,19 @@ void* rt_reactor_impl_create(uint32_t flags) {
     r->sq_tail_shadow = *r->sq_tail;
     r->sq_pending = 0;
     r->link_next = 0;
+    r->wake_poll_armed = 0;
+    r->wake_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (r->wake_fd < 0) {
+        munmap(r->cq_mmap, r->cq_mmap_size);
+        munmap(r->sqes, r->sqe_mmap_size);
+        munmap(r->sq_mmap, r->sq_mmap_size);
+        close(r->ring_fd); free(r); return NULL;
+    }
 
     /* user_data 暂存数组（用于 sqe_user_data[idx]） */
     r->sqe_user_data = (void**)calloc(p.sq_entries, sizeof(void*));
     if (!r->sqe_user_data) {
+        close(r->wake_fd);
         munmap(r->cq_mmap, r->cq_mmap_size);
         munmap(r->sqes, r->sqe_mmap_size);
         munmap(r->sq_mmap, r->sq_mmap_size);
@@ -158,6 +181,7 @@ void* rt_reactor_impl_create(uint32_t flags) {
 void rt_reactor_impl_destroy(void* backend) {
     RtReactorIoUring* r = (RtReactorIoUring*)backend;
     if (!r) return;
+    if (r->wake_fd >= 0) close(r->wake_fd);
     if (r->ring_fd >= 0) close(r->ring_fd);
     if (r->sq_mmap != MAP_FAILED && r->sq_mmap)
         munmap(r->sq_mmap, r->sq_mmap_size);
@@ -184,6 +208,9 @@ int32_t rt_reactor_impl_unregister(void* backend, int32_t fd) {
     (void)backend; (void)fd;
     return 0;
 }
+
+/* flush 在 push_sqe 满环时前向调用——前置声明。 */
+int32_t rt_reactor_impl_flush(void* backend);
 
 /* 提交一个 SQE 到 SQ ring（不立即 io_uring_enter，累积到 flush） */
 static int32_t rt_iouring_push_sqe(RtReactorIoUring* r, struct io_uring_sqe* sqe_template,
@@ -282,6 +309,15 @@ int32_t rt_reactor_impl_submit_connect(void* backend, int32_t fd,
     return rt_iouring_push_sqe(r, &sqe, user_data);
 }
 
+int32_t rt_reactor_impl_submit_named_pipe_connect(void* backend, int32_t fd,
+                                                    void* user_data) {
+    /* FIFO 无 ConnectNamedPipe；POSIX 侧 wait_connect_async 在 rt_pipe 层处理。 */
+    (void)backend;
+    (void)fd;
+    (void)user_data;
+    return -1;
+}
+
 int32_t rt_reactor_impl_flush(void* backend) {
     RtReactorIoUring* r = (RtReactorIoUring*)backend;
     if (!r || r->sq_pending == 0) return 0;
@@ -313,32 +349,72 @@ int32_t rt_reactor_impl_poll(void* backend, RtIoEvent* events, int32_t max_event
         /* 通过 user_data 找回原始 user_data */
         unsigned long long ud = cqe->user_data;
         unsigned sq_idx = (unsigned)(ud & *r->cq_mask);
-        events[n].user_data = r->sqe_user_data[sq_idx];
+        void* user = r->sqe_user_data[sq_idx];
+        head++;
+        tail = __atomic_load_n(r->cq_tail, __ATOMIC_ACQUIRE);
+
+        /* 内部哨兵：wake / timeout —— 不交付上层 */
+        if (user == RT_IOURING_UD_WAKE) {
+            if (r->wake_fd >= 0) {
+                uint64_t drain = 0;
+                while (read(r->wake_fd, &drain, sizeof(drain)) > 0) {
+                }
+            }
+            r->wake_poll_armed = 0;
+            continue;
+        }
+        if (user == RT_IOURING_UD_TIMEOUT || user == NULL) {
+            continue;
+        }
+
+        events[n].user_data = user;
         events[n].result = cqe->res;  /* 字节数 / -errno */
         events[n].flags = cqe->flags;
         events[n].fd = -1;  /* io_uring CQE 不含 fd，由 user_data 关联 */
-
-        head++;
         n++;
-        tail = __atomic_load_n(r->cq_tail, __ATOMIC_ACQUIRE);
     }
 
     /* 推进 CQ head（通知内核已消费） */
-    if (n > 0) {
+    if (head != __atomic_load_n(r->cq_head, __ATOMIC_ACQUIRE)) {
         __atomic_store_n(r->cq_head, head, __ATOMIC_RELEASE);
     }
 
-    /* 如果无事件且需要等待，调用 io_uring_enter 阻塞等待 */
+    /* 无事件且需要等待：武装 wake POLL_ADD +（有限）TIMEOUT，再 enter。
+     * 旧实现 min_complete=1 且无 timeout → 空环时 io_uring_enter 永久阻塞；
+     * rt_reactor_wake 又是 no-op → 跨线程 rt_task_complete/spawn 永不被消费
+     * （POSIX NamedPipe / FileStream 池卸载 / WaitForConnectionAsync 同族挂死根因）。 */
     if (n == 0 && timeout_ms != 0) {
-        unsigned enter_flags = IORING_ENTER_GETEVENTS;
-        if (timeout_ms > 0) {
-            /* io_uring 无直接 timeout 参数，用 io_uring_register 或 IORING_OP_TIMEOUT
-             * 简化：非阻塞 GETEVENTS + 外部 sleep 循环（MVP） */
-            enter_flags |= 0;
+        if (r->wake_fd >= 0 && !r->wake_poll_armed) {
+            struct io_uring_sqe sqe;
+            memset(&sqe, 0, sizeof(sqe));
+            sqe.opcode = IORING_OP_POLL_ADD;
+            sqe.fd = r->wake_fd;
+            sqe.poll32_events = (unsigned)POLLIN;
+            if (rt_iouring_push_sqe(r, &sqe, RT_IOURING_UD_WAKE) == 0) {
+                r->wake_poll_armed = 1;
+            }
         }
-        int ret = io_uring_enter(r->ring_fd, 0, 1, enter_flags, NULL);
+        struct __kernel_timespec ts;
+        int armed_timeout = 0;
+        if (timeout_ms > 0) {
+            ts.tv_sec = timeout_ms / 1000;
+            ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+            struct io_uring_sqe sqe;
+            memset(&sqe, 0, sizeof(sqe));
+            sqe.opcode = IORING_OP_TIMEOUT;
+            sqe.addr = (unsigned long)&ts;
+            sqe.len = 1;
+            sqe.off = 0;
+            if (rt_iouring_push_sqe(r, &sqe, RT_IOURING_UD_TIMEOUT) == 0) {
+                armed_timeout = 1;
+            }
+        }
+        if (r->sq_pending > 0) {
+            rt_reactor_impl_flush(r);
+        }
+        (void)armed_timeout;
+        int ret = io_uring_enter(r->ring_fd, 0, 1, IORING_ENTER_GETEVENTS, NULL);
         if (ret >= 0) {
-            /* 重新读取 CQ */
             head = __atomic_load_n(r->cq_head, __ATOMIC_ACQUIRE);
             tail = __atomic_load_n(r->cq_tail, __ATOMIC_ACQUIRE);
             while (n < max_events && head != tail) {
@@ -346,15 +422,28 @@ int32_t rt_reactor_impl_poll(void* backend, RtIoEvent* events, int32_t max_event
                 struct io_uring_cqe* cqe = &r->cqes[idx];
                 unsigned long long ud = cqe->user_data;
                 unsigned sq_idx = (unsigned)(ud & *r->cq_mask);
-                events[n].user_data = r->sqe_user_data[sq_idx];
+                void* user = r->sqe_user_data[sq_idx];
+                head++;
+                tail = __atomic_load_n(r->cq_tail, __ATOMIC_ACQUIRE);
+                if (user == RT_IOURING_UD_WAKE) {
+                    if (r->wake_fd >= 0) {
+                        uint64_t drain = 0;
+                        while (read(r->wake_fd, &drain, sizeof(drain)) > 0) {
+                        }
+                    }
+                    r->wake_poll_armed = 0;
+                    continue;
+                }
+                if (user == RT_IOURING_UD_TIMEOUT || user == NULL) {
+                    continue;
+                }
+                events[n].user_data = user;
                 events[n].result = cqe->res;
                 events[n].flags = cqe->flags;
                 events[n].fd = -1;
-                head++;
                 n++;
-                tail = __atomic_load_n(r->cq_tail, __ATOMIC_ACQUIRE);
             }
-            if (n > 0) {
+            if (head != __atomic_load_n(r->cq_head, __ATOMIC_ACQUIRE)) {
                 __atomic_store_n(r->cq_head, head, __ATOMIC_RELEASE);
             }
         }
@@ -363,11 +452,14 @@ int32_t rt_reactor_impl_poll(void* backend, RtIoEvent* events, int32_t max_event
     return n;
 }
 
-/* RFC 009 M6: 跨线程唤醒（预留）。io_uring 需 eventfd（IORING_REGISTER_EVENTFD）
- * 注册后注入才能唤醒阻塞的 io_uring_enter——属后续里程碑；当前 no-op 由
- * EventLoop 的 ≤100ms 轮询兜底（功能性正确，唤醒延迟 ≤100ms）。 */
+/* RFC 009 M6: 跨线程唤醒 —— 写 eventfd，使阻塞的 io_uring_enter（POLL_ADD）立即返回。
+ * 对齐 IOCP PostQueuedCompletionStatus / kqueue EVFILT_USER。线程安全。 */
 void rt_reactor_impl_wake(void* backend) {
-    (void)backend;
+    RtReactorIoUring* r = (RtReactorIoUring*)backend;
+    if (!r || r->wake_fd < 0) return;
+    uint64_t one = 1;
+    ssize_t w = write(r->wake_fd, &one, sizeof(one));
+    (void)w;
 }
 
 int32_t rt_reactor_impl_register_buffers(void* backend, const void** buffers,

@@ -31,6 +31,7 @@
   #include <semaphore.h>
   #include <time.h>
   #include <unistd.h>
+  #include <errno.h>
 #endif
 
 /* ---- 丢失唤醒取证：Monitor 阻塞诊断侧表（临时：随诊断计数器整体回收）----
@@ -160,8 +161,15 @@ void rt_mon_diag_dump(void) {
 /* POSIX：无取证侧表。跨文件引用符号保持可链接：
  * - rt_mon_diag_current_owner_obj_of：嵌套审计查询 → 恒 NULL
  * - rt_mon_diag_current_owner_obj / rt_mon_diag_dump：空实现
- * 静态 hooks（waiter_begin/end、owner_set/clear）仅 Windows 调用点使用，
- * POSIX 无需占位。 */
+ * - owner_set/clear：Monitor 热路径跨平台统一调用，POSIX 为空 no-op */
+static void rt_mon_diag_owner_set(void* obj) {
+    (void)obj;
+}
+
+static void rt_mon_diag_owner_clear(void* obj) {
+    (void)obj;
+}
+
 void* rt_mon_diag_current_owner_obj(void) {
     return NULL;
 }

@@ -412,9 +412,9 @@ mod tests {
         std::fs::create_dir_all(root.join("bin")).unwrap();
         std::fs::write(root.join("bin").join(installed_arc_exe_name()), b"").unwrap();
         std::fs::create_dir_all(root.join("versions")).unwrap();
-        std::fs::write(root.join("versions/current"), "1.0.0\n").unwrap();
+        std::fs::write(root.join("versions/current"), "0.1.0\n").unwrap();
         // 活动版本目录（完整 SDK）与非活动版本目录并存——前缀过滤须取对。
-        let active = root.join("versions/arc-1.0.0-x86_64-pc-windows-msvc");
+        let active = root.join("versions/arc-0.1.0-x86_64-pc-windows-msvc");
         std::fs::create_dir_all(active.join("bin")).unwrap();
         std::fs::write(active.join("bin").join(installed_arc_exe_name()), b"").unwrap();
         std::fs::create_dir_all(active.join("lib/std/Arc")).unwrap();
@@ -446,8 +446,8 @@ mod tests {
         // 标记存在但版本目录缺 bin/<exe> → None（不把半成品目录当 SDK）。
         let broken = temp_dir("ptr-broken");
         mk(&broken);
-        std::fs::write(broken.join("versions/current"), "1.0.0\n").unwrap();
-        std::fs::create_dir_all(broken.join("versions/arc-1.0.0-x86_64-pc-windows-msvc/lib/std"))
+        std::fs::write(broken.join("versions/current"), "0.1.0\n").unwrap();
+        std::fs::create_dir_all(broken.join("versions/arc-0.1.0-x86_64-pc-windows-msvc/lib/std"))
             .unwrap();
         assert_eq!(resolve_pointer_sdk_root(&broken), None);
         let _ = std::fs::remove_dir_all(&no_marker);

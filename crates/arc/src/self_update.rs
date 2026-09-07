@@ -6,7 +6,7 @@
 //! <R>/                              ← 安装根（Windows `%LOCALAPPDATA%\arc` / Unix `~/.arc`；`ARC_INSTALL_ROOT` 可覆盖）
 //! ├── bin/arc(.exe)                 ← 稳定 PATH 指针（活动版本的副本；唯一 PATH 注入点）
 //! └── versions/
-//!     ├── current                   ← 活动版本标记（内容 = 版本号，如 `1.0.0`）
+//!     ├── current                   ← 活动版本标记（内容 = 版本号，如 `0.1.0`）
 //!     ├── current.previous          ← 上一版本（`--rollback` 目标）
 //!     └── arc-<ver>-<triple>/       ← 版本目录（多版本共存；回滚即切指针）
 //!         └── bin/arc(.exe)

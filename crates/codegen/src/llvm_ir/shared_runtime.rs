@@ -92,8 +92,11 @@ pub(crate) fn build_shared_runtime(
     fs::create_dir_all(work_dir)
         .map_err(|e| CodegenError::Llvm(format!("create work dir failed: {e}")))?;
 
-    let runtime_objs =
-        super::prepare_runtime_objects(rt_base, clang, work_dir, level, target, debug_info)?;
+    // 共享库永不承载 platform/ime——跳过编译（include_platform=false），
+    // 避免 Linux 无 X11 头时连非 UI 构建也被阻断。
+    let runtime_objs = super::prepare_runtime_objects(
+        rt_base, clang, work_dir, level, target, debug_info, false,
+    )?;
 
     // 排除集与 `link_objects_to_dynamic_library` 一致：host 进程才提供
     // wgpu / platform / ime 符号，共享 runtime 不承载 UI 依赖。

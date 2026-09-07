@@ -28,10 +28,10 @@
 # Usage (repo root):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-release.ps1 -DryRun
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-release.ps1
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-release.ps1 -Version 1.0.1 -Repo Arc-Future/Arc
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-release.ps1 -Version 0.1.1 -Repo Arc-Future/Arc
 
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "0.1.0",
     [string]$Repo = "Arc-Future/Arc",
     [string]$DistDir = "",
     [string]$ArcExe = "",
@@ -121,16 +121,28 @@ if (-not $NotesFile) {
     $notes = @'
 # Arc {VERSION}
 
-Stable release of the Arc language, compiler, standard library and runtime: a single `arc` executable, source-distributed standard library, bundled slim LLVM (clang + lld subset) for fully offline builds, AOT compilation to native machine code - no JIT runtime.
+Pre-formal public cut (honest maturity). Previously mislabeled as "1.0 / first stable"; current line is **0.1** — capabilities retained. Official CDN and other external items: see limits below.
+
+Language / compiler / stdlib / runtime: single `arc` executable + source-distributed standard library + bundled slim LLVM (clang + lld), AOT to native code, no JIT.
+
+## 0.1 highlights
+
+- **POSIX EH** (RFC 010): Windows SEH + Itanium landingpad (WSL `eh-ok-linux`)
+- **RFC 052**: array ArcHeader ownership S1-S4
+- **NamedPipe M2** (RFC 048): Windows IOCP + Linux io_uring true Reactor async
 
 ## Downloads
 
 | Asset | Purpose |
 |-------|---------|
 {PKG_TABLE}
-| `manifest.json` / `manifest.json.sig` | Ed25519-signed release manifest (consumed by `arc self-update`) |
+| `manifest.json` / `manifest.json.sig` | Ed25519-signed release manifest (`arc self-update`) |
 
 Each package ships with a `.sha256` sidecar.
+
+**How to get / `ARC_RELEASE_BASE`**: this Release download root is
+`https://github.com/Arc-Future/Arc/releases/download/v{VERSION}/`.
+Public `https://static.arc.dev/dist` remains a placeholder — use the GitHub URL or a self-hosted mirror until it is live.
 
 ## Verify integrity
 
@@ -149,6 +161,12 @@ Signed release manifest (Ed25519); trust anchor embedded in the compiler:
 ```
 {PUBKEY}
 ```
+
+## Known external limits
+
+- `static.arc.dev` public hosting not live
+- Unix (Linux/macOS) tar.xz must be packed on those hosts and uploaded later
+- Dual-platform CI green observation window still open
 '@
     $notes = $notes.Replace('{VERSION}', $Version).Replace('{PKG_TABLE}', $table).Replace('{PKG}', $firstPkg).Replace('{PUBKEY}', $pubkey)
     [System.IO.File]::WriteAllText($notesPath, $notes, (New-Object System.Text.UTF8Encoding($false)))

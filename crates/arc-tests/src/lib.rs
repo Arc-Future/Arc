@@ -769,7 +769,7 @@ pub fn compile_plugin_library(
     let obj_dir = dir.join(format!("obj-{plugin_name}"));
     let meta = arc::PackageMeta {
         name: plugin_name.to_string(),
-        version: "1.0.0".to_string(),
+        version: "0.1.0".to_string(),
         edition: "1".to_string(),
         dependencies: dependencies.iter().map(|d| d.to_string()).collect(),
         // 布局指纹表由 codegen 在 compile_module_to_dynamic_library 内

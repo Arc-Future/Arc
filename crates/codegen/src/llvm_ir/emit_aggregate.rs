@@ -2,7 +2,7 @@
 
 use super::*;
 use ast::TypeId;
-use mir::MirOperand;
+use mir::{MirOperand, MirRvalue};
 use typeck::VirtualSlot;
 
 impl<'a> FnEmitter<'a> {
@@ -610,6 +610,68 @@ impl<'a> FnEmitter<'a> {
 
     // ---- Array literal ----
 
+    /// RFC 052：按元素类型选择 create（scalar / class-refs / nested-array）。
+    fn array_create_fn(elem: &TypeId, layouts: &typeck::ProgramLayouts) -> &'static str {
+        match elem {
+            TypeId::Array { .. } => "@rt_array_create_nested",
+            TypeId::Object => "@rt_array_create_refs",
+            TypeId::Named(n) if layouts.interfaces.contains_key(n.as_str()) => {
+                "@rt_array_create_refs"
+            }
+            TypeId::Named(n)
+                if layouts.classes.contains_key(n.as_str())
+                    && !is_opaque_runtime_handle(n.as_str()) =>
+            {
+                "@rt_array_create_refs"
+            }
+            TypeId::Named(n) if is_runtime_array_ty(n.as_str(), layouts) => {
+                "@rt_array_create_nested"
+            }
+            _ => "@rt_array_create",
+        }
+    }
+
+    fn emit_array_elem_store_retain(&mut self, elem: &TypeId, rv: &MirRvalue, store_val: &str) {
+        // 借引用入槽须 retain；new/Call/ArrayLit 等移交所有权不 retain（与
+        // assign_needs_arc_retain 同族；IndexSet 对 class 恒 inc 依赖 MIR 临时
+        // 局部 epilogue drop 配对——字面量元素常直接嵌入 rvalue，不可盲 inc）。
+        let needs_borrow_retain = matches!(
+            rv,
+            MirRvalue::Use(MirOperand::Local(_))
+                | MirRvalue::Use(MirOperand::Field { .. })
+                | MirRvalue::Use(MirOperand::StaticField { .. })
+                | MirRvalue::Use(MirOperand::UnboxIface { .. })
+                | MirRvalue::FieldGet { .. }
+                | MirRvalue::Ternary { .. }
+                | MirRvalue::Coalesce { .. }
+                | MirRvalue::IndexGet { .. }
+        );
+        if !needs_borrow_retain {
+            return;
+        }
+        match elem {
+            TypeId::Array { .. } => {
+                self.emit(&format!("call void @rt_array_retain(ptr {store_val})"));
+            }
+            TypeId::Object => {
+                self.emit(&format!("call void @rt_arc_inc(ptr {store_val})"));
+            }
+            TypeId::Named(n) if self.layouts.interfaces.contains_key(n.as_str()) => {
+                self.emit(&format!("call void @rt_arc_inc(ptr {store_val})"));
+            }
+            TypeId::Named(n)
+                if self.layouts.classes.contains_key(n.as_str())
+                    && !is_opaque_runtime_handle(n.as_str()) =>
+            {
+                self.emit(&format!("call void @rt_arc_inc(ptr {store_val})"));
+            }
+            TypeId::Named(n) if is_runtime_array_ty(n.as_str(), self.layouts) => {
+                self.emit(&format!("call void @rt_array_retain(ptr {store_val})"));
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn emit_array_lit(
         &mut self,
         elem_type: &TypeId,
@@ -645,17 +707,17 @@ impl<'a> FnEmitter<'a> {
             other => other.clone(),
         };
         let elem_size = llvm_size_of(&inner_elem_ty) as i32;
+        let create_fn = Self::array_create_fn(&expected_elem, self.layouts);
         let has_spread = elements
             .iter()
             .any(|e| matches!(e, mir::ArrayLitElement::Spread(_)));
 
         if !has_spread {
-            // RFC 015 Phase B / RFC 004 M2：使用 rt_array_create 分配带 RtArrayHeader
-            // 的堆数组，使 `array.Length` 能经 rt_array_length 读取 header 中的长度。
+            // RFC 015 Phase B / RFC 052：rt_array_create*（ArcHeader + length 头）。
             let len = elements.len();
             let tmp = self.fresh_temp();
             self.emit(&format!(
-                "{tmp} = call ptr @rt_array_create(i32 {len}, i32 {elem_size})"
+                "{tmp} = call ptr {create_fn}(i32 {len}, i32 {elem_size})"
             ));
             for (i, el) in elements.iter().enumerate() {
                 let mir::ArrayLitElement::Value(rv) = el else {
@@ -671,6 +733,7 @@ impl<'a> FnEmitter<'a> {
                 } else {
                     self.coerce_value(&ety, eval, &elem_ty)
                 };
+                self.emit_array_elem_store_retain(&expected_elem, rv, &store_val);
                 let addr = self.fresh_temp();
                 self.emit(&format!(
                     "{addr} = getelementptr inbounds {elem_ty}, ptr {tmp}, i32 {i}"
@@ -710,7 +773,7 @@ impl<'a> FnEmitter<'a> {
         self.emit(&format!("{total_val} = load i32, ptr {total}"));
         let tmp = self.fresh_temp();
         self.emit(&format!(
-            "{tmp} = call ptr @rt_array_create(i32 {total_val}, i32 {elem_size})"
+            "{tmp} = call ptr {create_fn}(i32 {total_val}, i32 {elem_size})"
         ));
 
         let idx = self.scratch_alloca("i32");
@@ -725,6 +788,7 @@ impl<'a> FnEmitter<'a> {
                     } else {
                         self.coerce_value(&ety, eval, &elem_ty)
                     };
+                    self.emit_array_elem_store_retain(&expected_elem, rv, &store_val);
                     let i = self.fresh_temp();
                     self.emit(&format!("{i} = load i32, ptr {idx}"));
                     let addr = self.fresh_temp();
@@ -799,14 +863,15 @@ impl<'a> FnEmitter<'a> {
     }
 
     /// `new T[n]` — 运行时长度、零初始化的堆数组分配。
-    /// 发射 `rt_array_create(length, elem_size)`（带 RtArrayHeader，`Length` 可读）。
+    /// 发射 `rt_array_create*(length, elem_size)`（ArcHeader + Length 可读）。
     /// `elem_type` 为元素类型（不含数组后缀）；`length` 为运行时长度操作数（int）。
     pub(super) fn emit_new_array(&mut self, elem_type: &TypeId, length: &MirOperand) -> TyVal {
         let elem_size = llvm_size_of(elem_type) as i32;
+        let create_fn = Self::array_create_fn(elem_type, self.layouts);
         let (_, len) = self.emit_operand(length);
         let tmp = self.fresh_temp();
         self.emit(&format!(
-            "{tmp} = call ptr @rt_array_create(i32 {len}, i32 {elem_size})"
+            "{tmp} = call ptr {create_fn}(i32 {len}, i32 {elem_size})"
         ));
         ("ptr".into(), tmp)
     }

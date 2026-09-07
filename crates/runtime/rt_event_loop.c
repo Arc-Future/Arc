@@ -64,12 +64,17 @@ _Atomic(uint32_t) g_diag_el_has_reactor;
   typedef CRITICAL_SECTION     rt_mutex_t;
   typedef CONDITION_VARIABLE   rt_cond_t;
 #else
-  #include <pthread.h>
-  #include <time.h>
   typedef pthread_mutex_t      rt_mutex_t;
   typedef pthread_cond_t       rt_cond_t;
 #endif
 
+static long rt_el_current_tid(void) {
+#ifdef _WIN32
+    return (long)GetCurrentThreadId();
+#else
+    return (long)pthread_self();
+#endif
+}
 static void rt_el_mutex_init(rt_mutex_t* m) {
 #ifdef _WIN32
     InitializeCriticalSection(m);
@@ -95,7 +100,7 @@ static void rt_el_mutex_lock(rt_mutex_t* m) {
     pthread_mutex_lock(m);
 #endif
     atomic_store_explicit(&g_diag_el_mutex_owner,
-                          (long)GetCurrentThreadId(), memory_order_relaxed);
+                          rt_el_current_tid(), memory_order_relaxed);
 }
 static void rt_el_mutex_unlock(rt_mutex_t* m) {
     atomic_store_explicit(&g_diag_el_mutex_owner, 0, memory_order_relaxed);
@@ -555,7 +560,7 @@ void rt_event_loop_run(void* loop) {
     RtEventLoop* el = (RtEventLoop*)loop;
     if (!el) return;
     el->running = 1;
-    atomic_store_explicit(&g_diag_el_tid, (long)GetCurrentThreadId(),
+    atomic_store_explicit(&g_diag_el_tid, rt_el_current_tid(),
                           memory_order_relaxed);
     atomic_store_explicit(&g_diag_el_has_reactor,
                           (uint32_t)(el->has_reactor && el->reactor),

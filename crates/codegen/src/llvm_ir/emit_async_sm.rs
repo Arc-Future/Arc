@@ -403,7 +403,7 @@ impl<'a> FnEmitter<'a> {
                     && !capture_local_ids.contains(id)
                     && self.await_live_locals.contains(id)
                     && !matches!(ty, TypeId::Void)
-                    && Self::arc_class_place(ty, self.layouts)
+                    && Self::arc_managed_place(ty, self.layouts)
             })
             .map(|(id, _)| *id)
             .collect();
@@ -415,7 +415,8 @@ impl<'a> FnEmitter<'a> {
             ));
             let val = self.fresh_temp();
             self.emit(&format!("{val} = load ptr, ptr {field_ptr}"));
-            self.emit(&format!("call void @rt_arc_dec(ptr {val})"));
+            let ty = self.local_type(*id);
+            self.emit_arc_release_for_ty(&ty, &val);
         }
         // RFC 009 M3：释放每个 spilled local 的堆槽（free 对 null 安全；
         // save_locals 不覆写 env 字段，槽指针始终有效）。
@@ -523,7 +524,7 @@ impl<'a> FnEmitter<'a> {
             return false;
         }
         let ty = self.local_type(id);
-        !matches!(ty, TypeId::Void) && Self::arc_class_place(&ty, self.layouts)
+        !matches!(ty, TypeId::Void) && Self::arc_managed_place(&ty, self.layouts)
     }
 
     /// RFC 016：resume 函数是否存在 env 唯一 owner 的 class 局部（需 EH cleanup
@@ -535,7 +536,7 @@ impl<'a> FnEmitter<'a> {
         self.await_live_locals.iter().any(|id| {
             self.sm_env_local_index.contains_key(id) && !capture_local_ids.contains(id) && {
                 let ty = self.local_type(*id);
-                !matches!(ty, TypeId::Void) && Self::arc_class_place(&ty, self.layouts)
+                !matches!(ty, TypeId::Void) && Self::arc_managed_place(&ty, self.layouts)
             }
         })
     }
@@ -634,9 +635,13 @@ impl<'a> FnEmitter<'a> {
         let has_cleanup = self.has_env_owned_class_local();
         let mut attr_str = String::new();
         let mut eh_suffix = String::new();
-        if self.is_windows && (may_throw || has_cleanup) {
+        if may_throw || has_cleanup {
             attr_str.push_str(" uwtable");
-            eh_suffix.push_str(" personality ptr @__CxxFrameHandler3");
+            if self.is_windows {
+                eh_suffix.push_str(" personality ptr @__CxxFrameHandler3");
+            } else {
+                eh_suffix.push_str(" personality ptr @__gxx_personality_v0");
+            }
         }
         self.output.push_str(&format!(
             "define i32 @{resume_name}(ptr %env_ptr, ptr %waker){}{}{} {{\n",

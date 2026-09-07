@@ -7,6 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef _WIN32
+/* MSVC 用 _strdup；POSIX 用 strdup。 */
+#define _strdup strdup
+#endif
+
 static const char* skip_ws(const char* s) {
     while (isspace((unsigned char)*s)) s++;
     return s;

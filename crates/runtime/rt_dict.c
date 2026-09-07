@@ -50,6 +50,11 @@ typedef struct RtDict {
                                0=legacy（标量/string 值，不维护 ARC） */
 } RtDict;
 
+/* RFC 052 S4：owned gen 键且非 string → class 键所有权（与值同律）。 */
+static int32_t rt_dict_owns_class_keys(const RtDict* d) {
+    return d && d->owned && d->int_keys == 0 && d->hash != rt_hash_str;
+}
+
 uint32_t rt_hash_str(void* key) {
     const char* s = (const char*)key;
     uint32_t h = 5381;
@@ -355,7 +360,8 @@ void rt_dict_set(void* dict, void* key, void* value) {
     int32_t idx = rt_dict_probe(d, key, tagged);
     if (idx >= 0) {
         /* RFC 051 S3b：覆盖既有条目——owned 时新值先 inc（new==old 自覆盖
-         * 净零）、槽位先写新值、旧值后 dec（旧值 finalizer 重入读到新值）。 */
+         * 净零）、槽位先写新值、旧值后 dec（旧值 finalizer 重入读到新值）。
+         * RFC 052 S4：class 键同律（键对象身份不变时 net zero）。 */
         if (d->owned) {
             rt_arc_inc(value);
             void* old = d->values[idx];
@@ -382,6 +388,7 @@ void rt_dict_set(void* dict, void* key, void* value) {
         }
     }
     if (d->owned) rt_arc_inc(value); /* 存储侧自持 +1（codegen 不再预 inc） */
+    if (rt_dict_owns_class_keys(d)) rt_arc_inc(key);
     rt_dict_insert_at(d, -idx - 1, key, value, tagged);
 }
 
@@ -397,6 +404,7 @@ int32_t rt_dict_try_add(void* dict, void* key, void* value) {
         if (idx >= 0) return 0;
     }
     if (d->owned) rt_arc_inc(value);
+    if (rt_dict_owns_class_keys(d)) rt_arc_inc(key);
     rt_dict_insert_at(d, -idx - 1, key, value, tagged);
     return 1;
 }
@@ -458,18 +466,21 @@ int32_t rt_dict_remove(void* dict, void* key) {
     int32_t idx = rt_dict_probe(d, key, tagged);
     if (idx < 0) return 0;
     void* removed = d->values[idx];
+    void* removed_key = NULL;
     d->hashes[idx] = RT_DICT_HASH_TOMB;
     if (d->int_keys == 1) {
         ((int32_t*)d->keys)[idx] = 0;
     } else if (d->int_keys == 2) {
         ((int64_t*)d->keys)[idx] = 0;
     } else {
+        removed_key = ((void**)d->keys)[idx];
         ((void**)d->keys)[idx] = NULL;
     }
     d->values[idx] = NULL; /* 先清槽再 dec：值 finalizer 重入不读半死槽 */
     d->size--;
     d->tombstones++;
     if (d->owned) rt_arc_dec(removed); /* RFC 051 S3b：释放被移除条目值 */
+    if (rt_dict_owns_class_keys(d)) rt_arc_dec(removed_key);
     return 1;
 }
 
@@ -477,11 +488,18 @@ void rt_dict_clear(void* dict) {
     if (!dict) return;
     RtDict* d = (RtDict*)dict;
     if (d->owned) {
-        /* RFC 051 S3b：owned 清空须释放每个活条目值（先清槽再 dec）。 */
+        /* RFC 051 S3b：owned 清空须释放每个活条目值（先清槽再 dec）。
+         * RFC 052 S4：class 键一并释放。 */
+        int32_t own_keys = rt_dict_owns_class_keys(d);
         for (int32_t i = 0; i < d->capacity; i++) {
             if (d->hashes[i] < 2u) continue;
             void* v = d->values[i];
             d->values[i] = NULL;
+            if (own_keys) {
+                void* k = ((void**)d->keys)[i];
+                ((void**)d->keys)[i] = NULL;
+                rt_arc_dec(k);
+            }
             rt_arc_dec(v);
         }
     }
@@ -496,10 +514,16 @@ void rt_dict_destroy(void* dict) {
     if (!dict) return;
     RtDict* d = (RtDict*)dict;
     if (d->owned) {
+        int32_t own_keys = rt_dict_owns_class_keys(d);
         for (int32_t i = 0; i < d->capacity; i++) {
             if (d->hashes[i] < 2u) continue;
             void* v = d->values[i];
             d->values[i] = NULL;
+            if (own_keys) {
+                void* k = ((void**)d->keys)[i];
+                ((void**)d->keys)[i] = NULL;
+                rt_arc_dec(k);
+            }
             rt_arc_dec(v);
         }
     }
@@ -510,7 +534,12 @@ void rt_dict_destroy(void* dict) {
 void* rt_dict_keys(void* dict) {
     if (!dict) return NULL;
     RtDict* d = (RtDict*)dict;
-    void* arr = rt_array_create(d->size, (int32_t)sizeof(void*));
+    /* RFC 052 S4：owned + class 键 → create_refs + 逐元素 retain；
+     * int/long/string 键与 legacy → scalar（值类型/借用，无元素 ARC）。 */
+    int32_t use_refs = rt_dict_owns_class_keys(d);
+    void* arr = use_refs
+        ? rt_array_create_refs(d->size, (int32_t)sizeof(void*))
+        : rt_array_create(d->size, (int32_t)sizeof(void*));
     if (!arr) return NULL;
     void** items = (void**)arr;
     int32_t idx = 0;
@@ -531,7 +560,11 @@ void* rt_dict_keys(void* dict) {
     } else {
         void** keys = (void**)d->keys;
         for (int32_t i = 0; i < d->capacity && idx < d->size; i++) {
-            if (d->hashes[i] >= 2u) items[idx++] = keys[i];
+            if (d->hashes[i] >= 2u) {
+                void* k = keys[i];
+                if (use_refs) rt_arc_inc(k);
+                items[idx++] = k;
+            }
         }
     }
     return arr;
@@ -540,12 +573,18 @@ void* rt_dict_keys(void* dict) {
 void* rt_dict_values(void* dict) {
     if (!dict) return NULL;
     RtDict* d = (RtDict*)dict;
-    void* arr = rt_array_create(d->size, (int32_t)sizeof(void*));
+    void* arr = d->owned
+        ? rt_array_create_refs(d->size, (int32_t)sizeof(void*))
+        : rt_array_create(d->size, (int32_t)sizeof(void*));
     if (!arr) return NULL;
     void** items = (void**)arr;
     int32_t idx = 0;
     for (int32_t i = 0; i < d->capacity && idx < d->size; i++) {
-        if (d->hashes[i] >= 2u) items[idx++] = d->values[i];
+        if (d->hashes[i] >= 2u) {
+            void* v = d->values[i];
+            if (d->owned) rt_arc_inc(v); /* RFC 052 S4：快照逐元素 +1 */
+            items[idx++] = v;
+        }
     }
     return arr;
 }

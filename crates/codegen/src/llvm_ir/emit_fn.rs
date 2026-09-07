@@ -18,17 +18,18 @@ use super::*;
 use ast::TypeId;
 use mir::MirBlock;
 
-/// 平台 → zero-cost EH 配置（RFC 010 / 015 里程碑②）。返回 `(uwtable 属性后缀, personality 后缀)`；
+/// 平台 → zero-cost EH 配置（RFC 010）。返回 `(uwtable 属性后缀, personality 后缀)`；
 /// may-throw 用户函数需 `uwtable`（unwind 表）使 unwinder 能穿透帧，附模块级 personality。
 ///
-/// Windows 用 MSVC `__CxxFrameHandler3`（SEH，主平台，已落地）；POSIX Itanium
-///（`__gxx_personality_v0`）为里程碑⑨（1.1+，非 1.0 门槛）尚未落地，故非 Windows 返回空。
+/// Windows：`__CxxFrameHandler3`（SEH）；POSIX：`__gxx_personality_v0`（Itanium，里程碑⑨）。
 /// `nounwind` 函数（无可证抛路径）保持裸片，避免误标阻止 unwind 穿透。
 fn eh_platform_attrs(is_windows: bool, nounwind: bool) -> (&'static str, &'static str) {
-    if is_windows && !nounwind {
+    if nounwind {
+        ("", "")
+    } else if is_windows {
         (" uwtable", " personality ptr @__CxxFrameHandler3")
     } else {
-        ("", "")
+        (" uwtable", " personality ptr @__gxx_personality_v0")
     }
 }
 

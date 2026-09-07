@@ -80,17 +80,11 @@ public class Dictionary<K, V>
 
     // ── 键/值集合 ──
 
-    // CHANGELOG 9/5 测量登记：数组所有权缺口（缓冲 + 类元素 release 缺位、
-    // 数组死亡无 dec 站点）落地前，Keys/Values 数组为**借用视图**——仅保证
-    // 字典条目存活期间有效；条目经 Remove/Clear/字典死亡释放后读旧快照为
-    // 悬垂（勿在释放后使用）。In-tree 全部用法均为「字典稳定期遍历」，合规。
-    // 收口后（每类型 __arr_drop + owned 快照逐元素 +1）对齐 .NET 快照副本语义。
-
-    /// <summary>所有键的数组快照（借用视图——条目存活期间有效）。</summary>
+    /// <summary>所有键的数组快照（.NET 快照语义：owned 字典逐元素 +1；legacy 借用视图）。</summary>
     [Builtin(ABI = "rt_dict_keys")]
     public K[] Keys { get; }
 
-    /// <summary>所有值的数组快照（借用视图——条目存活期间有效）。</summary>
+    /// <summary>所有值的数组快照（.NET 快照语义：owned 字典逐元素 +1；legacy 借用视图）。</summary>
     [Builtin(ABI = "rt_dict_values")]
     public V[] Values { get; }
 

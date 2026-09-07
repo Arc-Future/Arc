@@ -1,10 +1,9 @@
-//! L1：POSIX 目标 try/catch 编译门（`arc-eh-001`）——管线级回归。
+//! L1：POSIX 目标 try/catch（里程碑⑨ Itanium）——管线级回归。
 //!
-//! 背景：非 Windows 目标上 zero-cost EH 属里程碑⑨（1.1+，RFC 010）；try/catch
-//! 此前在 codegen 深处以 ICE panic 暴露，现由发射前置门
-//! `reject_try_catch_outside_windows` 收敛为结构化编译错误。本测试走完整
-//! `arc::compile_file` 管线断言错误码与函数名，防止将来回退成 panic；
-//! Windows 语义面不受影响（目标无关编译面由既有 L2/e2e 覆盖）。
+//! 背景：原 `arc-eh-001` 硬拒 POSIX try/catch；现 codegen 发射
+//! `landingpad` + `__gxx_personality_v0`，本测试断言 Linux 目标上
+//! try/catch **不再**报 arc-eh-001（允许因缺交叉链接器等其它错误）。
+//! 真机可运行验收见 WSL/`l2_eh_batch`（full-rt）。
 
 use std::path::{Path, PathBuf};
 
@@ -92,21 +91,20 @@ fn compile_with_target(label: &str, src: &str) -> Result<(), String> {
 }
 
 #[test]
-fn linux_target_try_catch_errors_with_eh_gate() {
-    let msg = compile_with_target("try", TRY_CATCH_SRC).expect_err("linux try/catch must fail");
-    assert!(
-        msg.contains("arc-eh-001"),
-        "missing arc-eh-001 diagnostic code: {msg}"
-    );
-    assert!(msg.contains("try/catch"), "missing construct name: {msg}");
-    assert!(msg.contains("Main"), "missing function name: {msg}");
+fn linux_target_try_catch_is_not_eh_gated() {
+    // 里程碑⑨：不得再报 arc-eh-001；交叉链接失败等其它错误可接受。
+    match compile_with_target("try", TRY_CATCH_SRC) {
+        Ok(()) => {}
+        Err(msg) => assert!(
+            !msg.contains("arc-eh-001"),
+            "POSIX try/catch must not hit arc-eh-001 after Itanium EH: {msg}"
+        ),
+    }
 }
 
 #[test]
 fn linux_target_without_try_catch_is_not_gated() {
     let res = compile_with_target("plain", PLAIN_SRC);
-    // 门只拦 try/catch：无 try/catch 的代码不得报 arc-eh-001（成功或其它
-    // 阶段错误（如宿主侧缺 Linux 工具链）均与编译门无关）。
     match res {
         Ok(()) => {}
         Err(msg) => assert!(

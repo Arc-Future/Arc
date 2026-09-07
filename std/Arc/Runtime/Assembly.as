@@ -11,7 +11,7 @@ public struct AssemblyPackageMeta
     /// 包名（arc.toml [package].name）。
     public string Name;
 
-    /// 包版本（arc.toml [package].version，如 "1.0.0"）。
+    /// 包版本（arc.toml [package].version，如 "0.1.0"）。
     public string Version;
 
     /// 语言版本（arc.toml [package].edition，如 "1"）。

@@ -51,11 +51,11 @@ pub const DEFAULT_RELEASE_BASE: &str = "https://static.arc.dev/dist";
 
 /// 编译期内置发布公钥（信任锚；`arc release keygen` 生成）。
 ///
-/// 1.0 正式发布密钥：seed 由发布者离线托管（`~/.arc/keys/`，不入库不外发）；
-/// 泄露即重新 `arc release keygen` 轮换并同步替换本常量。`$ARC_RELEASE_PUBKEY`
-/// 可显式覆盖信任锚（测试 / 轮换迁移期）。
+/// 0.1 发布线密钥：seed 由发布者离线托管（`~/.arc/keys/release-signing-key-<ver>.txt`，
+/// 不入库不外发）；泄露即重新 `arc release keygen` 轮换并同步替换本常量。
+/// `$ARC_RELEASE_PUBKEY` 可显式覆盖信任锚（测试 / 轮换迁移期）。
 pub const RELEASE_PUBLIC_KEY_HEX: &str =
-    "0b2bd06a9a75dad24d809eb574ee23d23fb71a8477a44fc71d16ea531628db25";
+    "6f0a580b8edec5c1e20e02877730f1612668ae4389533af85bad87c331980ef2";
 
 /// 发布源：HTTP(S) 基址或本地目录（`file://` / 裸路径）。
 #[derive(Debug, Clone, PartialEq, Eq)]

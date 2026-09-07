@@ -4,6 +4,7 @@
  * 平台无关状态：crates/runtime-ui/rt_ui_ime.c
  */
 #include "../../rt_ui_abi.h"
+#include <stddef.h>
 
 void ImeBridge_OnNativeEvent(void* ctx, RtUiElement* target,
                              int32_t kind, const void* payload);

@@ -18,8 +18,8 @@
 #
 # Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1          # in-place (script inside an extracted SDK root)
-#   powershell ... -File install.ps1 -FromDir D:\sdk\arc-1.0.0-x86_64-pc-windows-msvc
-#   powershell ... -File install.ps1 -Archive arc-1.0.0-x86_64-pc-windows-msvc.zip [-Sha256 <64-hex>]
+#   powershell ... -File install.ps1 -FromDir D:\sdk\arc-0.1.0-x86_64-pc-windows-msvc
+#   powershell ... -File install.ps1 -Archive arc-0.1.0-x86_64-pc-windows-msvc.zip [-Sha256 <64-hex>]
 #   powershell ... -InstallRoot D:\arc -NoModifyPath
 #
 # Uninstall = delete InstallRoot's bin + versions and remove the root bin entry

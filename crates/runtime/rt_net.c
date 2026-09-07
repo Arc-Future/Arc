@@ -1002,6 +1002,15 @@ void rt_io_completion_complete(void* user_data, int32_t result) {
             task->int_result = result;
             compl->buf = NULL;
             break;
+        case RT_IO_OP_PIPE_CONNECT:
+            /* NamedPipe WaitForConnectionAsync：result>=0 成功。
+             * compl->buf 持 RtPipe*（非堆块），经 rt_pipe_mark_connected 置位后清空防 free。 */
+            task->int_result = (result >= 0) ? 1 : 0;
+            if (result >= 0 && compl->buf) {
+                rt_pipe_mark_connected(compl->buf);
+            }
+            compl->buf = NULL;
+            break;
         case RT_IO_OP_WRITE:
             /* result = 字节数 */
             task->int_result = result;

@@ -226,7 +226,7 @@ arc-<ver>-<triple>/
 | macOS `.pkg` 实际构建 | 无 macOS 构建机 |
 | Linux deb/rpm 发行包 | 需分发端点支持 |
 | ARM64 平台包 | 待真实端点 + 工具链 |
-| 真实发布端点（`static.arc.dev`） | `DEFAULT_RELEASE_BASE` 为占位 |
+| 真实发布端点（`static.arc.dev`） | `DEFAULT_RELEASE_BASE` 为占位；**现行消费渠道**为 GitHub Release（`ARC_RELEASE_BASE=…/releases/download/v0.1.0`）；公网托管仍为外部挡板 |
 
 ---
 

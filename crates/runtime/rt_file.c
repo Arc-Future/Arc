@@ -39,6 +39,7 @@
 typedef long long ssize_t;
 #else
 #include <unistd.h>
+#include <fcntl.h>
 #include <dirent.h>
 #include <fnmatch.h>
 #include <sys/types.h>

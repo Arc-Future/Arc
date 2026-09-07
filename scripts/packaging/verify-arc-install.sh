@@ -23,7 +23,7 @@ set -u
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/verify-arc.XXXXXX")
 PORT="${VERIFY_PORT:-18443}"
-PKG="arc-1.0.0-x86_64-unknown-linux-gnu"
+PKG="arc-0.1.0-x86_64-unknown-linux-gnu"
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 INSTALL_SH="${ARC_INSTALL_SH:-$REPO_ROOT/scripts/packaging/arc-install.sh}"
 PASS=0
@@ -53,7 +53,7 @@ mkdir -p "$WORK/pkg/$PKG/bin" "$WORK/srv"
 cat > "$WORK/pkg/$PKG/bin/arc" <<'STUB'
 #!/bin/sh
 case "$1" in
-    --version) echo "arc 1.0.0" ;;
+    --version) echo "arc 0.1.0" ;;
     doctor) echo "doctor: ok (stub)"; exit 0 ;;
     *) echo "stub arc: $*"; exit 0 ;;
 esac
@@ -103,9 +103,9 @@ if sh "$INSTALL_SH" --url "$BASE_URL" --ca "$CA" --to "$TO1" --no-modify-path >/
 else
     fail "install exit 0"
 fi
-[ "$(cat "$TO1/versions/current" 2>/dev/null)" = "1.0.0" ] && pass "versions/current=1.0.0" || fail "versions/current marker"
+[ "$(cat "$TO1/versions/current" 2>/dev/null)" = "0.1.0" ] && pass "versions/current=0.1.0" || fail "versions/current marker"
 [ -x "$TO1/bin/arc" ] && pass "bin/arc launcher executable" || fail "bin/arc launcher"
-[ "$("$TO1/bin/arc" --version 2>/dev/null)" = "arc 1.0.0" ] && pass "launcher --version" || fail "launcher --version"
+[ "$("$TO1/bin/arc" --version 2>/dev/null)" = "arc 0.1.0" ] && pass "launcher --version" || fail "launcher --version"
 [ -x "$TO1/versions/$PKG/bin/arc" ] && pass "versioned dir layout" || fail "versioned dir layout"
 
 echo "== T2: sha256 mismatch rejected =="
@@ -153,25 +153,25 @@ echo "== T6: --from-dir install (renamed dir, version.txt derives pkg) =="
 TO6="$WORK/home6/.arc"
 mkdir -p "$WORK/sdk6-renamed/bin"
 cp "$WORK/pkg/$PKG/bin/arc" "$WORK/sdk6-renamed/bin/arc"
-printf 'arc=1.0.0\ntriple=x86_64-unknown-linux-gnu\n' > "$WORK/sdk6-renamed/version.txt"
+printf 'arc=0.1.0\ntriple=x86_64-unknown-linux-gnu\n' > "$WORK/sdk6-renamed/version.txt"
 if sh "$INSTALL_SH" --from-dir "$WORK/sdk6-renamed" --to "$TO6" --no-modify-path >/dev/null 2>&1; then
     pass "--from-dir install exit 0"
 else
     fail "--from-dir install exit 0"
 fi
-[ "$(cat "$TO6/versions/current" 2>/dev/null)" = "1.0.0" ] && pass "from-dir versions/current=1.0.0" || fail "from-dir current marker"
+[ "$(cat "$TO6/versions/current" 2>/dev/null)" = "0.1.0" ] && pass "from-dir versions/current=0.1.0" || fail "from-dir current marker"
 [ -x "$TO6/versions/$PKG/bin/arc" ] && pass "pkg derived from version.txt" || fail "pkg derived from version.txt"
 [ ! -d "$WORK/sdk6-renamed" ] && pass "source dir moved into layout" || fail "source dir moved into layout"
 
 echo "== T7: no-arg run from SDK root (embedded installer) =="
 mkdir -p "$WORK/sdk7/$PKG/bin"
 cp "$WORK/pkg/$PKG/bin/arc" "$WORK/sdk7/$PKG/bin/arc"
-printf 'arc=1.0.0\ntriple=x86_64-unknown-linux-gnu\n' > "$WORK/sdk7/$PKG/version.txt"
+printf 'arc=0.1.0\ntriple=x86_64-unknown-linux-gnu\n' > "$WORK/sdk7/$PKG/version.txt"
 cp "$INSTALL_SH" "$WORK/sdk7/$PKG/install.sh"
 TO7="$WORK/home7/.arc"
 (cd "$WORK/sdk7/$PKG" && HOME="$WORK/home7" sh ./install.sh --no-modify-path >/dev/null 2>&1) \
     && pass "embedded no-arg install exit 0" || fail "embedded no-arg install exit 0"
-[ "$(cat "$TO7/versions/current" 2>/dev/null)" = "1.0.0" ] && pass "embedded versions/current=1.0.0" || fail "embedded current marker"
+[ "$(cat "$TO7/versions/current" 2>/dev/null)" = "0.1.0" ] && pass "embedded versions/current=0.1.0" || fail "embedded current marker"
 [ -x "$TO7/versions/$PKG/bin/arc" ] && pass "embedded launcher ready" || fail "embedded launcher ready"
 
 echo "== summary: $PASS passed, $FAIL failed =="

@@ -28,7 +28,7 @@ See the [Language Charter](docs/rfc/001-language-charter.md) and the [Language M
 
 ## Current Status
 
-**Arc 1.0** (2026-09-04) — the first stable release of the language, compiler, standard library, and runtime: a single `arc` executable, a source-distributed standard library, and runtime C sources shipped with the package (compiled on demand through a content-addressed cache on first build). AOT compilation to native machine code, no JIT runtime. The project is still under active evolution; we do not claim full C# parity. See the [CHANGELOG](CHANGELOG.md) for version history and the [Maturity Charter](docs/rfc/036-maturity.md) for governance.
+**Arc 0.1** (current release line) — the first public pre-1.0 cut of the language, compiler, standard library, and runtime: a single `arc` executable, a source-distributed standard library, and runtime C sources shipped with the package (compiled on demand through a content-addressed cache on first build). AOT compilation to native machine code, no JIT runtime. A “1.0” label was briefly used on 2026-09-04 for the feature surface; the public version is now **0.1** to match honest maturity (capabilities unchanged). The project is still under active evolution; we do not claim full C# parity. See the [CHANGELOG](CHANGELOG.md) for version history and the [Maturity Charter](docs/rfc/036-maturity.md) for governance.
 
 - **Milestones**: F0–M3 ✅ (assets never rolled back); M4 schedulable, not started; M5–Mn layer-by-layer self-hosting (HIR / typeck / codegen) in progress.
 - **Self-hosting**: the compiler is currently a **Rust bootstrap implementation** (`crates/*`); the default CLI remains the Rust compiler until the Arc self-hosted compiler reaches equivalence (Mn).

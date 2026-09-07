@@ -907,14 +907,12 @@ pub fn list_elem_is_ref(suffix: &str, layouts: &ProgramLayouts) -> bool {
     if suffix.starts_with("Func_") || suffix.starts_with("Action_") {
         return false;
     }
-    // 数组（`{Elem}_arr`）：raw 指针、无 ArcHeader、无 typeinfo 全局常量（同 string/struct）。
-    // 由 GC 管理，不参与 rt_arc_inc/dec —— 否则 rt_list_push 会以 rt_arc_inc_ref 把
-    // refcount 写进数组首字节 → 数据损坏（`List<byte[]>` 0x0A→0x0C 实测）。
-    // 排除已注册 nominal：泛型实例 mangle 同样以 `_arr` 结尾（`List<List<byte[]>>`
-    // 元素 `List_byte_arr` 是带 ArcHeader 的类实例，需 ARC）；数组 mangle 名
-    // 不是 nominal 类型、不在 layouts.classes，可判别。
+    // 数组（`{Elem}_arr`）：RFC 052 ArcHeader 化后为真 ARC 对象（payload 指针
+    // 对外；retain/release 经 payload-24）。List/容器须按引用维护——用
+    // rt_array_arc_inc/dec_ref（非 rt_list_arc_*：后者 rt_arc_inc 会把 length
+    // 当 refcount）。排除已注册 nominal：泛型实例 mangle 同样以 `_arr` 结尾。
     if suffix.ends_with("_arr") && !layouts.classes.contains_key(suffix) {
-        return false;
+        return true;
     }
     // RFC 051 D2：接口值 = 堆 fat 盒（真 ARC 对象，32B：rc/weak/vt@8 +
     // obj@16/itable@24）——**是**引用类型：List/Dictionary 等须按引用维护
@@ -947,8 +945,11 @@ pub fn list_elem_is_ref(suffix: &str, layouts: &ProgramLayouts) -> bool {
 }
 
 /// ARC inc callback for class-type elements, or `null` for value types.
+/// RFC 052：数组元素走 `rt_array_arc_inc_ref`（payload → ArcHeader）。
 pub fn list_arc_inc_fn(suffix: &str, layouts: &ProgramLayouts) -> Option<&'static str> {
-    if list_elem_is_ref(suffix, layouts) {
+    if suffix.ends_with("_arr") && !layouts.classes.contains_key(suffix) {
+        Some("@rt_array_arc_inc_ref")
+    } else if list_elem_is_ref(suffix, layouts) {
         Some("@rt_list_arc_inc_ref")
     } else {
         None
@@ -957,11 +958,18 @@ pub fn list_arc_inc_fn(suffix: &str, layouts: &ProgramLayouts) -> Option<&'stati
 
 /// ARC dec callback for class-type elements, or `null` for value types.
 pub fn list_arc_dec_fn(suffix: &str, layouts: &ProgramLayouts) -> Option<&'static str> {
-    if list_elem_is_ref(suffix, layouts) {
+    if suffix.ends_with("_arr") && !layouts.classes.contains_key(suffix) {
+        Some("@rt_array_arc_dec_ref")
+    } else if list_elem_is_ref(suffix, layouts) {
         Some("@rt_list_arc_dec_ref")
     } else {
         None
     }
+}
+
+/// RFC 052：字段/局部类型串是否为运行时数组（`{Elem}_arr`，非 nominal 类）。
+pub fn is_runtime_array_ty(ty: &str, layouts: &ProgramLayouts) -> bool {
+    ty.ends_with("_arr") && !layouts.classes.contains_key(ty)
 }
 
 // ---- Tensor<T> generic dispatch helpers (RFC 021 Phase 1) ----

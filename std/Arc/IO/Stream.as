@@ -110,7 +110,7 @@ public abstract class Stream : IDisposable {
     }
 
     /// <summary>关闭流并释放资源。</summary>
-    public void Close() {
+    public virtual void Close() {
         this.Dispose();
     }
 

@@ -349,12 +349,12 @@ impl<'a> FnEmitter<'a> {
                                     &effective_ty,
                                 );
                             } else {
-                                // ARC：局部 ← 另一局部/字段的 class 拷贝须 retain。
+                                // ARC：局部 ← 另一局部/字段的 class/数组拷贝须 retain。
                                 // `new`/`typeof`/Call 等移交所有权路径不 inc（生产者已 rc=1）。
                                 // 缺 retain 时 `Type a = b` 双 Drop → 堆损坏（RuntimeType/
                                 // MemberInfo 字段 walk 放大为 0xC0000374）。
                                 // string 不含：常量串常为 rodata，无 ArcHeader。
-                                if Self::arc_class_place(&effective_ty, self.layouts) {
+                                if Self::arc_managed_place(&effective_ty, self.layouts) {
                                     // 刀 2.2 跨块 ARC：dead-copy 局部（从不读取、仅拷贝赋值）
                                     // 整对消除——跳过 inc(新) 与 dec(旧)；epilogue dec 一并跳过
                                     //（emit_sync_epilogue_drops）。被引用对象仍由源持有，引用
@@ -371,9 +371,10 @@ impl<'a> FnEmitter<'a> {
                                             &effective_ty,
                                             self.layouts,
                                         ) {
-                                            self.emit(&format!(
-                                                "call void @rt_arc_inc(ptr {store_val})"
-                                            ));
+                                            self.emit_arc_retain_for_ty(
+                                                &effective_ty,
+                                                &store_val,
+                                            );
                                         }
                                         // load 旧值 → store 新值 → dec 旧值（ARC 覆写语义）。
                                         // 旧槽位 entry 块零初始化为 null，首次赋值 dec(null) 为 no-op。
@@ -385,7 +386,7 @@ impl<'a> FnEmitter<'a> {
                                         self.emit(&format!(
                                             "store {store_ty} {store_val}, ptr {ptr}"
                                         ));
-                                        self.emit(&format!("call void @rt_arc_dec(ptr {old})"));
+                                        self.emit_arc_release_for_ty(&effective_ty, &old);
                                     }
                                 } else if let TypeId::Named(n) = &effective_ty {
                                     // RFC 005 自动 Copy：Copy 型 struct 赋值 = 私有副本聚合
@@ -607,7 +608,7 @@ impl<'a> FnEmitter<'a> {
                 } else {
                     store_val
                 };
-                // 类类型元素：inc 新值、load 旧值、store、dec 旧值（与 FieldSet 对齐）。
+                // 类/数组类型元素：inc 新值、load 旧值、store、dec 旧值（与 FieldSet 对齐）。
                 if let TypeId::Named(name) = elem_type {
                     if self.layouts.classes.contains_key(name.as_str())
                         && !is_opaque_runtime_handle(name.as_str())
@@ -617,9 +618,21 @@ impl<'a> FnEmitter<'a> {
                         self.emit(&format!("{old} = load ptr, ptr {addr}"));
                         self.emit(&format!("store {store_ty} {store_val}, ptr {addr}"));
                         self.emit(&format!("call void @rt_arc_dec(ptr {old})"));
+                    } else if is_runtime_array_ty(name.as_str(), self.layouts) {
+                        self.emit(&format!("call void @rt_array_retain(ptr {store_val})"));
+                        let old = self.fresh_temp();
+                        self.emit(&format!("{old} = load ptr, ptr {addr}"));
+                        self.emit(&format!("store {store_ty} {store_val}, ptr {addr}"));
+                        self.emit(&format!("call void @rt_array_release(ptr {old})"));
                     } else {
                         self.emit(&format!("store {store_ty} {store_val}, ptr {addr}"));
                     }
+                } else if matches!(elem_type, TypeId::Array { .. }) {
+                    self.emit(&format!("call void @rt_array_retain(ptr {store_val})"));
+                    let old = self.fresh_temp();
+                    self.emit(&format!("{old} = load ptr, ptr {addr}"));
+                    self.emit(&format!("store {store_ty} {store_val}, ptr {addr}"));
+                    self.emit(&format!("call void @rt_array_release(ptr {old})"));
                 } else {
                     self.emit(&format!("store {store_ty} {store_val}, ptr {addr}"));
                 }
@@ -628,17 +641,16 @@ impl<'a> FnEmitter<'a> {
                 let (_, val) = self.emit_rvalue(value);
                 // A1 / P1-B2：try body（将被同层 catch 接住）内不先跑 finally；
                 // catch 内 rethrow / 无 catch 的 try-finally 仍走 finally_chain。
-                // Zero-cost EH M3 (Windows SEH)：try-finally 的 finally 由 cleanup
-                // funclet 在 unwind 时执行——若这里再 inline 执行会双跑。Windows
-                // 上所有 finally 均为 funclet，因此一律跳过 inline 链。
-                if !self.emitting_caught_try_body && !self.is_windows {
+                // Zero-cost EH：try-finally 的 finally 由 cleanup pad / landingpad
+                // 在 unwind 时执行——若这里再 inline 执行会双跑。SEH 与 Itanium
+                // 均在有活跃 cleanup 时跳过；仅无 EH 的遗留 inline 路径才跑链。
+                if !self.emitting_caught_try_body && self.eh_cleanup_stack.is_empty() {
                     self.emit_finally_chain();
                 }
                 // L2：首次 throw 时写入 Exception.StackTrace（仅当槽位仍为 null）。
                 self.emit_attach_exception_stacktrace(&val);
-                // Zero-cost EH milestone ②：rt_throw 恒 may-throw。Windows 上若在
-                // try region 内发 invoke（异常落入本区域 catchswitch）；否则 plain
-                // call（异常沿 .pdata 向调用方传播）。POSIX Itanium 属里程碑⑨。
+                // Zero-cost EH：rt_throw 恒 may-throw。try region 内发 invoke
+                //（异常落入本区域 catchswitch / landingpad）；否则 plain call。
                 self.emit_call_may_throw("void", "@rt_throw", &format!("ptr {val}"), true, None);
                 self.emit("unreachable");
                 self.flow_terminated = true;
@@ -1614,24 +1626,133 @@ impl<'a> FnEmitter<'a> {
         catch_ty: &TypeId,
         catch_body: &[MirStatement],
     ) {
-        // Zero-cost EH milestone ② (Windows SEH): invoke + catchswitch/catchpad.
+        // Zero-cost EH: Windows SEH (catchswitch/catchpad) / POSIX Itanium (landingpad).
         if self.is_windows {
             self.emit_try_catch_seh(try_body, catch_var, catch_ty, catch_body);
-            return;
+        } else {
+            self.emit_try_catch_itanium(try_body, catch_var, catch_ty, catch_body);
         }
-        // Milestone ⑥ removed the legacy try-stack pattern; POSIX
-        // zero-cost EH (Itanium personality + landingpad) is milestone ⑨
-        // (1.1+, 非 1.0 门槛). 可达函数集在 `ModuleEmitter::emit_module`
-        // 入口已被 `reject_try_catch_outside_windows`（arc-eh-001）结构化
-        // 拦截——此处 panic 仅为防御性 ICE（防未来新发射路径绕过该门）。
-        // 里程碑⑨ 需同时落地 codegen（landingpad/resume + __gxx_personality_v0/
-        // uwtable）与 POSIX 运行时（rt_throw 改 _Unwind_RaiseException，见
-        // crates/runtime/rt_exc.c），且须在 Linux/macOS 环境验收（见
-        // docs/rfc/010-exceptions-resources.md、docs/plan.md 缺漏 #6）。
-        panic!(
-            "codegen: try/catch is not yet supported on non-Windows targets \
-             (zero-cost EH milestone ⑨ / POSIX Itanium, RFC 010)"
-        );
+    }
+
+    /// Zero-cost EH milestone ⑨ (POSIX Itanium): `invoke` + `landingpad` with
+    /// catch-all selector (`catch ptr null`, RFC 010 — type filtering via
+    /// `rt_obj_isa` after pad, mismatch → `resume`).
+    ///
+    /// ```text
+    ///   br label %try0
+    /// try0:
+    ///   invoke void @helper() to label %c1 unwind label %lpad0
+    /// c1:
+    ///   br label %after0
+    /// lpad0:
+    ///   %lp = landingpad { ptr, i32 } catch ptr null
+    ///   %exc = call ptr @rt_get_exception()
+    ///   ; optional type filter → resume %lp on mismatch
+    ///   … catch body …
+    ///   br label %after0
+    /// after0:
+    /// ```
+    fn emit_try_catch_itanium(
+        &mut self,
+        try_body: &[MirStatement],
+        catch_var: mir::LocalId,
+        catch_ty: &TypeId,
+        catch_body: &[MirStatement],
+    ) {
+        let try_label = self.fresh_label();
+        let lpad_label = self.fresh_label();
+        let catch_label = self.fresh_label();
+        let after_label = self.fresh_label();
+
+        self.emit(&format!("br label %{try_label}"));
+        self.emit_label(&try_label);
+
+        let saved_ft = self.flow_terminated;
+        self.flow_terminated = false;
+        let prev_caught = self.emitting_caught_try_body;
+        self.emitting_caught_try_body = true;
+        self.eh_region_stack.push(lpad_label.clone());
+        for (i, s) in try_body.iter().enumerate() {
+            self.stmt_path.push(i);
+            self.emit_stmt(s);
+            self.stmt_path.pop();
+            if self.flow_terminated {
+                break;
+            }
+        }
+        self.eh_region_stack.pop();
+        self.emitting_caught_try_body = prev_caught;
+        let try_term = self.flow_terminated;
+        if !try_term {
+            self.emit(&format!("br label %{after_label}"));
+        }
+
+        let lp_val = self.fresh_temp();
+        self.emit_label(&lpad_label);
+        // If inside an enclosing try/finally, chain cleanup before catch-all
+        // via a cleanup landingpad on the outer frame — catch landingpad stays
+        // catch-all here; outer finally is on eh_cleanup_stack separately.
+        let clause = match self.eh_cleanup_stack.last() {
+            Some(_) => {
+                // Catch inside finally: still catch-all; unmatched resume will
+                // propagate and hit the outer cleanup landingpad.
+                "catch ptr null"
+            }
+            None => "catch ptr null",
+        };
+        self.emit(&format!("{lp_val} = landingpad {{ ptr, i32 }} {clause}"));
+        self.emit(&format!("br label %{catch_label}"));
+
+        self.emit_label(&catch_label);
+        let exc = self.fresh_temp();
+        self.emit(&format!("{exc} = call ptr @rt_get_exception()"));
+
+        let catch_name = match catch_ty {
+            TypeId::Named(n) => n.as_str(),
+            _ => "Exception",
+        };
+        if catch_name != "Exception" {
+            let is_ok = self.fresh_temp();
+            let is_bool = self.fresh_temp();
+            let match_label = self.fresh_label();
+            let mismatch_label = self.fresh_label();
+            let catch_ti = self
+                .typeinfo_global(catch_name)
+                .unwrap_or_else(|| format!("@.typeinfo.{catch_name}"));
+            self.emit(&format!(
+                "{is_ok} = call i32 @rt_obj_isa(ptr {exc}, ptr {catch_ti})"
+            ));
+            self.emit(&format!("{is_bool} = icmp ne i32 {is_ok}, 0"));
+            self.emit(&format!(
+                "br i1 {is_bool}, label %{match_label}, label %{mismatch_label}"
+            ));
+            self.emit_label(&mismatch_label);
+            // Type mismatch: resume unwinding with the original landingpad result.
+            self.emit(&format!("resume {{ ptr, i32 }} {lp_val}"));
+            self.emit_label(&match_label);
+        }
+
+        let catch_ptr = self.local_ptr(catch_var);
+        self.emit(&format!("store ptr {exc}, ptr {catch_ptr}"));
+        let prev_caught = self.emitting_caught_try_body;
+        self.emitting_caught_try_body = false;
+        self.flow_terminated = false;
+        for (i, s) in catch_body.iter().enumerate() {
+            self.stmt_path.push(i);
+            self.emit_stmt(s);
+            self.stmt_path.pop();
+            if self.flow_terminated {
+                break;
+            }
+        }
+        self.emitting_caught_try_body = prev_caught;
+        let catch_term = self.flow_terminated;
+        if !catch_term {
+            self.emit(&format!("br label %{after_label}"));
+        }
+
+        self.emit_label(&after_label);
+        self.flow_terminated = saved_ft || (try_term && catch_term);
     }
 
     /// Zero-cost EH milestone ② (Windows SEH): `invoke` + funclet `catchswitch`
@@ -1787,13 +1908,9 @@ impl<'a> FnEmitter<'a> {
         self.flow_terminated = saved_ft || (try_term && catch_term);
     }
 
-    /// Zero-cost EH milestone ②: the innermost active Windows catchswitch block
-    /// label, if the current emission point sits inside a try region. `None`
-    /// outside any try region (POSIX Itanium EH is milestone ⑨).
+    /// Zero-cost EH: the innermost active catch/cleanup unwind block label
+    /// when emitting inside a try region (SEH catchswitch or Itanium landingpad).
     fn eh_unwind_label(&self) -> Option<&str> {
-        if !self.is_windows {
-            return None;
-        }
         self.eh_region_stack.last().map(|s| s.as_str())
     }
 
@@ -1812,10 +1929,10 @@ impl<'a> FnEmitter<'a> {
         !is_known_nounwind_external(callee)
     }
 
-    /// Emit a call instruction. Inside a Windows try region where `may_throw`,
+    /// Emit a call instruction. Inside a try region where `may_throw`,
     /// emit `invoke … to label %cont unwind label %cs` so the exception lands in
-    /// the region's catchswitch; otherwise a plain `call`. `result_slot`, when
-    /// given, is the SSA temp the return value is written into.
+    /// the region's catchswitch/landingpad; otherwise a plain `call`. `result_slot`,
+    /// when given, is the SSA temp the return value is written into.
     pub(super) fn emit_call_may_throw(
         &mut self,
         ret_ty: &str,
@@ -1920,55 +2037,86 @@ impl<'a> FnEmitter<'a> {
     /// Return/Throw 分支）。若 body 以 terminator（ret/unreachable）退出，此处不再
     /// 重复发射 finally（否则在 terminator 后产生无效 LLVM IR）。
     fn emit_try_finally(&mut self, body: &[MirStatement], finally: &[MirStatement]) {
-        // Zero-cost EH milestone ③ (Windows SEH): cleanup funclet for deep
-        // unwind. POSIX keeps the inline compile-time path until milestone ⑦.
+        // Zero-cost EH: Windows SEH cleanuppad / POSIX Itanium cleanup landingpad.
         if self.is_windows {
             self.emit_try_finally_seh(body, finally);
             return;
         }
-        // push finally 块到栈（供 body 中的 return/throw inline 执行）
+        self.emit_try_finally_itanium(body, finally);
+    }
+
+    /// Zero-cost EH milestone ⑨ (POSIX Itanium): cleanup landingpad for deep unwind.
+    ///
+    /// ```llvm
+    /// br label %try
+    /// try:
+    ///   invoke ... to label %cont unwind label %cleanup
+    ///   <inline finally>
+    ///   br label %after
+    /// cleanup:
+    ///   %lp = landingpad { ptr, i32 } cleanup
+    ///   <finally>
+    ///   resume { ptr, i32 } %lp
+    /// after:
+    /// ```
+    fn emit_try_finally_itanium(&mut self, body: &[MirStatement], finally: &[MirStatement]) {
+        let try_label = self.fresh_label();
+        let cleanup_label = self.fresh_label();
+        let after_label = self.fresh_label();
+
+        self.emit(&format!("br label %{try_label}"));
+        self.emit_label(&try_label);
+
         self.finally_stack.push(finally.to_vec());
+        self.eh_region_stack.push(cleanup_label.clone());
+        self.eh_cleanup_stack.push(cleanup_label.clone());
 
-        // 记录 body 发射前的输出长度，用于判断 body 是否以 terminator 结束。
-        let output_before = self.output.len();
-
-        // body 块：正常执行路径
+        let saved_ft = self.flow_terminated;
+        self.flow_terminated = false;
         for (i, s) in body.iter().enumerate() {
             self.stmt_path.push(i);
             self.emit_stmt(s);
             self.stmt_path.pop();
+            if self.flow_terminated {
+                break;
+            }
         }
-
-        // pop finally 块（若 body 中 return/throw 已 clone 执行过，此处仍 pop 保持栈平衡）
+        self.eh_region_stack.pop();
+        self.eh_cleanup_stack.pop();
         self.finally_stack.pop();
+        let body_term = self.flow_terminated;
+        self.flow_terminated = saved_ft;
 
-        // 若 body 以 terminator（ret / unreachable）结束，跳过 finally 块发射。
-        // 此时 body 内的 Return/Throw 已通过 emit_finally_chain 执行了 finally
-        // 语义，再次发射会在 terminator 后产生无效 LLVM IR。
-        let body_emitted = &self.output[output_before..];
-        // emit() 追加 `\n`，所以直接用 ends_with 匹配完整行。
-        if body_emitted.ends_with("unreachable\n") {
-            return;
-        }
-        // 检查是否以 `ret ...` 结尾（body 中 Return 的 terminator）。
-        if body_emitted.contains("ret ")
-            && body_emitted.trim_end().ends_with('\n')
-            && body_emitted
-                .trim_end()
-                .rsplit('\n')
-                .next()
-                .unwrap_or("")
-                .starts_with("ret ")
-        {
-            return;
+        if !body_term {
+            for (i, s) in finally.iter().enumerate() {
+                self.stmt_path.push(i);
+                self.emit_stmt(s);
+                self.stmt_path.pop();
+                if self.flow_terminated {
+                    break;
+                }
+            }
+            if !self.flow_terminated {
+                self.emit(&format!("br label %{after_label}"));
+            }
         }
 
-        // finally 块：body 正常完成后执行
+        let lp_val = self.fresh_temp();
+        self.emit_label(&cleanup_label);
+        self.emit(&format!("{lp_val} = landingpad {{ ptr, i32 }} cleanup"));
+        self.flow_terminated = false;
         for (i, s) in finally.iter().enumerate() {
             self.stmt_path.push(i);
             self.emit_stmt(s);
             self.stmt_path.pop();
+            if self.flow_terminated {
+                break;
+            }
         }
+        self.flow_terminated = false;
+        self.emit(&format!("resume {{ ptr, i32 }} {lp_val}"));
+
+        self.emit_label(&after_label);
     }
 
     /// Zero-cost EH milestone ③ (Windows SEH): deep-unwind cleanup funclet.
@@ -2103,6 +2251,32 @@ impl<'a> FnEmitter<'a> {
         }
     }
 
+    /// RFC 052：`T[]` 槽位按数组对象 ARC（payload 指针；retain/release 非 arc_inc/dec）。
+    pub(super) fn arc_array_place(ty: &TypeId) -> bool {
+        matches!(ty, TypeId::Array { .. })
+    }
+
+    /// class 或数组槽：赋值/覆写需 retain/release 对偶。
+    pub(super) fn arc_managed_place(ty: &TypeId, layouts: &typeck::ProgramLayouts) -> bool {
+        Self::arc_class_place(ty, layouts) || Self::arc_array_place(ty)
+    }
+
+    pub(crate) fn emit_arc_retain_for_ty(&mut self, ty: &TypeId, val: &str) {
+        if Self::arc_array_place(ty) {
+            self.emit(&format!("call void @rt_array_retain(ptr {val})"));
+        } else {
+            self.emit(&format!("call void @rt_arc_inc(ptr {val})"));
+        }
+    }
+
+    pub(crate) fn emit_arc_release_for_ty(&mut self, ty: &TypeId, val: &str) {
+        if Self::arc_array_place(ty) {
+            self.emit(&format!("call void @rt_array_release(ptr {val})"));
+        } else {
+            self.emit(&format!("call void @rt_arc_dec(ptr {val})"));
+        }
+    }
+
     /// 静态字段类型字符串 → TypeId（`StaticFieldSet` 与 `MirOperand::StaticField`
     /// load 的 llvm 类型映射共用；与 layouts.static_fields 的 `ty` 格式对齐）。
     fn static_field_type_id(&self, ty_str: &str) -> TypeId {
@@ -2159,7 +2333,7 @@ impl<'a> FnEmitter<'a> {
         place_ty: &TypeId,
         layouts: &typeck::ProgramLayouts,
     ) -> bool {
-        if !Self::arc_class_place(place_ty, layouts) {
+        if !Self::arc_managed_place(place_ty, layouts) {
             return false;
         }
         matches!(
@@ -2327,6 +2501,13 @@ impl<'a> FnEmitter<'a> {
             self.emit(&format!("{old} = load ptr, ptr {addr}"));
             self.emit(&format!("store {store_ty} {store_val}, ptr {addr}"));
             self.emit(&format!("call void @rt_arc_dec(ptr {old})"));
+        } else if is_runtime_array_ty(field_ty, self.layouts) {
+            // RFC 052：数组字段写 → retain/release（payload ARC）。
+            self.emit(&format!("call void @rt_array_retain(ptr {store_val})"));
+            let old = self.fresh_temp();
+            self.emit(&format!("{old} = load ptr, ptr {addr}"));
+            self.emit(&format!("store {store_ty} {store_val}, ptr {addr}"));
+            self.emit(&format!("call void @rt_array_release(ptr {old})"));
         } else if self.layouts.is_copy_struct(field_ty) && store_ty == "ptr" {
             // RFC 004 生命周期（D3 struct 字段版）：字段槽属于宿主堆对象，寿命
             // 长于本帧——RFC 005 Copy 的栈副本 alloca 随本帧消亡，裸存栈地址
@@ -2605,32 +2786,15 @@ fn observable_eq_compare(field_ty: &str) -> Option<&'static str> {
     }
 }
 
-/// POSIX try/catch 编译门（`arc-eh-001`）。
-///
-/// Windows SEH 是 1.0 唯一实现的 zero-cost EH 面；非 Windows 目标上
-/// MIR 中出现的任何 `try/catch`——无论嵌套位置——都应在此给出结构化
-/// 编译错误，而不是落到 [`FnEmitter::emit_try_catch`] 深处 ICE。本门由
-/// `ModuleEmitter::emit_module` 在发射任何函数体前调用：作用域与触发面
-/// 完全一致（发射即可达），Windows 目标行为不变（零路径开销）。
+/// 历史：POSIX try/catch 曾以 `arc-eh-001` 硬拒（里程碑⑨落地前）。
+/// 现 Itanium landingpad 已接线；保留扫描辅助供单测验证嵌套探测仍有效。
+#[allow(dead_code)]
 pub(super) fn reject_try_catch_outside_windows(
     fns: &[(String, MirCfgBody)],
     is_windows: bool,
     file_path: &str,
 ) -> Result<(), crate::CodegenError> {
-    if is_windows {
-        return Ok(());
-    }
-    if let Some((name, body)) = fns.iter().find(|(_, b)| body_contains_try_catch(b)) {
-        let display = match &body.owner {
-            Some(owner) => format!("{owner}::{name}"),
-            None => name.clone(),
-        };
-        return Err(crate::CodegenError::UnsupportedTryCatch(format!(
-            "arc-eh-001: 非 Windows 目标不支持 try/catch——Windows SEH 是 1.0 唯一 \
-             zero-cost EH 实现面，POSIX Itanium 属里程碑⑨（1.1+，RFC 010）；函数 \
-             `{display}`（{file_path}）含 try/catch，请改在 Windows 目标构建或移除该构造"
-        )));
-    }
+    let _ = (fns, is_windows, file_path);
     Ok(())
 }
 
@@ -2654,7 +2818,8 @@ fn statements_contain_try_catch(stmts: &[MirStatement]) -> bool {
     })
 }
 
-/// 函数体（全 CFG 块）是否含 `try/catch`。
+/// 函数体（全 CFG 块）是否含 `try/catch`（单测 / 诊断扫描用）。
+#[allow(dead_code)]
 fn body_contains_try_catch(body: &MirCfgBody) -> bool {
     body.blocks
         .values()
@@ -2923,14 +3088,10 @@ mod observable_synth_tests {
     }
 
     #[test]
-    fn try_catch_gate_rejects_nested_try_on_posix() {
+    fn try_catch_gate_allows_posix_with_try_after_itanium() {
+        // 里程碑⑨：POSIX try/catch 不再被 arc-eh-001 拒绝。
         let fns = vec![("Main".to_string(), try_catch_body())];
-        let msg = reject_try_catch_outside_windows(&fns, false, "src/prog.as")
-            .unwrap_err()
-            .to_string();
-        assert!(msg.contains("arc-eh-001"), "unexpected msg: {msg}");
-        assert!(msg.contains("C::Main"), "function name missing: {msg}");
-        assert!(msg.contains("src/prog.as"), "source file missing: {msg}");
+        assert!(reject_try_catch_outside_windows(&fns, false, "src/prog.as").is_ok());
     }
 
     #[test]

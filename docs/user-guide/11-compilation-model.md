@@ -82,7 +82,7 @@ Arc 是原生 LLVM 语言，不包含 C 后端或其他备选后端。
 
 **现状**：交叉编译管线 **未实现**；当前以 host 桌面三元组为主。`wasm32-unknown-unknown` / `wasm32-wasip*` 须 **硬错误**「未实现」，禁止 silent 当 native 编译。WASM 链接 **须** runtime 子集且 **无** `platform.o`。
 
-**平台能力边界（1.0）**：zero-cost 异常处理（`try/catch`）当前仅在 **Windows 目标**实现（SEH 面）。非 Windows 目标（Linux/macOS 等 POSIX）上，可达函数含 `try/catch` 时编译报 `arc-eh-001` 硬错误（POSIX Itanium 面属里程碑⑨ / 1.1+，见 [RFC 010](../rfc/010-exceptions-resources.md)）——禁止按 Windows 语义静默误编或降级为 panic。`try/finally`（无 catch）与 `throw` 在非 Windows 目标走内联 finally 链与 `rt_panic`，不受本门限制。
+**平台能力边界（0.1）**：zero-cost 异常处理（`try/catch`）在 **Windows（SEH）** 与 **POSIX（Itanium landingpad，里程碑⑨已收口）** 双面可用（见 [RFC 010](../rfc/010-exceptions-resources.md)；WSL `eh-ok-linux`）。禁止按错误平台语义静默误编或降级为 panic。`try/finally`（无 catch）与未捕获路径仍经内联 finally 链 / `rt_panic` 收敛。
 
 ## 诊断
 

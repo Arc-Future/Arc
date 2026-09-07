@@ -2,6 +2,7 @@
 #define DLANG_RT_ABI_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define RT_ABI_VERSION 1
 
@@ -747,6 +748,14 @@ int32_t rt_pipe_write(void* handle, const void* data, int32_t length);
 int32_t rt_pipe_server_disconnect(void* handle);
 int32_t rt_pipe_is_connected(void* handle);
 void    rt_pipe_close(void* handle);
+/* 完成路径置位 is_connected（PIPE_CONNECT async；不经公开门面）。 */
+void    rt_pipe_mark_connected(void* handle);
+/* RFC 048 M2：Reactor 真异步（返回 Pending Task*；无 EventLoop/Reactor 时返回 NULL）。
+ * WaitForConnectionAsync → PIPE_CONNECT；ReadAsync/WriteAsync → READ_BYTES/WRITE。 */
+void*   rt_pipe_wait_connect_async(void* handle);
+void*   rt_pipe_read_async(void* handle, void* buffer, int32_t length);
+void*   rt_pipe_write_async(void* handle, const void* data, int32_t length);
+void*   rt_pipe_client_connect_async(void* handle, int32_t timeoutMs);
 
 
 /* RFC 009 M2: IO 完成上下文（网络/文件 async 共享）。
@@ -769,6 +778,7 @@ typedef enum {
     RT_IO_OP_READ    = 2,
     RT_IO_OP_WRITE   = 3,
     RT_IO_OP_READ_BYTES = 4, /* 字节面读（写入调用方 buffer，int_result=字节数） */
+    RT_IO_OP_PIPE_CONNECT = 5, /* NamedPipe WaitForConnectionAsync（int_result 1/0） */
     /* ---- 文件 async（RFC 009 异步为主；rt_file.c 真异步实现）---- */
     RT_IO_OP_FILE_BASE       = 100,
     RT_IO_OP_FILE_READ_TEXT  = 100, /* read → NUL 终止 string（ptr_result） */
@@ -998,10 +1008,24 @@ void*   rt_list_get_range(void* handle, int32_t idx, int32_t count);
 int32_t rt_list_binary_search(void* handle, const void* key);
 int32_t rt_list_binary_search_cmp(void* handle, const void* key, rt_list_cmp_fn cmp);
 
-/* Runtime-length array ABI (RFC 015 Phase B) */
+/* Runtime-length array ABI (RFC 015 Phase B · RFC 052 ArcHeader 化) */
 void*    rt_array_create(int32_t cap, int32_t elem_size);
+/* RFC 052：class/接口盒元素（finalizer 逐元素 rt_arc_dec）。 */
+void*    rt_array_create_refs(int32_t cap, int32_t elem_size);
+/* RFC 052：嵌套数组元素（finalizer 逐元素 rt_array_release）。 */
+void*    rt_array_create_nested(int32_t cap, int32_t elem_size);
 int32_t  rt_array_length(void* payload);
-/* rt_array_destroy is shared with the legacy List::ToArray path above. */
+/* RFC 052：payload ↔ ArcHeader；retain/release 走 rc（入参为 payload）。 */
+void*    rt_array_obj_of(void* payload);
+void*    rt_array_payload_of(void* obj);
+void     rt_array_retain(void* payload);
+void     rt_array_release(void* payload);
+void     rt_array_arc_inc_ref(void* slot);
+void     rt_array_arc_dec_ref(void* slot);
+const void* rt_array_vtable_scalar(void);
+const void* rt_array_vtable_refs(void);
+const void* rt_array_vtable_nested(void);
+/* rt_array_destroy ≡ rt_array_release（见上方 List 区声明）。 */
 
 /* P5-F: Array utility methods */
 void     rt_array_copy(void* src, int32_t src_offset, void* dst, int32_t dst_offset, int32_t length);
@@ -1023,9 +1047,9 @@ int32_t  rt_array_binary_search_int(void* payload, int32_t value);
 void*    rt_array_find_all_int(void* payload, rt_list_pred_fn pred);
 void*    rt_array_convert_all_int(void* payload, rt_list_pred_fn converter);
 
-/* Exception unwinding (zero-cost EH; Windows SEH native raise via
- * `_CxxThrowException` — see rt_exc.c). Milestone ⑥ removed the legacy
- * try-registry; POSIX Itanium is milestone ⑨. */
+/* Exception unwinding (zero-cost EH; Windows SEH via `_CxxThrowException` /
+ * POSIX Itanium via `_Unwind_RaiseException` — see rt_exc.c). Arc exception
+ * object is TLS (`rt_get_exception`); catch type filtering is codegen-side. */
 void rt_throw(void* exception_obj);
 void* rt_get_exception(void);
 /* L2 StackTrace：捕获当前调用栈为多行字符串（malloc；调用方写入 Exception.StackTrace）。
@@ -2501,6 +2525,8 @@ int32_t rt_reactor_submit_write(void* reactor, int32_t fd, const void* buf,
 int32_t rt_reactor_submit_accept(void* reactor, int32_t listen_fd, void* user_data);
 int32_t rt_reactor_submit_connect(void* reactor, int32_t fd,
                                    const void* addr, uint32_t addr_len, void* user_data);
+/* RFC 048 M2：NamedPipe ConnectNamedPipe OVERLAPPED（仅 IOCP 真实现；其它后端 -1）。 */
+int32_t rt_reactor_submit_named_pipe_connect(void* reactor, int32_t fd, void* user_data);
 int32_t rt_reactor_submit_timeout(void* reactor, uint64_t timeout_ns, void* user_data);
 
 /* 链式操作控制（io_uring IOSQE_IO_LINK，RFC 009 M7） */
@@ -2517,7 +2543,7 @@ int32_t rt_reactor_poll(void* reactor, RtIoEvent* events, int32_t max_events,
  * 用于多线程 executor：根任务完成时由 worker 线程唤醒 EventLoop 驱动线程，
  * 使其及时检查退出条件（消除「≤100ms 轮询兜底」延迟）。
  * 后端映射：IOCP=PostQueuedCompletionStatus(NULL)、kqueue=EVFILT_USER、
- *          io_uring/poll=eventfd/pipe（预留，当前 no-op 由超时兜底）。线程安全。 */
+ *          io_uring=eventfd+POLL_ADD；poll 回退平台为 pipe（预留）。线程安全。 */
 void    rt_reactor_wake(void* reactor);
 
 /* 零拷贝缓冲池注册（io_uring_register_buffers / IOCP 模拟） */

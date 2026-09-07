@@ -195,6 +195,15 @@ int32_t rt_reactor_impl_submit_connect(void* backend, int32_t fd,
     return 0;
 }
 
+int32_t rt_reactor_impl_submit_named_pipe_connect(void* backend, int32_t fd,
+                                                    void* user_data) {
+    /* NamedPipe ConnectNamedPipe 仅 Windows IOCP；POSIX FIFO 由 rt_pipe 层另路径。 */
+    (void)backend;
+    (void)fd;
+    (void)user_data;
+    return -1;
+}
+
 int32_t rt_reactor_impl_flush(void* backend) {
     (void)backend;
     return 0;

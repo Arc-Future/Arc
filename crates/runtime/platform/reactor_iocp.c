@@ -443,6 +443,42 @@ int32_t rt_reactor_impl_submit_connect(void* backend, int32_t fd,
     return 0;
 }
 
+/* RFC 048 M2：ConnectNamedPipe + OVERLAPPED → IOCP 完成端口。
+ * 复用 RT_IOCP_OP_CONNECT 完成语义（bytes=0 / Internal 错误码）。 */
+int32_t rt_reactor_impl_submit_named_pipe_connect(void* backend, int32_t fd,
+                                                    void* user_data) {
+    RtReactorIocp* r = (RtReactorIocp*)backend;
+    if (!r) return -1;
+
+    RtIocpOverlapped* ov = iocp_ov_alloc(r);
+    if (!ov) return -1;
+    ov->user_data = user_data;
+    ov->op_type = RT_IOCP_OP_CONNECT;
+    ov->fd = fd;
+
+    HANDLE handle = (HANDLE)(intptr_t)fd;
+    BOOL ok = ConnectNamedPipe(handle, &ov->overlapped);
+    if (ok) {
+        /* 同步完成：立即投递合成完成（result=0 成功）。 */
+        iocp_immediate_push(r, ov->user_data, fd, 0);
+        iocp_ov_free(r, ov);
+        return 0;
+    }
+    DWORD err = GetLastError();
+    if (err == ERROR_IO_PENDING) {
+        atomic_fetch_add_explicit(&r->pending_count, 1, memory_order_relaxed);
+        return 0;
+    }
+    if (err == ERROR_PIPE_CONNECTED) {
+        /* 客户端已连：与同步 wait_connect 同语义，立即成功。 */
+        iocp_immediate_push(r, ov->user_data, fd, 0);
+        iocp_ov_free(r, ov);
+        return 0;
+    }
+    iocp_ov_free(r, ov);
+    return -1;
+}
+
 int32_t rt_reactor_impl_flush(void* backend) {
     /* IOCP 无批量提交——每个 IO 发起时立即提交 */
     (void)backend;

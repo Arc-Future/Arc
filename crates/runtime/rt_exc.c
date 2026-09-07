@@ -1,12 +1,12 @@
 // Exception unwinding ABI (zero-cost EH: invoke/landingpad → native raise).
 //
-// Milestone ② (zero-cost EH, Windows SEH 主平台): `rt_throw` on Windows raises
-// the exception natively via `_CxxThrowException`, carrying the Arc exception
-// object in the payload. Codegen catches it via invoke → catchswitch/catchpad.
-// `rt_exception` is per-thread TLS so concurrent throws on different threads
-// never race. Milestone ⑥ removed the legacy try-stack registry; POSIX targets
-// have no handler registry until milestone ⑨ (Itanium) — an unhandled throw
-// converges to `rt_panic`.
+// Milestone ② (Windows SEH): `rt_throw` raises via `_CxxThrowException`;
+// codegen catches with invoke → catchswitch/catchpad (`__CxxFrameHandler3`).
+// Milestone ⑨ (POSIX Itanium, 0.1 gate): `rt_throw` raises via
+// `_Unwind_RaiseException`; codegen catches with invoke → landingpad
+// (`__gxx_personality_v0`, catch-all `catch ptr null`). Arc exception object
+// lives in TLS (`rt_get_exception`); personality typeinfo is unused (RFC 010).
+// Unhandled throw → `rt_panic("unhandled exception")`.
 //
 // StackTrace (L2 符号完备)：`rt_format_stacktrace` 在 throw 路径由 codegen 写入
 // `Exception.StackTrace`。捕获真实返回地址；主路径嵌入 `__arc_dbg_table`
@@ -24,6 +24,7 @@
 #  include <windows.h>
 #else
 #  include <execinfo.h>
+#  include <unwind.h>
 #endif
 
 #define RT_ST_MAX_FRAMES 32
@@ -72,6 +73,20 @@ extern int32_t rt_debug_lookup(uint64_t addr, const char** symbol, const char** 
                                int32_t* line, int32_t* col);
 extern int32_t rt_debug_is_arc_frame(const char* symbol);
 
+#if !defined(_WIN32)
+/* Exception class "ARCARCEH" — foreign to libstdc++/libc++; catch-all
+ * landingpads (`catch ptr null` + __gxx_personality_v0) still match. */
+static const uint64_t RT_EH_EXCEPTION_CLASS =
+    ((uint64_t)'A') | ((uint64_t)'R' << 8) | ((uint64_t)'C' << 16) |
+    ((uint64_t)'A' << 24) | ((uint64_t)'R' << 32) | ((uint64_t)'C' << 40) |
+    ((uint64_t)'E' << 48) | ((uint64_t)'H' << 56);
+
+static void rt_eh_cleanup(_Unwind_Reason_Code code, struct _Unwind_Exception* exc) {
+    (void)code;
+    free(exc);
+}
+#endif
+
 void rt_throw(void* exception_obj) {
     rt_exception = exception_obj;
 #if defined(_WIN32)
@@ -85,11 +100,22 @@ void rt_throw(void* exception_obj) {
         __builtin_unreachable();  /* _CxxThrowException never returns */
     }
 #else
-    /* POSIX: zero-cost EH (Itanium) is milestone ⑨ (1.1+, non-1.0 gate).
-     * Milestone ⑥ removed the legacy try-stack registry, so there is no
-     * registered handler on this path — an unhandled throw converges to
-     * `rt_panic("unhandled exception")` (std::terminate 等价). */
-    rt_panic("unhandled exception");
+    /* Zero-cost EH milestone ⑨ (POSIX Itanium): raise a foreign unwind
+     * exception. Catch sites read the Arc object from TLS via rt_get_exception. */
+    {
+        struct _Unwind_Exception* ue =
+            (struct _Unwind_Exception*)calloc(1, sizeof(struct _Unwind_Exception));
+        if (!ue) {
+            rt_panic("oom");
+        }
+        ue->exception_class = RT_EH_EXCEPTION_CLASS;
+        ue->exception_cleanup = rt_eh_cleanup;
+        _Unwind_Reason_Code rc = _Unwind_RaiseException(ue);
+        /* _URC_END_OF_STACK → no handler; other codes are also unrecoverable. */
+        (void)rc;
+        free(ue);
+        rt_panic("unhandled exception");
+    }
 #endif
 }
 

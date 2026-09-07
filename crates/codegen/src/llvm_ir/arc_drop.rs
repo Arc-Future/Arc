@@ -42,6 +42,12 @@ impl<'a> FnEmitter<'a> {
         if matches!(ty, TypeId::String) {
             return;
         }
+        // RFC 052：数组局部 → rt_array_release（payload-24 → ArcHeader）。
+        if matches!(ty, TypeId::Array { .. }) {
+            let (_, val) = self.emit_operand(&MirOperand::Local(id));
+            self.emit(&format!("call void @rt_array_release(ptr {val})"));
+            return;
+        }
         let (_, val) = self.emit_operand(&MirOperand::Local(id));
         match class_name(&ty) {
             Some(class) => self.emit_class_drop(&val, class),
@@ -269,7 +275,12 @@ pub(crate) fn class_name(ty: &TypeId) -> Option<&str> {
 /// Drops are substituted 1:1. `Weak_<T>`, `Thread` and opaque handles are all
 /// `Named` classes; `emit_drop` / `emit_class_drop` specialise their release.
 pub(crate) fn is_arc_class_slot(ty: &TypeId, layouts: &typeck::ProgramLayouts) -> bool {
-    matches!(ty, TypeId::Named(n) if layouts.classes.contains_key(n.as_str()))
+    match ty {
+        TypeId::Named(n) if layouts.classes.contains_key(n.as_str()) => true,
+        // RFC 052：数组局部纳入 epilogue drop（rt_array_release）。
+        TypeId::Array { .. } => true,
+        _ => false,
+    }
 }
 
 /// RFC 039 M2：局部 alloca 槽的 byte size（配合 `!llvm.lifetime.start/end`）。

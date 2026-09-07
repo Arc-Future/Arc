@@ -2,6 +2,68 @@
 
 本文件按日期分节记录仓库重要变更（格式参考 Keep a Changelog；括号内为对应提交哈希）。更细粒度登记见 实现规划。
 
+## 2026-09-07
+
+### NamedPipe M2 双平台真 async（io_uring wake 收口）
+- **根因**：Linux io_uring `poll` 在空环上 `io_uring_enter(min_complete=1)` 无限阻塞，
+  且 `rt_reactor_wake` 为 no-op → 跨线程 `rt_task_complete`→`spawn` 永不被 EventLoop
+  消费（零唤醒源挂死；同步完成 Task 冒充被禁止后的真实阻塞点）。
+- **修复**：eventfd + `IORING_OP_POLL_ADD` 跨线程 wake；阻塞等待武装
+  `IORING_OP_TIMEOUT`（对齐 EL 心跳预算）。POSIX FIFO `ReadAsync`/`WriteAsync`
+  走 io_uring 真 Reactor；`WaitForConnectionAsync` 专用线程 + complete。
+- **验证**：Windows `l2_pipe_contract`/`pipe_async_roundtrip`；WSL
+  `pipe-ok-linux` + `pipe-async-ok-linux`。
+
+### RFC 052 S1–S4 落地 + NamedPipe M2（Windows 真 Reactor；POSIX 过渡）
+- **RFC 052 数组所有权**：`rt_array_create` ArcHeader 化（payload 仍对外；retain/release
+  经 -24）；`create_refs`/`create_nested`；codegen 局部/字段/List/async env drop；owned
+  `rt_dict_keys/values` 快照逐元素 +1；class 键所有权；string 键/元素按 §2.3 借用。
+  L2：`l2_array_ownership`（scalar drop / class elems / alias / Values 快照）全绿。
+- **RFC 048 M2**：Windows `pipe_async_roundtrip` PASS（IOCP）。POSIX 真 async 见上节
+  （本切片收口前曾为同步完成 Task 过渡）。
+- **0.1 发布前置**：POSIX EH ✅ · RFC 052 ✅ · NamedPipe M2 双平台真 async ✅。
+
+### 0.1 发布前置升格 + WSL Ubuntu-24.04 Linux 证据（POSIX EH / NamedPipe）
+- **裁决**：POSIX EH、RFC 048 NamedPipe（含 M2 异步面）、RFC 052 数组所有权升格为
+  **0.1 发布前置**（推翻此前「非挡板 / 刻意延后」口径）；公网托管等仍为**外部挡板**。
+- **POSIX EH（RFC 010 里程碑⑨）**：Itanium `landingpad` / `__gxx_personality_v0` /
+  `_Unwind_RaiseException`；去掉 Windows-only 硬门。WSL `Ubuntu-24.04` 冒烟
+  `scripts/verify/wsl-eh-smoke.sh` → stdout `eh-ok-linux` exit 0（产物落 `/tmp`，
+  避开 DrvFs 共享库落位 EPERM）。顺带：非 UI 程序不再误编 X11/`-lX11`/`-lwgpu_native`
+ （`ir_needs_platform_window` 仅认 call/invoke；共享 runtime 链 `-fPIC`）。
+- **NamedPipe Linux 同步门（RFC 048 M0/M1）**：`scripts/verify/wsl-pipe-smoke.sh`
+  → `pipe-ok-linux` exit 0（双工字节回环含 0x00）。ASAN 归因：`Stream.Close`→虚
+  `Dispose` 在模式 A 裸 `RtPipe*` 上 SEGV——codegen 拦截 `Close`→`rt_pipe_close`，
+  `Stream.Close` 改 virtual，门面覆写 Close/Dispose。
+- **M2 async pipe / RFC 052**：见上节（本会话后续切片已收口）。
+
+### 发布线改版：对外版本 1.0.0 → 0.1.0（诚实成熟度）
+- **动机**：功能面已达可打包/可安装/可验签自更新的预正式切面，但官方端点托管、
+  Unix 宿主实跑 tar.xz、双平台 CI 全绿观察窗等外部交付线仍开；以「1.0 稳定版」
+  对外口径易误导发布决策。按建议收敛为 **0.1.0 / v0.1**——承认预正式成熟度，
+  **不撤回**已交付能力。
+- **落点**：`Cargo.toml` workspace.package、`arc --version`（`CARGO_PKG_VERSION`）、
+  全 `std/*/arc.toml`、packaging/release 脚本默认与 harness、user-guide/README、
+  sdk_layout/self-update 测例与注释；CHANGELOG 保留下方历史「1.0.0」节作曾用口径。
+- **0.1 发布前置（本会话升格）**：POSIX EH、NamedPipe 双平台（含 M2）、RFC 052——
+  见上节；**外部挡板**（公网 `static.arc.dev` 等）与之分开列。
+- **信任锚**：0.1.0 发版前轮换 Ed25519 发布密钥（历史 `0b2b…` 锚的离线 seed 在本机不可用；
+  新公钥内嵌 `RELEASE_PUBLIC_KEY_HEX`，seed 仅 `~/.arc/keys/release-signing-key-0.1.0.txt`）。
+
+### 修复：pipe_transport_lines 挂死根因重定（非 Delay 丢唤醒 / 非 M2 真异步缺口）
+- **澄清**：否——不是「NamedPipe M2 Reactor 真异步未落地」；也不是 `Task.Delay`
+  waker 交接三态主因。纯 `Thread`+`await Task.Delay` 最小体 20/20 绿。
+- **机制**：`client.Connect` 成功只置客户端 `is_connected`；服务端标志由 OS 线程内
+  `WaitForConnection`/`ConnectNamedPipe` 置位。原 case 以固定 `Delay(100)` 代替握手，
+  CPU 争用下该线程可滞后 → 续体对未握手服务端 `ReadFile` 永久阻塞；worker 持
+  `POLLING`（poll_phase=2）180s+，driver 外层呈 `PENDING+bit+waker=NULL`（census
+  正常挂起态被误读为零唤醒）。现场 `wake=1/pollwork=2` 实为 Delay 已唤醒、卡在
+  续体同步 IO——与「丢唤醒」反相。
+- **修复**：① 契约测对齐 `pipe_echo`——`await` 自旋至 `server.IsConnected` 后
+  `Join`；② 双后端服务端 Read/Write 在 `!is_connected` fail-fast 返 0；③
+  `rt_pipe_client_connect` 硬错误不再伪造成功（既有工作区补丁一并纳入）。
+- **划界**：M2 async pipe 仍为能力缺口，与本挂死正交。
+
 ## 2026-09-06
 
 ### RFC 051 S3d：ConcurrentDictionary 值所有权收口（owned 变体 + 锁内借用 + TryRemove 移交）
@@ -54,9 +116,9 @@
   - 全局计数器自停滞起**静态**：wake=1（仅一次投递）、pollwork=2/ipush=2/ipop=2、
     park 随心跳单调（event loop 存活）→ 非反应器停滞，是调度/唤醒投递侧丢失。
   - 该族与宿主 CPU 争用时序强相关（历史夜间 8 连绿 3.2–4.7s；今日含 HEAD 对照全天红）。
-  **处置**：根因为独立工程流（async 调度/唤醒协议，需事件级 [WS]/[REL] trace 专项 +
-  安静机器），按 stability-2026-09-02 既定收敛路径单独立项；不属本收口变更回归
-  （对照实验在案）。门禁登记维持：full-rt 56/57、corpus 待安静窗口（前夜 41/41）。
+  **处置（2026-09-07 重定）**：非 Delay waker 丢唤醒；见 2026-09-07 节——服务端
+  握手滞后 + 未握手 ReadFile 阻塞，已修契约测/fail-fast。门禁登记维持历史：
+  full-rt 56/57、corpus 待安静窗口（前夜 41/41）。
 
 ### RFC 052 定稿 + 文档字节损毁还原（index.md / 006-object-model.md）
 - **RFC 052 数组所有权与字典快照**（docs/rfc/052-array-ownership.md）：运行时数组零释放
@@ -947,9 +1009,37 @@
 4. **CI 观察窗**：三平台矩阵（lint/build-test）在 HEAD 的门禁真实状态、`unix-install-protocol` job 首跑、ubuntu-extra-draft（wasm 未接线，continue-on-error）——需 CI 首跑信号后按结果处置（本机无 runner 观察面）
 5. **外部交付线**：Linux/macOS tar.xz 产线执行端（arc-pack Unix 分支已就绪，需 Unix 宿主/CI job 实跑）、发布端点定版（RFC 031 §12）、macOS 安装协议实机（LibreSSL/xz 兼容）——均需外部执行面
 
-## 1.0.0（2026-09-04）
+## 0.1.0（2026-09-07 · 当前发布线）
 
-**Arc 1.0 —— 首个稳定版**。语言、编译器、标准库与运行时的首个正式发布：单一 `arc` 可执行文件 + 源码分发的标准库 + 随包 runtime C 源码（首次构建经内容寻址缓存按需编译），AOT 编译至原生机器码，无 JIT 运行时。
+**Arc 0.1 —— 预正式对外切面**。曾于 2026-09-04 **误标「1.0.0 / 首个稳定版」**；现以 **0.1.0**
+诚实成熟度对外发布（能力不撤回）。获取方式：GitHub Release
+`https://github.com/Arc-Future/Arc/releases/tag/v0.1.0`（或设
+`ARC_RELEASE_BASE` 指向该 Release 的 `…/download/v0.1.0`）；**公网
+`static.arc.dev` 仍为占位**，勿假定已通。
+
+三项 **0.1 发布前置已齐**：POSIX EH（RFC 010）· RFC 052 数组所有权 · NamedPipe M2
+双平台真 async（RFC 048）。下方历史「1.0.0」节保留曾用口径。
+
+### 支持面
+
+| 项 | 状态 |
+|----|------|
+| 平台 | Windows x86_64（本机安装包产线可跑）；Linux/macOS：构建门禁/安装协议 harness 已备，**tar.xz 须 Unix 宿主实跑打包** |
+| 工具链 | 捆绑瘦身版 LLVM（clang + lld 子集）或外部 clang ≥ 22 |
+| EH | Windows SEH + POSIX Itanium（WSL `eh-ok-linux`） |
+| 管道 | NamedPipe M0–M2：Windows IOCP + Linux io_uring 真 Reactor（`pipe-ok-linux` / `pipe-async-ok-linux`） |
+| 发布分发 | `arc release` / `arc self-update` / `arc publish` 代码面齐；消费端以 **GitHub Release URL / `ARC_RELEASE_BASE`** 为准 |
+| 验收 | workspace / clippy 可复跑；0.1 前置三项冒烟/批测证据见 2026-09-07 节 |
+
+### 已知限制（0.1）
+
+- **外部挡板**：公网 `static.arc.dev` 托管未通；Unix 宿主实跑 tar.xz 产线；双平台 CI 绿观察窗
+- **0.1 发布前置**：~~进行中~~ → **已收口**（POSIX EH / RFC 052 S1–S4 / NamedPipe M2）
+- **其它**：`arc self-update` 仍走 zip 解压路径（Unix tar.xz 安装走 `arc-install.sh`）；标准库源码分发 + runtime C 内容寻址缓存
+
+## 1.0.0（2026-09-04 · 历史口径，已由 0.1.0 接替）
+
+**曾标「Arc 1.0 —— 首个稳定版」**（历史叙事保留）。语言、编译器、标准库与运行时的首个功能切面登记：单一 `arc` 可执行文件 + 源码分发的标准库 + 随包 runtime C 源码（首次构建经内容寻址缓存按需编译），AOT 编译至原生机器码，无 JIT 运行时。**2026-09-07 起对外发布线改为 0.1.0**（见上节）。
 
 ### 支持面
 
@@ -972,7 +1062,7 @@
 
 ### 已知限制
 
-- 官方发布端点（`manifest.json` 托管，现占位 `static.arc.dev`）定版与 Linux/macOS 安装包（tar.xz 产线）为外部依赖待交付；`arc self-update` 分发容器统一 zip
+- （历史）官方发布端点与 Linux/macOS tar.xz 实跑包为外部依赖——**现由 0.1.0 节「已知限制」接替登记**
 - 标准库以源码分发：项目首次构建按需编译 runtime C（内容寻址缓存后增量）
 
 ## 2026-09-02

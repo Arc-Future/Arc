@@ -36,6 +36,14 @@ public class NamedPipeServerStream : Stream {
     [Builtin(ABI = "rt_pipe_server_wait_connect")]
     public bool WaitForConnection() { return false; }
 
+    /// <summary>
+    /// Reactor 真异步等待客户端接入（RFC 048 M2）。对标 C# WaitForConnectionAsync；
+    /// 须在已绑定 Reactor 的 async 上下文中 await（async Main 自动具备）。
+    /// </summary>
+    /// <param name="cancellationToken">取消令牌：提交前已取消则返回已取消 Task。</param>
+    [Builtin(ABI = "rt_pipe_wait_connect_async")]
+    public Task WaitForConnectionAsync(CancellationToken cancellationToken = default) { return null; }
+
     /// <summary>断开当前连接并复用实例（可再次 WaitForConnection）。</summary>
     [Builtin(ABI = "rt_pipe_server_disconnect")]
     public void Disconnect() {}
@@ -57,6 +65,14 @@ public class NamedPipeServerStream : Stream {
     /// <summary>将缓冲区字节写入管道（短写补写至尽）。</summary>
     [Builtin(ABI = "rt_pipe_write")]
     public override void Write(byte[] buffer, int offset, int count) {}
+
+    /// <summary>Reactor 真异步读（RFC 048 M2）；覆写 Stream 默认同步包装。</summary>
+    [Builtin(ABI = "rt_pipe_read_async")]
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default) { return null; }
+
+    /// <summary>Reactor 真异步写（RFC 048 M2）；覆写 Stream 默认同步包装。</summary>
+    [Builtin(ABI = "rt_pipe_write_async")]
+    public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken = default) { return null; }
 
     // ── Stream 抽象面剩余成员（管道不可寻址，诚实最小实现）──
 
@@ -86,6 +102,15 @@ public class NamedPipeServerStream : Stream {
 
     /// <summary>释放底层管道资源。</summary>
     public override void Dispose() {
+        this.Terminate();
+    }
+
+    /// <summary>
+    /// 关闭管道。模式 A 裸 <c>RtPipe*</c> 无 vtable——基类
+    /// <c>Close → Dispose()</c> 虚分派会 SEGV（Linux ASAN：<c>Stream_Close</c>）。
+    /// 覆写为直调 Terminate。
+    /// </summary>
+    public override void Close() {
         this.Terminate();
     }
 }

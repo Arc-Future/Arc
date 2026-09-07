@@ -17,7 +17,7 @@ Arc 是纯 AOT 编译器：编译期直接生成原生机器码，无需 JIT 运
 
 ### 方式一：二进制安装包（Windows，推荐）
 
-从发布渠道下载 `arc-<版本>-x86_64-pc-windows-msvc.zip`（附 `.sha256` 校验文件）。安装包自带：`arc.exe`、标准库源码（`lib/std`）、runtime C 源码（`lib/rt`）、捆绑的瘦身版 LLVM（`lib/llvm`——clang + lld 子集，**完全离线构建**）。
+从 [GitHub Releases](https://github.com/Arc-Future/Arc/releases)（现行 **0.1.0**）下载 `arc-<版本>-x86_64-pc-windows-msvc.zip`（附 `.sha256` 校验文件）。公网 `static.arc.dev` 仍为占位；自更新可将 `ARC_RELEASE_BASE` 设为该 Release 的 `…/download/v0.1.0`。安装包自带：`arc.exe`、标准库源码（`lib/std`）、runtime C 源码（`lib/rt`）、捆绑的瘦身版 LLVM（`lib/llvm`——clang + lld 子集，**完全离线构建**）。
 
 **脚本安装**（推荐）：安装包内已嵌入就地安装器 `install.ps1`。解压 zip 后，在解压出的 SDK 根目录直接运行：
 
@@ -28,7 +28,7 @@ Arc 是纯 AOT 编译器：编译期直接生成原生机器码，无需 JIT 运
 脚本自动把当前 SDK 落位至 `%LOCALAPPDATA%\arc\versions\`、写入版本指针与 `bin` 启动器、注入用户级 PATH，并运行 `arc doctor` 自检。也可用仓库版脚本从 zip 安装（自动校验 SHA256）：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Archive arc-1.0.0-x86_64-pc-windows-msvc.zip -Sha256 <64-hex>
+powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Archive arc-0.1.0-x86_64-pc-windows-msvc.zip -Sha256 <64-hex>
 ```
 
 **手动安装**：解压 zip 到任意目录（下称 `<sdk-root>`），把 `<sdk-root>\bin` 加入 PATH 即可——SDK 经 `arc.exe` 自身位置自动定位（可用 `ARC_SDK_ROOT` 显式覆盖）。捆绑的 LLVM 由编译器**自动发现**（clang 解析序：`ARC_CLANG` → `arc toolchain` 安装位 → SDK 捆绑 `lib/llvm` → 系统安装位 → PATH），解压即得完全离线构建能力，无需设置任何环境变量；仅当改用外部 clang 时才需设 `ARC_CLANG`（参考包内 `arc.env` 模板）。
@@ -37,12 +37,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Archive arc-1.0
 
 ### 方式二：二进制安装包（Linux/macOS，脚本安装）
 
-> **状态（1.0）**：本方式为**消费端先行**——安装脚本与就地安装布局已就绪并经实机验收（`scripts/packaging/verify-arc-install.sh`，WSL2 Ubuntu 端到端 10/10），但 **tar.xz 打包产线与正式发布端点（`static.arc.dev` 占位）尚未交付**（[CHANGELOG](../../CHANGELOG.md) 1.0 已知限制）。产线就绪前可对任意已解压 SDK 目录使用 `--from-dir` 就地安装，或按[方式三：源码构建](#方式三源码构建)自行构建。
+> **状态（0.1）**：本方式为**消费端先行**——安装脚本与就地安装布局已就绪并经实机验收（`scripts/packaging/verify-arc-install.sh`，WSL2 Ubuntu 端到端 10/10）；`arc-pack.ps1` 的 Unix `tar.xz` 分支已落码，但**须在 Linux/macOS 宿主实跑打包**，且**正式发布端点（`static.arc.dev` 占位）仍为外部托管挡板**（见 [CHANGELOG](../../CHANGELOG.md) 0.1 已知限制）。官方包未上线前，可对任意已解压 SDK 目录使用 `--from-dir` 就地安装，或按[方式三：源码构建](#方式三源码构建)自行构建。
 
 下载 `arc-<版本>-<triple>.tar.xz`（附 `.sha256` 校验文件），脚本安装（下载 → SHA256 校验 → 解压至 `~/.arc/versions/` → 版本指针与 PATH 注入）：
 
 ```bash
-sh arc-install.sh --url https://…/arc-1.0.0-x86_64-unknown-linux-gnu.tar.xz
+sh arc-install.sh --url https://…/arc-0.1.0-x86_64-unknown-linux-gnu.tar.xz
 ```
 
 安装包内嵌的同名脚本也支持**就地安装**：解压 tar.xz 后，在解压出的 SDK 根目录直接 `sh install.sh`（或 `sh arc-install.sh --from-dir <sdk-dir>` 安装任意已解压 SDK 目录——目录可改名，版本取 `version.txt`）。

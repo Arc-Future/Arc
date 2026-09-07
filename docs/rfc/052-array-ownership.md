@@ -1,6 +1,7 @@
 # RFC 052: 运行时数组所有权（ArcHeader 化）与字典快照语义
 
-状态：设计定案（1.0 发布前按「已知限制」登记；实施另排专项 Sprint，分期 S1–S4）
+状态：设计定案；**0.1 发布前置**（2026-09-07 升格）。**S1–S4 已落地**（runtime ArcHeader
+化 · codegen drop/retain · 类字段/容器/async env · owned Keys/Values 快照 + class 键所有权）。
 关联：[RFC 005](005-memory-model.md)（内存模型）· [RFC 006](006-object-model.md)（对象模型/ABI）·
 [RFC 024](024-concurrent-collections.md)（并发集合快照）· [RFC 036](036-maturity.md)（冻结面流程 §3）·
 [RFC 050](050-unified-object-header.md)（统一对象头）· [RFC 051](051-iface-value-lifetime.md) §5
@@ -86,25 +87,23 @@ AIModelRegistry、YamuxSession 流表等）；借用语义下安全（Dictionary
 
 | 期 | 内容 | 验收锚 |
 |---|---|---|
-| S1 | 运行时头化 + 创建点统一（增量 ABI，codegen 未接线） | corpus/workspace/full-rt 绿；fd 探针 exit 0 |
-| S2 | codegen 建头/读偏移 + 局部 epilogue drop + 返回路径 | arr-probe1/2 内存回落；L2 数组生命周期用例 |
-| S3 | 类字段 finalizer / 容器元素 / async env-EH 站点 | MemProbe 家族平坦；容器数组元素 L2 |
-| S4 | owned 快照逐元素 +1、class 键所有权、string 元素语义裁决落地 | Keys/Values .NET 快照用例；corpus/workspace/full-rt 全绿 |
+| S1 ✅ | 运行时头化 + 创建点统一（增量 ABI） | `rt_array_create` = ArcHeader@0 + length@16 + payload@24；`rt_list_to_array` 统一走 create |
+| S2 ✅ | codegen 建头/局部 epilogue drop + 返回路径 | `rt_array_retain/release`；`TypeId::Array` 入 epilogue；`create_refs/nested` |
+| S3 ✅ | 类字段 finalizer / 容器元素 / async env | `__finalize_*` 数组字段 `rt_array_release`；List `_arr` 走 `rt_array_arc_*`；SM dtor |
+| S4 ✅ | owned 快照逐元素 +1、class 键所有权、string 裁决 | `rt_dict_values/keys` owned→create_refs+inc；class 键 retain；string 键维持借用（§2.3） |
 
 ### 备选
 
 - **D1（仅收 Keys/Values +1 + 文档化借用边界）**：成本低但数组缓冲/类元素泄漏
   （arr-probe1/2）不解决——长期宿主主内存项仍敞口；
 - **D0（维持现状）**：长期宿主线性增长 + 快照悬垂 UB 面，不可宣称 .NET 对等；
-- 推荐 D2（ArcHeader 化）分期实施，含 RFC 036 §3 冻结面评审（表示层 + rt_* ABI 增量、
-  语言核心零破坏）。
+- **采纳 D2（ArcHeader 化）**：S1–S4 已落地（2026-09-07）；string 元素/键表示面按 §2.3
+  维持借用并文档化，待表示收敛后另排。
 
-## 4. 1.0 去留结论（登记为已知限制）
+## 4. 发布线结论（0.1 发布前置 · 已收口）
 
-- **结论**：1.0 发布前**不实施**，作为「已知限制」如实登记（本 RFC + 1.0 文档限制节）：
-  功能面自洽（corpus/workspace/full-rt 绿、无崩溃路径）；In-tree Keys/Values 用法
-  审计合规（稳定期遍历）；数组泄漏为长期宿主内存增长面（已量化 arr-probe1/2 证据）；
-  表示层变更 + 全谱 drop 站点改造面广（S1–S4），按冻结面流程独立排期（1.0.x/1.1 专项
-  Sprint），不阻塞 1.0 发布窗口。
-- **宣称纪律**：1.0 文档不得宣称「数组所有权与 .NET 快照对等」；Keys/Values 说明保持
-  「借用视图」直至 S4 落地。
+- **结论**：RFC 052 升格为 **0.1 发布前置** 且 **S1–S4 已实施**（本变更集）。数组对象
+  ArcHeader 化 + 全谱 drop 站点 + owned Keys/Values 快照 + class 键所有权已接线；
+  string 键/元素按 §2.3 维持借用（非 ArcHeader）。
+- **宣称纪律**：owned 字典 Keys/Values 可宣称 .NET 快照对等；legacy 字典仍为借用视图；
+  string 键/元素不作释放承诺直至表示面收敛。

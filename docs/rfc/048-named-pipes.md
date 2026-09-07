@@ -1,6 +1,6 @@
 # RFC 048：命名管道与本机进程间通信（IPC）体系
 
-状态：草案 → 评审中（2026-09-02 评审轮：性能/稳定性论证）
+状态：设计定案；**M0–M2 已落地**（**0.1 发布前置 · 2026-09-07 收口**）。M3 组合/压力仍排期。
 关联：RFC 025（网络协议层）· RFC 014（运行时 ABI）· RFC 016（验证式 FFI）· RFC 038（异步异步面）· RFC 046（通道，进程内 MPMC）· RFC 009（Reactor）
 落点：`crates/runtime/rt_pipe.c` + `crates/runtime/platform/pipe_{windows,posix}.c` + `std/Net/Pipes/`
 
@@ -128,6 +128,8 @@
 
 - **同族竞态前置门已闭合**（2026-09-02）：Reactor 域 accept-null 债务根治——await 的「零 re-poll 直达提取」假设被取证证伪（`await_waiting` 守卫位可被非配对 `coro_wake` 清除，EventLoop 合法推进挂起帧时 inner 仍 PENDING → `ptr_result` 空 → await 得 null）。协程与状态机两条 await lowering 均已改为 **re-poll 提取**：resume 后先 poll，PENDING 走第二挂起点（coro：独立 `coro.suspend` 回环 suspend2；状态机：重新 register_waker + 存 state 返 PENDING 天然回环）重等并重登记 waker。`l2_net_batch` 修复前失败率 60%（3/5+3/5 取证轮），修复后 6/6 全绿。M2 异步面的 PENDING/waker 交接回归门随之落位于此形态之上。
 
+- **同步握手前置**（2026-09-07）：`client.Connect` 成功 ≠ `server.IsConnected`；后者仅由 `WaitForConnection`/`ConnectNamedPipe` 置位。固定 `await Task.Delay` 不能代替握手——CPU 争用下 OS 线程滞后时，续体对未握手服务端 `ReadFile` 可永久阻塞（worker 持 `POLLING`，外层 census 呈 `PENDING+bit+waker=NULL`，易误判为 Delay 丢唤醒）。**处置**：服务端 Read/Write 在 `!is_connected` 时 fail-fast 返 0；契约测与 `pipe_echo` 同构自旋至 `IsConnected`。**非** M2 Reactor 真异步缺口。
+
 - **单写者约束显式化**（§3.1-3）：多写者交错风险不留给用户踩坑，文档化 + 上层组合范式兜底。
 
 ### 6.3 选型权衡（FIFO ⇄ UDS，诚实记录）
@@ -145,13 +147,16 @@ POSIX 上 FIFO 与 UDS 同走内核 pipe 机制，性能差异很小；Windows a
 ## 9. 里程碑分期
 
 - **M0（rt 层同步面）**：`rt_pipe.c` + 双后端 + ABI 注册 + codegen 拦截 + SIGPIPE 全局防护 + `l2_pipe_smoke` **双平台过门**（含：字节回环、EOF、双工往返、名字规范化、接入超时、**写已关闭读端 → 返回 0 进程存活**）。
-  - **验收记录（2026-09-02，Windows 侧）**：`l2_pipe_smoke` 五 case 全批通过（roundtrip / eof / write_closed_peer / connect_timeout / name_normalize）。冒烟牵出并修复两处**共享基建**根因：① pipe 门面未列入 `is_opaque_runtime_handle` ARC 豁免——裸 `RtPipe*` 被 `rt_arc_dec` 当对象头（offset 0 = `is_server`）递减，1→0 走释放分支读 offset 8 当 vtable → async Main 完成回调中 0xC0000005，批测表现为「case 1 PASS 后下一 case BEGIN 前」批进程死亡；② `copy_crypto_native_dll_if_needed` 门卫与 wgpu 版不一致（旧谓词不识别进程内编译 `target=None`）——Arc.Net 包经源码合并编入 TLS 面，产物隐式导入 `crypto_native.dll` 却未落位 → 批进程 0xC0000135（STATUS_DLL_NOT_FOUND）起跑即死，net/noise 等批同受益于修复。测试侧四处死代码兜底 `copy_crypto_native_dll_beside_batch` 随之移除。**Linux 双平台门禁仍欠**（POSIX 后端已备，待 Linux 环境执行同一批）。
+  - **验收记录（2026-09-02，Windows 侧）**：`l2_pipe_smoke` 五 case 全批通过（roundtrip / eof / write_closed_peer / connect_timeout / name_normalize）。冒烟牵出并修复两处**共享基建**根因：① pipe 门面未列入 `is_opaque_runtime_handle` ARC 豁免——裸 `RtPipe*` 被 `rt_arc_dec` 当对象头（offset 0 = `is_server`）递减，1→0 走释放分支读 offset 8 当 vtable → async Main 完成回调中 0xC0000005，批测表现为「case 1 PASS 后下一 case BEGIN 前」批进程死亡；② `copy_crypto_native_dll_if_needed` 门卫与 wgpu 版不一致（旧谓词不识别进程内编译 `target=None`）——Arc.Net 包经源码合并编入 TLS 面，产物隐式导入 `crypto_native.dll` 却未落位 → 批进程 0xC0000135（STATUS_DLL_NOT_FOUND）起跑即死，net/noise 等批同受益于修复。测试侧四处死代码兜底 `copy_crypto_native_dll_beside_batch` 随之移除。
+  - **Linux 双平台门禁（2026-09-07，WSL Ubuntu-24.04）**：`scripts/verify/wsl-pipe-smoke.sh` 同步双工回环（含 0x00）→ `pipe-ok-linux` exit 0。产物落 `/tmp`（DrvFs 共享库落位易 EPERM）。ASAN：`Stream.Close`→虚 `Dispose` 在模式 A 裸句柄上 SEGV——codegen 拦截 `Close` + 门面覆写 Close/Dispose。**升格为 0.1 发布前置**（与 M2 异步面一并）。
 
 - **M1（std 门面同步）**：`NamedPipeServerStream/NamedPipeClientStream/NamedPipeTransport` + `l2_pipe_echo`（跨进程）+ FIFO 生命周期卫生。
-  - **验收记录（2026-09-02，Windows 侧）**：三批全绿（`l2_pipe_contract` 5 case / `l2_pipe_echo` 跨进程 / `l2_pipe_smoke` 5 case）。① **析构契约落定**（rt_pipe.c 状态注释）：模式 A 裸句柄无 ARC 头/析构钩子——显式 `rt_pipe_close` 是唯一收口路径；新增 `RtPipe.closed` 标志（close 幂等早退 + 全方法入口守卫安全返回 0/false），状态块不随 close 释放（泄漏至进程退出，与 Thread/Socket 同策 H1）；**补齐 `Terminate` 的 emit 分派臂**（M0 遗漏——契约测试首跑即以此暴露：Terminate 走 stub 死代码体，WaitForConnection 真 ConnectNamedPipe 阻塞）。② **FIFO 卫生修正**：create 的 EEXIST 由「静默复用（注释与实现矛盾）」修订为 **unlink+mkfifo 残骸接管自愈**（POSIX 无内核生命周期无法判活跃性；§5.1-3 相应修订）；disconnect 去 unlink+mkfifo（对齐 Windows DisconnectNamedPipe 复用语义，消除换 inode 连接撕裂）。③ **NamedPipeTransport**：组合适配器（聚合具体门面类型 + 游标式行缓冲）——模式 A 门面**不可经抽象基类引用虚调用**（裸块无 vtable，RFC 006「基类引用存储」缺口的同型面，实证 0xC0000005），故不继承 StreamTransport（async 抽象面待 M2 真异步 ABI）。④ **跨进程 echo**：spawn 自身（argv 传角色，子进程 `Environment.Exit` 收口防 driver 续跑）+ stdout/stderr 双重定向吸干（防管道满阻塞与 ARC_CASE 标记污染）+ 16 行 UTF-8 往返 + BYE 收束 + 退出码校验。⑤ **新基建**：`rt_env_self_exe`（Windows GetModuleFileNameW / Linux /proc/self/exe / macOS _NSGetExecutablePath）+ `Environment.SelfProcessPath()`（对标 Environment.ProcessPath 正名落位）。⑥ 测试环境注记：批测以 `ARC_HOME` 重定向沙箱放行目录（本机 TRAE 沙箱对 `$ARC_HOME/rt_cache` 的 `<name>-<hash>.o.tmp` 编译中间名禁写，重编静默失败致批进程吃旧 runtime——**部署期症状**，非产物缺陷）。**Linux 双平台门禁仍欠**。
+  - **验收记录（2026-09-02，Windows 侧）**：三批全绿（`l2_pipe_contract` 5 case / `l2_pipe_echo` 跨进程 / `l2_pipe_smoke` 5 case）。① **析构契约落定**（rt_pipe.c 状态注释）：模式 A 裸句柄无 ARC 头/析构钩子——显式 `rt_pipe_close` 是唯一收口路径；新增 `RtPipe.closed` 标志（close 幂等早退 + 全方法入口守卫安全返回 0/false），状态块不随 close 释放（泄漏至进程退出，与 Thread/Socket 同策 H1）；**补齐 `Terminate` 的 emit 分派臂**（M0 遗漏——契约测试首跑即以此暴露：Terminate 走 stub 死代码体，WaitForConnection 真 ConnectNamedPipe 阻塞）。② **FIFO 卫生修正**：create 的 EEXIST 由「静默复用（注释与实现矛盾）」修订为 **unlink+mkfifo 残骸接管自愈**（POSIX 无内核生命周期无法判活跃性；§5.1-3 相应修订）；disconnect 去 unlink+mkfifo（对齐 Windows DisconnectNamedPipe 复用语义，消除换 inode 连接撕裂）。③ **NamedPipeTransport**：组合适配器（聚合具体门面类型 + 游标式行缓冲）——模式 A 门面**不可经抽象基类引用虚调用**（裸块无 vtable，RFC 006「基类引用存储」缺口的同型面，实证 0xC0000005），故不继承 StreamTransport（async 抽象面待 M2 真异步 ABI）。④ **跨进程 echo**：spawn 自身（argv 传角色，子进程 `Environment.Exit` 收口防 driver 续跑）+ stdout/stderr 双重定向吸干（防管道满阻塞与 ARC_CASE 标记污染）+ 16 行 UTF-8 往返 + BYE 收束 + 退出码校验。⑤ **新基建**：`rt_env_self_exe`（Windows GetModuleFileNameW / Linux /proc/self/exe / macOS _NSGetExecutablePath）+ `Environment.SelfProcessPath()`（对标 Environment.ProcessPath 正名落位）。⑥ 测试环境注记：批测以 `ARC_HOME` 重定向沙箱放行目录（本机 TRAE 沙箱对 `$ARC_HOME/rt_cache` 的 `<name>-<hash>.o.tmp` 编译中间名禁写，重编静默失败致批进程吃旧 runtime——**部署期症状**，非产物缺陷）。
+  - **Linux 同步门（2026-09-07）**：见 M0 Linux 冒烟；M1 门面跨进程 echo 仍以 Windows 批测为主证据，POSIX 同步双工由 M0/`pipe-ok-linux` 覆盖。
 
-- **M2（Reactor 异步）**：`WaitForConnectionAsync/ReadAsync/WriteAsync` 真 Reactor 面（IOCP/io\_uring/kqueue）+ accept-null 同族竞态回归门（专项审查先行）。
-
+- **M2（Reactor 异步）**：`WaitForConnectionAsync/ReadAsync/WriteAsync` 真 Reactor 面（IOCP/io\_uring/kqueue）+ accept-null 同族竞态回归门（专项审查先行）。**0.1 发布前置**（2026-09-07 升格）。
+  - **验收记录（2026-09-07，Windows）**：`l2_pipe_contract` 增 `pipe_async_roundtrip`（WaitForConnectionAsync + ConnectAsync + ReadAsync/WriteAsync 含 0x00）PASS；**IOCP 真 Reactor**。
+  - **验收记录（2026-09-07，WSL Ubuntu-24.04）**：`scripts/verify/wsl-pipe-smoke.sh` → `pipe-ok-linux` + `pipe-async-ok-linux`。根因收口：io_uring `poll` 旧实现 `min_complete=1` 且无 timeout、`rt_reactor_wake` no-op → 跨线程 `rt_task_complete`/`spawn` 永久挂死；现 **eventfd + IORING_OP_POLL_ADD wake** + **IORING_OP_TIMEOUT 等待预算**。POSIX `ReadAsync`/`WriteAsync` = **io_uring 真 Reactor**；`WaitForConnectionAsync` = 专用线程 + `rt_task_complete`（FIFO `open` 无 Connect 等价物，与 FileStream 池卸载同族）。
 - **M3（组合与压力）**：管道 ⇄ Channels 桥接 idiom 文档 + 多实例压力批（含缓冲调优对比数据，回填 §6.1）。
 
 ## 10. 不做清单

@@ -323,12 +323,12 @@ impl<'a> FnEmitter<'a> {
         let handle_offset = runtime_type_handle_offset(self.layouts).unwrap_or(16);
 
         let mut out = String::new();
-        // 工厂可能因缺失依赖抛 InvalidOperationException（rt_throw）；Windows 上须
-        // 携带 uwtable + personality，否则 SEH 展开无法穿过本帧（异常变崩溃）。
+        // 工厂可能因缺失依赖抛 InvalidOperationException（rt_throw）；须携带
+        // uwtable + personality，否则 unwind 无法穿过本帧（异常变崩溃）。
         let eh_suffix = if self.is_windows {
             " uwtable personality ptr @__CxxFrameHandler3"
         } else {
-            ""
+            " uwtable personality ptr @__gxx_personality_v0"
         };
         out.push_str(&format!(
             "define ptr @{mangled}(ptr %sp){eh_suffix} {{\nentry:\n"

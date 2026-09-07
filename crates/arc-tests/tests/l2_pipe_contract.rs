@@ -124,7 +124,16 @@ async Task<void> Main() {
         Console.WriteLine("ARC_CASE:pipe_transport_lines:FAIL:connect");
         return;
     }
-    await Task.Delay(100);
+    // client.Connect ≠ server.IsConnected（后者由 WaitForConnection 置位）。
+    // 固定 Delay 不能代替握手；与 pipe_echo 同构自旋（兼覆盖 Thread+Delay）。
+    for (int spin = 0; spin < 500 && !server.IsConnected; spin++) {
+        await Task.Delay(10);
+    }
+    if (!server.IsConnected) {
+        Console.WriteLine("ARC_CASE:pipe_transport_lines:FAIL:server-handshake");
+        return;
+    }
+    t.Join();
     NamedPipeTransport serverSide = new NamedPipeTransport(server);
     NamedPipeTransport clientSide = new NamedPipeTransport(client);
     clientSide.WriteLine("hello-pipe-行一");
@@ -150,6 +159,47 @@ async Task<void> Main() {
         return;
     }
     Console.WriteLine("ARC_CASE:pipe_transport_lines:PASS");
+}
+"#,
+            ),
+            (
+                "pipe_async_roundtrip",
+                r#"using Arc;
+using Arc.IO;
+using Arc.Net.Pipes;
+using Arc.Threading;
+
+async Task<void> Main() {
+    NamedPipeServerStream server = new NamedPipeServerStream("arc.contract.async.rt");
+    NamedPipeClientStream client = new NamedPipeClientStream("arc.contract.async.rt");
+    Task wait = server.WaitForConnectionAsync();
+    if (!await client.ConnectAsync(5000)) {
+        Console.WriteLine("ARC_CASE:pipe_async_roundtrip:FAIL:connect");
+        return;
+    }
+    await wait;
+    if (!server.IsConnected || !client.IsConnected) {
+        Console.WriteLine("ARC_CASE:pipe_async_roundtrip:FAIL:handshake");
+        return;
+    }
+    byte[] payload = [72, 0, 105, 33];
+    await client.WriteAsync(payload, 0, 4);
+    byte[] inbox = [0, 0, 0, 0, 0, 0, 0, 0];
+    int n = await server.ReadAsync(inbox, 0, 8);
+    if (n != 4) {
+        Console.WriteLine("ARC_CASE:pipe_async_roundtrip:FAIL:read=" + n);
+        return;
+    }
+    await server.WriteAsync(inbox, 0, n);
+    byte[] back = [0, 0, 0, 0, 0, 0, 0, 0];
+    int m = await client.ReadAsync(back, 0, 8);
+    if (m != 4 || back[0] != 72 || back[1] != 0 || back[2] != 105 || back[3] != 33) {
+        Console.WriteLine("ARC_CASE:pipe_async_roundtrip:FAIL:echo");
+        return;
+    }
+    client.Terminate();
+    server.Terminate();
+    Console.WriteLine("ARC_CASE:pipe_async_roundtrip:PASS");
 }
 "#,
             ),

@@ -251,6 +251,8 @@ impl<'a> FnEmitter<'a> {
         let mut eh_suffix = String::new();
         if self.is_windows {
             eh_suffix.push_str(" personality ptr @__CxxFrameHandler3");
+        } else {
+            eh_suffix.push_str(" personality ptr @__gxx_personality_v0");
         }
         self.output.push_str(&format!(
             "define {}ptr @{internal}({}) presplitcoroutine uwtable{}{}{} {{\n",

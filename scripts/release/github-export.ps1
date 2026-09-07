@@ -29,7 +29,7 @@
 param(
     [string]$OutDir = "",
     [switch]$InitGit,
-    [string]$CommitMessage = "chore: Arc 1.0.0 initial public release",
+    [string]$CommitMessage = "chore: Arc 0.1.0 initial public release",
     [string]$AuthorName = "LUSIDA (Start)",
     [string]$AuthorEmail = "209404271+lusida2026@users.noreply.github.com",
     [string]$RemoteUrl = "https://github.com/Arc-Future/Arc.git"

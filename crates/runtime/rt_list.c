@@ -506,21 +506,11 @@ void* rt_list_to_array(void* handle) {
     if (!handle) return NULL;
     RtList* list = (RtList*)handle;
     if (list->size == 0) return NULL;
-    /* 数组 ABI：RtArrayHeader { int32 length; int32 elem_size; } + payload。
-     * 返回 payload 指针（rt_array_length/rt_array_destroy 读 -8 处的 header）。
-     * 此前仅 malloc 裸 payload → Length 读 malloc 块头 → 越界/垃圾值。 */
-    typedef struct {
-        int32_t length;
-        int32_t elem_size;
-    } RtArrayHeaderCompat;
-    size_t header = sizeof(RtArrayHeaderCompat);
-    size_t bytes = header + (size_t)list->size * (size_t)list->elem_size;
-    RtArrayHeaderCompat* h = (RtArrayHeaderCompat*)malloc(bytes);
-    if (!h) rt_panic("oom");
-    h->length = list->size;
-    h->elem_size = list->elem_size;
-    memcpy((char*)h + header, list->data, (size_t)list->size * (size_t)list->elem_size);
-    return (char*)h + header;
+    /* RFC 052：统一走 rt_array_create（ArcHeader 化）；标量缓冲，调用方按元素
+     * 类型另选 create_refs/create_nested 时由 codegen 路径覆盖。 */
+    void* arr = rt_array_create(list->size, list->elem_size);
+    memcpy(arr, list->data, (size_t)list->size * (size_t)list->elem_size);
+    return arr;
 }
 
 void rt_list_copy_to(void* handle, void* dst, int32_t start_idx) {

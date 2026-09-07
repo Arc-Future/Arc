@@ -116,7 +116,7 @@ MyExt/
 
 - 消费端：应用 `arc.toml` 以 `[dependencies] "MyExt" = { path = "../MyExt" }` 引用，`using MyExt;` 即用。
 - 产物：`arc build MyExt --dynamic` 产出 `MyExt.dll`（`.so`/`.dylib` 随宿主）——1.0 已实测：安装态指针 `arc` 离线完成子库动态构建与应用消费。
-- **注意**：向 `lib/std` 添加**新命名空间目录**不会被索引自动解析（1.0 实测 `Arc.ExtLib` 直报 import not found）——扩展请走独立子库 + 显式 path 依赖；如需并入随包索引，应在随包命名空间内直接修改 `lib/std/Arc` 源码树（源码分发授权；升级/重装会覆盖，改动请自管版本）。
+- **注意**：向 `lib/std` 添加**新命名空间目录**不会被索引自动解析（0.1 实测 `Arc.ExtLib` 直报 import not found）——扩展请走独立子库 + 显式 path 依赖；如需并入随包索引，应在随包命名空间内直接修改 `lib/std/Arc` 源码树（源码分发授权；升级/重装会覆盖，改动请自管版本）。
 
 ## 模块职责
 

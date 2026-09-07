@@ -2,7 +2,7 @@
 
 > 面向**插件宿主开发者**与**编译器/运行时协作者**。设计权威见 [RFC 017](../rfc/017-build-artifacts-packages.md)（二进制热卸载）、[RFC 045 D8.1](../rfc/045-chord.md)（组合契约）、[RFC 047](../rfc/047-object-graph-migration.md)（透明对象图迁移）；本篇是三者的**操作化教学**——正确序列、判定原语、以及实施期实证的坑清单。测试锚点全部在 `crates/arc-tests/tests/l2_hot_reload_batch.rs`（6 case）与 `l2_dynamic_load_batch.rs`（9 case）。
 
-> **平台实测面（1.0）**：本篇的 DLL 文件锁、COMDAT/COFF 语义与测试锚点均以 **Windows/COFF** 为实测面；POSIX（`dlopen`/`.so`）侧契约相同，但运行中覆盖/卸载锁定、符号解析与弱定义语义不同，且未随 1.0 验收（平台能力边界见 [11 编译模型](11-compilation-model.md)）——跨平台编排请以 Windows 实测面为基准。
+> **平台实测面（0.1）**：本篇的 DLL 文件锁、COMDAT/COFF 语义与测试锚点均以 **Windows/COFF** 为实测面；POSIX（`dlopen`/`.so`）侧契约相同，但运行中覆盖/卸载锁定、符号解析与弱定义语义不同，且未随 0.1 验收（平台能力边界见 [11 编译模型](11-compilation-model.md)）——跨平台编排请以 Windows 实测面为基准。
 
 ## 1. 三层迁移模型——何时用哪层
 

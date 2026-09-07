@@ -17,7 +17,7 @@
 | [007 集合、字符串与数值](007-collections-strings-numerics.md) | 集合表达式、List/Dictionary、字符串、数值类型 | 运算符见 003 |
 | [008 委托、闭包与方法组](008-delegates-closures.md) | lambda、捕获语义、方法组、AsyncStream | 异步见 009 |
 | [009 异步与并发模型](009-async-concurrency.md) | 状态机、Task、EventLoop、并发集合、线程 | 运行时原语见 014 |
-| [010 异常与资源管理](010-exceptions-resources.md) | zero-cost EH、try/catch、using、IDisposable | 内存确定性见 005 |
+| [010 异常与资源管理](010-exceptions-resources.md) | zero-cost EH（Windows SEH + **POSIX Itanium ✅**，0.1 前置已收口）、try/catch、using、IDisposable | 内存确定性见 005 |
 | [011 表达式树与查询语言](011-expression-trees-query.md) | `Expression<T>`、Provider、Enumerable/Queryable、LINQ | 领域翻译见 039 |
 | [012 编译期元编程](012-compile-time-metaprogramming.md) | attribute、GenerateTo、comptime 子集 | 语言类型见 004 |
 
@@ -80,11 +80,11 @@
 | [045 插件内核](045-chord.md) | `Arc.Chord`：Context/Scope、可逆副作用账本、动态服务与反应式注入、贡献点（D11）与依赖声明（D12）、事件与瀑布（D5.1）、副作用事务、热替换（含 D8.1 二进制组合契约：换代门禁/回滚映射/拓扑序卸载） | 二进制热卸载见 017；跨库显式静态注册见 012/037；DI 容器见 023 |
 | [046 通道——多生产者/多消费者通信](046-channels.md) | `Arc.Threading.Channels`：Channel/Reader/Writer 契约、工厂枢纽、四种背压模式、完成信号、协作取消与流式消费 | 线程模型见 009；同步阻塞面见 024；单消费者推拉适配见 008 |
 | [047 透明对象图迁移](047-object-graph-migration.md) | 热重载 L3：`rt_arc_retype` 头重绑原语（重绑不改地址不变量）、vtable 形状+字段指纹双重判定、walk 复用枚举、收集器交互、迁移编排与回滚 | 二进制热卸载见 017；组合契约见 045 D8.1；内存模型见 005 |
-| [048 命名管道与本机 IPC](048-named-pipes.md) | 跨平台硬要求：`rt_pipe_*` 双后端（Windows named pipe / POSIX FIFO，语义收敛契约+名字规范化+双平台验证矩阵）、`Arc.Net.Pipes` 门面（NamedPipeServer/ClientStream : Stream）；字节流单一惯用法、与 Channels 分层关系、四期里程碑（M2 异步面前置 accept-null 债务回归门） | 传输面家族见 025；Reactor 见 009；ABI 约定见 014；进程内 MPMC 见 046 |
+| [048 命名管道与本机 IPC](048-named-pipes.md) | **M0–M2 ✅**（0.1 前置）：`rt_pipe_*` 双后端 + `Arc.Net.Pipes`；Windows IOCP / Linux io_uring 真 async；M3 组合/压力仍排期 | 传输面家族见 025；Reactor 见 009；ABI 约定见 014；进程内 MPMC 见 046 |
 | [049 Illusory 游戏引擎](049-illusory-engine.md) | VR 引擎：Actor+Component 对象模型、async 行为+`BehaviorRunner`（固定步长驱动）、`World`+`SimulationTick` 确定性仿真核心；VR 输入语义化/网络预测预留；std/Illusory/Core → `Arc.Illusory` 映射 | 异步见 009；渲染托底见 037；DB/internal 边界见 020/023；对象模型见 006 |
 | [050 统一对象头](050-unified-object-header.md) | runtime 句柄内存身份物理化：`{magic, kind, ...}` 16/24B 头 + `rt_arc_inc/dec` 三层守卫（下界哨兵/magic/kind）+ 模式 A 创建点宏化迁移；豁免清单降级为优化语义，逐案判定破洞（Nested 泛型/泛型 async 参数）物理封死；M-a/b/c 分期与回归红线 | ARC 见 005；冻结面流程见 036；模式全量归因见 stability review (internal record) |
 | [051 接口值生命周期与字典值所有权](051-iface-value-lifetime.md) | 接口 fat 盒释放缺口量化取证（433MB/3M 轮）；盒=真 ARC 对象（string-box 先例：rc/vt/obj@16/itable@24 + finalizer dec obj）；槽位模板（局部/字段/元素/env）纳入类值同律；字典条目值所有权 S3a–S3d 分期收口（dict/sorted/concurrent owned 变体） | ARC 见 005/006；rt_* 面见 014；冻结面流程见 036 |
-| [052 数组所有权与字典快照](052-array-ownership.md) | 运行时数组 = 裸 header+payload（rt_array.c）零释放站点的取证基线（arr/snap-probe 家族）；设计定案：数组对象 ArcHeader 化 + 全谱 drop 站点 + owned 快照逐元素 +1（.NET 快照语义）+ class/string 键所有权，分期 S1–S4 另排专项；**1.0 前按「已知限制」如实登记**（借用视图已文档化 + In-tree 用法审计） | 冻结面流程见 036；S3 家族收口登记见 051 §5；对象头演进见 050 |
+| [052 数组所有权与字典快照](052-array-ownership.md) | **S1–S4 ✅**（2026-09-07）：ArcHeader 化 + drop 站点 + owned Keys/Values 快照 + class 键所有权；string 键/元素按 §2.3 维持借用；**0.1 发布前置已收口** | 冻结面流程见 036；S3 家族见 051 §5；对象头见 050 |
 
 ---
 

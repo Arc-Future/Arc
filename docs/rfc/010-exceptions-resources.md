@@ -80,6 +80,13 @@ Query(conn);
 - 异步异常传播见 [异步与并发模型](009-async-concurrency.md)。
 - 运行时 `rt_throw` / `rt_get_exception` 符号面见 [运行时 ABI](014-runtime-abi.md)。
 
+## 验收证据（POSIX）
+
+- **0.1 发布前置**（2026-09-07 升格）：POSIX Itanium EH 不得以「本机仅 Windows」收工。
+- **WSL Ubuntu-24.04**：`scripts/verify/wsl-eh-smoke.sh`（仓库挂载 `/mnt/d/GitCode/RF/dlang`，
+  产物 `/tmp/arc-e2e/eh_posix_linux`）编译并运行 → stdout `eh-ok-linux`、exit 0
+  （ArgumentNullException 精确 catch、基类 Exception catch、finally 执行）。
+
 ## 禁止项
 
 - **不引入 C++ 完整 typeinfo 匹配**（personality 保持最小 catch-all；类型过滤在生成代码 vtable 检查层）。

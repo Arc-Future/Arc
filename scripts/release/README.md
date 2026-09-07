@@ -38,7 +38,7 @@ cargo build --release -p arc
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\packaging\arc-pack.ps1 -BundleLlm -Manifest
 # 3. 多平台收口：把各宿主包（Windows zip / Linux·macOS tar.xz）+ .sha256 汇入同一
 #    DistDir，单次发布（github-release.ps1 自动发现全部包、单次重签多 triple manifest、上传全部资产）
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-release.ps1 -Version 1.0.0
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-release.ps1 -Version 0.1.0
 # 4. 同步脚本/文档变更到公开仓
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release\github-sync.ps1
 ```
@@ -49,7 +49,11 @@ Unix 宿主打 tar.xz 包（Linux/macOS，pwsh core；先 `cargo build --release
 pwsh -NoProfile -File scripts/packaging/arc-pack.ps1 -BundleLlm
 ```
 
-`github-release.ps1` 的签名密钥解析顺序：`$env:ARC_RELEASE_SIGNING_KEY` → `~/.arc/keys/release-signing-key-<版本>.txt`（离线文件，**永不提交**）。
+`github-release.ps1` 的签名密钥解析顺序：`$env:ARC_RELEASE_SIGNING_KEY` → `~/.arc/keys/release-signing-key-<版本>.txt`（离线文件，**永不提交**）。现行发布线 **0.1.0** 时文件名为 `release-signing-key-0.1.0.txt`（若仅有历史 `…-1.0.0.txt`，复制/改名对齐版本后再签，勿把 1.0 口径写回文档）。
+
+打包细节与安装器命令见 [../packaging/README.md](../packaging/README.md)。
+
+**Release notes 口径**：0.1 为预正式诚实成熟度；曾误标 1.0 已纠偏；`static.arc.dev` 未通时 notes 须写明用 GitHub Release URL / `ARC_RELEASE_BASE`。
 
 ## 首次引导 / 重建公开仓
 

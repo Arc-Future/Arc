@@ -313,7 +313,7 @@ mod tests {
         fs::write(
             dir.join("arc.toml"),
             format!(
-                "[package]\nname = \"{name}\"\nversion = \"1.0.0\"\nkind = \"library\"\n\n{deps}"
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nkind = \"library\"\n\n{deps}"
             ),
         )
         .unwrap();
