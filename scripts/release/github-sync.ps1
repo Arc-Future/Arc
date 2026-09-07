@@ -81,7 +81,9 @@ if (-not $dirty) {
 if (-not $Message) { $Message = "sync: internal snapshot $(Get-Date -Format 'yyyy-MM-dd HH:mm')" }
 git -C $SyncDir commit -q -m $Message
 if ($LASTEXITCODE -ne 0) { throw "git commit failed in $SyncDir" }
-$pushOut = git -C $SyncDir push origin main *>&1 | Out-String
-if ($LASTEXITCODE -ne 0) { throw "git push failed: $pushOut" }
+# git writes progress to stderr; under ErrorAction=Stop that becomes a terminating
+# ErrorRecord even on success — drive push via cmd so only $LASTEXITCODE matters.
+cmd /c "git -C `"$SyncDir`" push origin main"
+if ($LASTEXITCODE -ne 0) { throw "git push failed (exit $LASTEXITCODE)" }
 $hash = git -C $SyncDir rev-parse --short HEAD
 Write-Host "==> synced to github.com/$Repo (main @ $hash)"
