@@ -123,9 +123,9 @@ arc/
 - [RFC Design Decisions](docs/rfc/index.md)
 - [CHANGELOG](CHANGELOG.md)
 
-## Installation / SDK (release candidate)
+## Installation / SDK (0.1 pre-formal)
 
-Arc ships a CLI tool with a .NET-CLI look and feel plus SDK capabilities, currently a **release candidate** (not an official release):
+Arc ships a CLI tool with a .NET-CLI look and feel plus SDK capabilities. The public release line is **0.1.0** (pre-formal; previously mislabeled 1.0). Binaries: [GitHub Releases](https://github.com/Arc-Future/Arc/releases). `static.arc.dev` remains a placeholder — set `ARC_RELEASE_BASE` to the Release download root when using self-update:
 
 - `arc env` — environment variables and SDK layout
 - `arc doctor` — environment self-check (clang/LLVM 22 baseline)

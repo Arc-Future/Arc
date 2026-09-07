@@ -81,7 +81,7 @@ if (-not $dirty) {
 if (-not $Message) { $Message = "sync: internal snapshot $(Get-Date -Format 'yyyy-MM-dd HH:mm')" }
 git -C $SyncDir commit -q -m $Message
 if ($LASTEXITCODE -ne 0) { throw "git commit failed in $SyncDir" }
-$pushOut = git -C $SyncDir push origin main 2>&1
+$pushOut = git -C $SyncDir push origin main *>&1 | Out-String
 if ($LASTEXITCODE -ne 0) { throw "git push failed: $pushOut" }
 $hash = git -C $SyncDir rev-parse --short HEAD
 Write-Host "==> synced to github.com/$Repo (main @ $hash)"
