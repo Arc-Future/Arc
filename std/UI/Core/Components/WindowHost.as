@@ -107,8 +107,14 @@ public static class WindowHost {
     internal static void SetInputClickHandler(Action<long, double> handler) {
     }
 
-    [Builtin(ABI = "rt_ui_set_keyboard_handler")]
-    internal static void SetKeyboardHandler(Action<int, int> handler) {
+    /// <summary>RFC 037 §8 IN-R2：WM_KEYDOWN → rt_ui_dispatch_key(vk, mods)。</summary>
+    [Builtin(ABI = "rt_ui_set_key_handler")]
+    internal static void SetKeyHandler(Action<int, int> handler) {
+    }
+
+    /// <summary>RFC 037 §8 IN-R2：WM_CHAR → rt_ui_dispatch_text(utf8 ptr)。</summary>
+    [Builtin(ABI = "rt_ui_set_text_handler")]
+    internal static void SetTextHandler(Action<long> handler) {
     }
 
     /// <summary>Bind Arc logical element to platform mirror (pointer-events / IME).</summary>
@@ -141,6 +147,17 @@ public static class WindowHost {
 
     [Builtin(ABI = "rt_ui_ime_set_focus")]
     internal static void ImeSetFocus(long inputHandle) {
+    }
+
+    /// <summary>读取系统剪贴板 UTF-8 文本（空剪贴板返回 ""）。</summary>
+    [Builtin(ABI = "rt_ui_clipboard_get_text")]
+    internal static string ClipboardGetText() {
+        return "";
+    }
+
+    /// <summary>写入系统剪贴板 UTF-8 文本。</summary>
+    [Builtin(ABI = "rt_ui_clipboard_set_text")]
+    internal static void ClipboardSetText(string text) {
     }
 
     [Builtin(ABI = "rt_ui_ime_set_candidate_rect")]

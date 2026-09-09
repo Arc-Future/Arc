@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Shared：全局短键 Style（复用底）。作者只写 Primary / Small 等短键。
+     查找：先 {TargetType}.{Short} 控件覆写，再本文件全局短键（RFC 037 §0.1.1）。
+     尺寸键 = Ant 梯队成套（MinHeight + Padding）；隐式默认 = Medium（各控件 BasedOn）。
+     无 Padding DP 的控件（TextBox 等）应用时静默跳过 Padding Setter。
+     TargetType 空 = 显式引用时匹配任意元素；色态标识可限定 Button。
+     禁 Class；禁 Button.Size.SM 第二命名。 -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+
+    <!-- 全局尺寸梯队（与 ControlMetrics / Size.Control.* 同源） -->
+    <Style x:Key="Small">
+        <Setter Property="MinHeight" Value="{StaticResource Size.Control.Height.SM}"/>
+        <Setter Property="Padding" Value="{StaticResource Size.Control.Padding.SM}"/>
+    </Style>
+    <Style x:Key="Medium">
+        <Setter Property="MinHeight" Value="{StaticResource Size.Control.Height}"/>
+        <Setter Property="Padding" Value="{StaticResource Size.Control.Padding}"/>
+    </Style>
+    <Style x:Key="Large">
+        <Setter Property="MinHeight" Value="{StaticResource Size.Control.Height.LG}"/>
+        <Setter Property="Padding" Value="{StaticResource Size.Control.Padding.LG}"/>
+    </Style>
+
+    <!-- 全局色态标识（Button chrome；AppliedStyleKeys → VSM；无 Setter） -->
+    <Style x:Key="Primary" TargetType="Button">
+    </Style>
+    <Style x:Key="Default" TargetType="Button">
+    </Style>
+    <Style x:Key="Dashed" TargetType="Button">
+    </Style>
+    <Style x:Key="Text" TargetType="Button">
+    </Style>
+    <Style x:Key="Link" TargetType="Button">
+    </Style>
+    <Style x:Key="Danger" TargetType="Button">
+    </Style>
+</ResourceDictionary>

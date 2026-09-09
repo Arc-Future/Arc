@@ -1,31 +1,55 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Built-in Dark theme color tokens (UI-P2). Same key set as Light.arml; deep values. -->
+<!-- Built-in Dark theme — Ant Design 6.x darkAlgorithm map tokens (seed colorPrimary=#1677ff).
+     Neutrals: generateNeutralColorPalettes(bgBase=#000, textBase=#fff) per antd dark/colors.
+     Primary map: dark generate(#1677ff) → #1668dc / hover #3c89e8 / active #1554ad.
+     Honest: full darkAlgorithm runtime not ported; token alignment only — not pixel DOM clone.
+     Naming: same key set as Light.arml (Color.*); see builtin-theme-resources. -->
 <ResourceDictionary
     xmlns="http://schemas.arc.dev/winfx/2026"
     xmlns:x="http://schemas.arc.dev/xaml">
-    <Color x:Key="Color.Background" Value="#FF0F0F12"/>
-    <Color x:Key="Color.Surface" Value="#FF17171C"/>
-    <Color x:Key="Color.Border" Value="#FF2A2A33"/>
-    <Color x:Key="Color.Text.Primary" Value="#FFF3F3F7"/>
-    <Color x:Key="Color.Text.Secondary" Value="#FF9C9CA8"/>
-    <Color x:Key="Color.Primary" Value="#FF6366F1"/>
-    <Color x:Key="Color.Primary.Hover" Value="#FF818CF8"/>
-    <Color x:Key="Color.Primary.Pressed" Value="#FF4F46E5"/>
-    <Color x:Key="Color.Focus.Ring" Value="#8C6366F1"/>
-    <Color x:Key="Color.Disabled.Fill" Value="#FF23232A"/>
-    <Color x:Key="Color.Disabled.Text" Value="#FF5A5A66"/>
+    <!-- colorBgLayout getSolidColor(#000, 0) -->
+    <Color x:Key="Color.Background" Value="#FF000000"/>
+    <!-- colorBgContainer getSolidColor(#000, 8) -->
+    <Color x:Key="Color.Surface" Value="#FF141414"/>
+    <!-- colorBorder getSolidColor(#000, 26) -->
+    <Color x:Key="Color.Border" Value="#FF424242"/>
+    <!-- colorBorderDisabled (Ant Design 6；Dark 与 colorBorder 同算法档) -->
+    <Color x:Key="Color.Border.Disabled" Value="#FF424242"/>
+    <!-- colorText rgba(255,255,255,0.85) -->
+    <Color x:Key="Color.Text.Primary" Value="#D9FFFFFF"/>
+    <!-- colorTextSecondary rgba(255,255,255,0.65) -->
+    <Color x:Key="Color.Text.Secondary" Value="#A6FFFFFF"/>
+    <Color x:Key="Color.Primary" Value="#FF1668DC"/>
+    <Color x:Key="Color.Primary.Hover" Value="#FF3C89E8"/>
+    <Color x:Key="Color.Primary.Pressed" Value="#FF1554AD"/>
+    <Color x:Key="Color.Focus.Ring" Value="#661668DC"/>
+    <!-- colorFillQuaternary rgba(255,255,255,0.04) solid -->
+    <Color x:Key="Color.Disabled.Fill" Value="#FF1F1F1F"/>
+    <!-- colorTextQuaternary rgba(255,255,255,0.25) solid -->
+    <Color x:Key="Color.Disabled.Text" Value="#FF595959"/>
     <Color x:Key="Color.Text.OnAccent" Value="#FFFFFFFF"/>
     <Color x:Key="Color.Transparent" Value="#00000000"/>
-    <Color x:Key="Color.Surface.Hover" Value="#FF222229"/>
-    <Color x:Key="Color.Surface.Stripe" Value="#FF1D1D24"/>
-    <Color x:Key="Color.Slider.Track" Value="#FF2E2E38"/>
-    <Color x:Key="Color.Scroll.Track" Value="#FF1A1A20"/>
-    <Color x:Key="Color.Scroll.Thumb" Value="#FF5A5A66"/>
-    <Color x:Key="Color.Scroll.Thumb.Hover" Value="#FF7A7A88"/>
-    <Color x:Key="Color.Scroll.Thumb.Active" Value="#FF9A9AA8"/>
-    <Color x:Key="Color.Placeholder" Value="#FF6E6E7A"/>
-    <Color x:Key="Color.Overlay" Value="#8C000000"/>
-    <Color x:Key="Color.Negative" Value="#FFF87171"/>
-    <Color x:Key="Color.Accent.Gradient.A" Value="#FF6366F1"/>
-    <Color x:Key="Color.Accent.Gradient.B" Value="#FF8B5CF6"/>
+    <!-- colorPrimaryBg (dark primary-1 approx) -->
+    <Color x:Key="Color.Surface.Hover" Value="#FF111A2C"/>
+    <!-- colorFillQuaternary solid -->
+    <Color x:Key="Color.Surface.Stripe" Value="#FF1F1F1F"/>
+    <!-- colorFillSecondary rgba(255,255,255,0.12) solid -->
+    <Color x:Key="Color.Slider.Track" Value="#FF303030"/>
+    <Color x:Key="Color.Scroll.Track" Value="#FF1F1F1F"/>
+    <Color x:Key="Color.Scroll.Thumb" Value="#FF595959"/>
+    <Color x:Key="Color.Scroll.Thumb.Hover" Value="#FF8C8C8C"/>
+    <Color x:Key="Color.Scroll.Thumb.Pressed" Value="#FFBFBFBF"/>
+    <Color x:Key="Color.Text.Placeholder" Value="#FF595959"/>
+    <Color x:Key="Color.Overlay" Value="#73000000"/>
+    <!-- colorError (dark map) → Danger -->
+    <Color x:Key="Color.Danger" Value="#FFDC4446"/>
+    <Color x:Key="Color.Danger.Hover" Value="#FFE86E6B"/>
+    <Color x:Key="Color.Danger.Pressed" Value="#FFAD3030"/>
+    <Color x:Key="Color.Success" Value="#FF49AA19"/>
+    <Color x:Key="Color.Warning" Value="#FFD89614"/>
+    <!-- colorPrimary @ 25% (dark map primary) -->
+    <Color x:Key="Color.Text.Selection" Value="#401668DC"/>
+    <Color x:Key="Color.Image.Fill" Value="#FF303030"/>
+    <Color x:Key="Color.Image.Border" Value="#FF8C8C8C"/>
+    <Color x:Key="Color.Text.Highlight" Value="#FF5C4B1F"/>
 </ResourceDictionary>

@@ -332,8 +332,7 @@ public class AssertTests
         Assert.Single(xs);
     }
 
-    // ── Single(predicate)：Arc MIR lowering 暂不支持 泛型 + Func<T,bool> 组合 ──
-    // 恢复条件：Arc 泛型委托支持完善后（当前 MIR 不支持泛型与 Func<T,bool> 组合）。
+    // ── All / Any / Single(predicate) 见 AssertIdentityTests ──
 
     // ── List 元素路径（Contains / DoesNotContain）──
 
@@ -403,9 +402,6 @@ public class AssertTests
         b.Add("hello");
         Assert.SequenceEqual(a, b);
     }
-
-    // ── All / Any：Arc MIR lowering 暂不支持 泛型 + Func<T,bool> 组合 ──
-    // 恢复条件：Arc 泛型委托支持完善后（当前 MIR 不支持泛型与 Func<T,bool> 组合）。
 
     // ── Assert.Fail ──
 

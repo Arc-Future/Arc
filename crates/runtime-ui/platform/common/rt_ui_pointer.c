@@ -7,6 +7,7 @@
 #include "rt_ui_props.h"
 #include "rt_ui_design_tokens.h"
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 /* Arc 委托/lambda 调用 ABI：所有非 env 参数按「指向槽位的指针」传递
@@ -47,7 +48,10 @@ typedef void (*RtUiControlDragFnCap)(void* env, int64_t* platform_handle,
                                      double* value);
 typedef void (*RtUiControlDragFnBare)(int64_t* platform_handle, double* value);
 
-#define RT_UI_CONTROL_HANDLER_MAX 8
+/* Install 登记 Toggle/Check/Radio/Slider/TextBox/PasswordBox/ListView/DataGrid/
+ * TabControl/ComboBox/PopupBackdrop 等；8 槽会在 DataGrid 之后丢弃 TabControl+，
+ * 导致页签栏点击无回调。预留下一代控件余量。 */
+#define RT_UI_CONTROL_HANDLER_MAX 32
 
 typedef struct RtUiControlHandlerEntry {
     char type_name[32];
@@ -222,7 +226,55 @@ int rt_ui_dispatch_control_click_at(RtUiElement* elem, int32_t px, int32_t py) {
         rt_ui_element_set_number(elem, "HitItemIndex",
                                   (double)rt_ui_datagrid_hit_row(elem, py));
     }
-    (void)px;
+    /* TabControl：页签栏内容测宽左对齐——py 落在顶栏、px 落在 HeaderWidth 累进区间 → HitTabIndex。
+     * 无 HeaderWidth{i} 时回退均分（旧镜像 / 度量未就绪）。栏外点击保持 HitTabIndex=-1。 */
+    if (strcmp(elem->type_name, "TabControl") == 0) {
+        double bar_h = rt_ui_get_number(elem, "HeaderBarHeight", 36.0);
+        double tab_count = rt_ui_get_number(elem, "TabCount", 0.0);
+        int hit = -1;
+        int n = (int)tab_count;
+        if (n > 0 && (double)py >= elem->layout_y
+            && (double)py < elem->layout_y + bar_h
+            && elem->layout_w > 0.0) {
+            double local_x = (double)px - elem->layout_x;
+            if (local_x >= 0.0 && local_x < elem->layout_w) {
+                int have_widths = 0;
+                for (int i = 0; i < n; i++) {
+                    char key[32];
+                    snprintf(key, sizeof(key), "HeaderWidth%d", i);
+                    if (rt_ui_get_number(elem, key, 0.0) > 0.0) {
+                        have_widths = 1;
+                        break;
+                    }
+                }
+                if (have_widths) {
+                    double cursor = 0.0;
+                    for (int i = 0; i < n; i++) {
+                        char key[32];
+                        snprintf(key, sizeof(key), "HeaderWidth%d", i);
+                        double cell_w = rt_ui_get_number(elem, key, 0.0);
+                        if (cell_w <= 0.0) {
+                            cell_w = 1.0;
+                        }
+                        if (local_x >= cursor && local_x < cursor + cell_w) {
+                            hit = i;
+                            break;
+                        }
+                        cursor += cell_w;
+                    }
+                } else {
+                    hit = (int)(local_x / (elem->layout_w / tab_count));
+                    if (hit < 0) {
+                        hit = 0;
+                    }
+                    if (hit >= n) {
+                        hit = n - 1;
+                    }
+                }
+            }
+        }
+        rt_ui_element_set_number(elem, "HitTabIndex", (double)hit);
+    }
     int64_t handle = (int64_t)(uintptr_t)elem;
     if (e->click_env) {
         ((RtUiControlClickFnCap)e->click_fn)(e->click_env, &handle);
@@ -253,8 +305,16 @@ int rt_ui_dispatch_control_drag(RtUiElement* elem, int32_t px, int32_t py) {
     if (!elem || !elem->type_name) return 0;
     RtUiControlHandlerEntry* e = rt_ui_control_handler_lookup(elem->type_name);
     if (!e || !e->drag_fn) return 0;
-    (void)py; /* 值型拖拽为水平 Slider 语义：只依赖 px */
-    double value = rt_ui_slider_value_from_px(elem, px);
+    (void)py;
+    /* TextBox：载荷 = 相对元素左缘的局部 DIP X（选区拖拽）。
+     * Slider：载荷 = 轨道像素映射后的 Value。 */
+    double value;
+    if (strcmp(elem->type_name, "TextBox") == 0
+        || strcmp(elem->type_name, "PasswordBox") == 0) {
+        value = (double)px - elem->layout_x;
+    } else {
+        value = rt_ui_slider_value_from_px(elem, px);
+    }
     int64_t handle = (int64_t)(uintptr_t)elem;
     if (e->drag_env) {
         ((RtUiControlDragFnCap)e->drag_fn)(e->drag_env, &handle, &value);
@@ -283,10 +343,17 @@ static int rt_ui_is_button(RtUiElement* elem) {
     return elem && elem->type_name && strcmp(elem->type_name, "Button") == 0;
 }
 
+/* TextBox / PasswordBox：局部 DIP X 拖选 / 免 IsEnabled 门控命中（与 TextBox 同族）。 */
+static int rt_ui_is_text_input(RtUiElement* elem) {
+    if (!elem || !elem->type_name) return 0;
+    return strcmp(elem->type_name, "TextBox") == 0
+        || strcmp(elem->type_name, "PasswordBox") == 0;
+}
+
 /* 指针命中目标：Button / TextBox（既有）或注册了泛化交互回调的非 Button 控件。 */
 static int rt_ui_is_pointer_target(RtUiElement* elem) {
     if (!elem || !elem->type_name) return 0;
-    if (rt_ui_is_button(elem) || strcmp(elem->type_name, "TextBox") == 0) return 1;
+    if (rt_ui_is_button(elem) || rt_ui_is_text_input(elem)) return 1;
     return rt_ui_has_control_handler(elem);
 }
 
@@ -301,8 +368,9 @@ static RtUiElement* rt_ui_hit_test_elem(RtUiElement* elem, int32_t px, int32_t p
     if (!rt_ui_is_pointer_target(elem)) {
         return NULL;
     }
-    /* 非 TextBox 目标（Button 与泛化控件）受 IsEnabled 门控；TextBox 保持既有语义。 */
-    if (strcmp(elem->type_name, "TextBox") != 0) {
+    /* 非文本输入目标（Button 与泛化控件）受 IsEnabled 门控；TextBox/PasswordBox 保持既有语义。 */
+    if (strcmp(elem->type_name, "TextBox") != 0
+        && strcmp(elem->type_name, "PasswordBox") != 0) {
         for (size_t i = 0; i < elem->bool_count; i++) {
             if (strcmp(elem->bool_names[i], "IsEnabled") == 0 && !elem->bool_values[i]) {
                 return NULL;

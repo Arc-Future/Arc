@@ -30,20 +30,20 @@ internal class InputMetrics {
     /// <summary>软件 caret 竖线宽。</summary>
     public const double CaretWidth = 1.5;
 
-    /// <summary>FontSize 未设置/非法时的度量回退值。</summary>
+    /// <summary>FontSize 未设置/非法时的度量回退值（权威 = ControlMetrics.FontBodySize）。</summary>
     public const double FontSizeFallback = 14.0;
 
-    /// <summary>MeasureOverride 水平内边距。</summary>
-    public const double PadX = 8.0;
+    /// <summary>MeasureOverride 水平内边距（Ant Input paddingInline≈11）。</summary>
+    public const double PadX = 11.0;
 
-    /// <summary>MeasureOverride 垂直内边距。</summary>
-    public const double PadY = 6.0;
+    /// <summary>MeasureOverride 垂直内边距（配合 controlHeight / fontSize）。</summary>
+    public const double PadY = 4.0;
 
     /// <summary>最小期望宽（未约束布局下限）。</summary>
     public const double MinWidth = 120.0;
 
-    /// <summary>最小期望高（未约束布局下限）。</summary>
-    public const double MinHeight = 28.0;
+    /// <summary>最小期望高（权威 = ControlMetrics.ControlHeight）。</summary>
+    public const double MinHeight = 32.0;
 
     /// <summary>组字下划线相对字形底部的上移量。</summary>
     public const double UnderlineLiftY = 2.0;

@@ -42,14 +42,14 @@ public class Style {
         this.Triggers = new List<Trigger>();
     }
 
-    /// <summary>样式是否命中元素（按 TargetType 类型名匹配）。</summary>
+    /// <summary>样式是否命中元素：无 TargetType 的 keyed Style 匹配任意元素；否则比 TypeName。</summary>
     public bool Matches(Element element) {
         if (element == null) {
             return false;
         }
-        if (this.TargetType != null && this.TargetType != "") {
-            return element.TypeName == this.TargetType;
+        if (this.TargetType == null || this.TargetType == "") {
+            return true;
         }
-        return false;
+        return element.TypeName == this.TargetType;
     }
 }

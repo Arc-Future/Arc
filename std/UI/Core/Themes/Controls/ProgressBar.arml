@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ProgressBar：默认 Template = DefaultControlTemplates.ProgressBar
+     （PART_Chrome；比例填充 / IsIndeterminate 扫掠在 PART Surface → VSM.Progress）。
+     MinHeight → Size.Progress.Thickness。Template 由 AttachDefaultTemplates 挂载。 -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+    <Style TargetType="ProgressBar">
+        <Setter Property="MinHeight" Value="{StaticResource Size.Progress.Thickness}"/>
+    </Style>
+</ResourceDictionary>

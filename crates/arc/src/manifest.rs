@@ -327,6 +327,9 @@ pub struct QifSection {
     pub emit_json_report: bool,
     /// 是否持久化 `.arcqif` 运行文件（RFC 032 §7 默认 true）。
     pub persist_results: bool,
+    /// Assert.Skip 计 Skipped 时是否非零退出（默认 false）。
+    /// 属性 Fact-Skip 始终硬失败，不经此字段。
+    pub fail_on_skip: bool,
 }
 
 impl Default for QifSection {
@@ -339,6 +342,7 @@ impl Default for QifSection {
             filter: String::new(),
             emit_json_report: true,
             persist_results: true,
+            fail_on_skip: false,
         }
     }
 }
@@ -675,6 +679,10 @@ fn parse_qif_section(table: Option<&toml::Table>) -> QifSection {
             .get("persist_results")
             .and_then(|v| v.as_bool())
             .unwrap_or(true),
+        fail_on_skip: t
+            .get("fail_on_skip")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     }
 }
 

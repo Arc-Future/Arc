@@ -12,6 +12,7 @@
 // reverse/sort/find_all/to_array/copy_to do not change ownership counts.
 
 #include "rt_abi.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -210,7 +211,11 @@ void* rt_list_at(void* handle, int32_t idx) {
     }
     RtList* list = (RtList*)handle;
     if (idx < 0 || idx >= list->size) {
-        rt_panic("list index out of bounds");
+        /* 诊断：idx/size 写入消息，便于滚动/物化窗口越界定位（非 VEH）。 */
+        char msg[96];
+        snprintf(msg, sizeof msg, "list index out of bounds (idx=%d size=%d)",
+                 (int)idx, (int)list->size);
+        rt_panic(msg);
     }
     return (char*)list->data + (size_t)idx * (size_t)list->elem_size;
 }

@@ -43,6 +43,18 @@ fn motion_engine_provides_interpolation_surface() {
     );
     assert!(motion.contains("public static bool Active()"));
     assert!(motion.contains("public static double Ease(double t)"));
+    assert!(
+        motion.contains("public static double ResolveLoop01(long handle, double periodMs)"),
+        "MotionEngine must expose ResolveLoop01 for indeterminate/loop motion"
+    );
+    assert!(
+        motion.contains("public static void CancelLoop(long handle)"),
+        "MotionEngine must expose CancelLoop when leaving indeterminate mode"
+    );
+    assert!(
+        motion.contains("_loopHandle"),
+        "MotionEngine Active/Reset must cover loop slots"
+    );
 
     // 时间源为 Stopwatch（QPC/CLOCK_MONOTONIC 单调）
     assert!(motion.contains("Stopwatch.GetTimestamp()"));
@@ -75,6 +87,7 @@ fn frame_pump_renders_during_transition() {
 #[test]
 fn render_tree_resolves_state_colors_through_motion() {
     let render = read_file("std/UI/Core/Rendering/Wgpu/WgpuRender.RenderTree.as");
+    let chrome = read_file("std/UI/Core/Rendering/Wgpu/WgpuRender.TemplateChrome.as");
     // 状态色经 MotionEngine 解析后上屏（背景/前景/边框/焦点环/强调）
     let expected = [
         "MotionEngine.RoleBackground",
@@ -85,11 +98,19 @@ fn render_tree_resolves_state_colors_through_motion() {
     ];
     for role in expected {
         assert!(
-            render.contains(role),
-            "WgpuRender.RenderTree must resolve {role} through MotionEngine"
+            render.contains(role) || chrome.contains(role),
+            "WgpuRender must resolve {role} through MotionEngine"
         );
     }
-    assert!(render.contains("MotionEngine.ResolveColor(handle"));
+    assert!(render.contains("MotionEngine.ResolveColor(handle") || chrome.contains("MotionEngine.ResolveColor(handle"));
+    assert!(
+        chrome.contains("MotionEngine.ResolveLoop01(handle"),
+        "ProgressBar IsIndeterminate must resolve loop phase through MotionEngine"
+    );
+    assert!(
+        chrome.contains("MotionEngine.CancelLoop(handle)"),
+        "ProgressBar determinate path must CancelLoop"
+    );
 }
 
 #[test]

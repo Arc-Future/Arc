@@ -219,6 +219,18 @@ public class Element {
         return _propertyStorage.ContainsKey(pid);
     }
 
+    /// <summary>
+    /// 环境属性是否已有非默认有效值（本地/样式，或继承自祖先）。
+    /// 未命中时 GetValue 仍回 DP 默认值，但平台镜像与渲染须视为「未设」，
+    /// 以便走主题键 / VSM（禁把 Light 默认 hex 烤进镜像挡住 SwitchTheme）。
+    /// </summary>
+    internal bool HasAmbientValue(long pid) {
+        if (this.HasOwnValue(pid)) {
+            return true;
+        }
+        return this.InheritedSignalIfSet(pid) != null;
+    }
+
     /// <summary>返回 pid 的本地/样式 Signal 装载对象；未写返回 null。</summary>
     internal object OwnSignalIfSet(long pid) {
         if (_propertyStorage.ContainsKey(pid)) {
@@ -373,8 +385,9 @@ public class Element {
         if (prop.Metadata != null && prop.Metadata.Inherits) {
             this.PushInheritedSignal(pid, _propertyStorage[pid]);
         }
-        // A-1②：属性变更 → 标记帧泵需重绘（按需渲染；幂等——一帧多变更合并为一次绘制）。
-        FramePump.Invalidate();
+        // A-1②：属性变更可能影响度量（Text/Width 等）→ 布局脏（隐含绘脏）。
+        // 纯绘路径（caret/焦点环）应直接 FramePump.Invalidate，勿经 SetValue 放大。
+        FramePump.InvalidateLayout();
     }
 
     /// <summary>样式引擎专用：仅当属性无本地值（未被 CLR setter/codegen/user code 赋值）时
@@ -498,8 +511,8 @@ public class Element {
         // 挂接后自祖先链重算环境属性继承槽（RFC 037 §4）：静态树构建期
         // 一次固化（等效编译期确定），动态挂接即时生效。
         child.RefreshInheritanceFromAncestors();
-        // A-1②：树结构变更 → 标记帧泵需重绘（按需渲染）。
-        FramePump.Invalidate();
+        // A-1②：树结构变更 → 布局脏（子树挂接后须 Measure/Arrange）。
+        FramePump.InvalidateLayout();
     }
 
     /// <summary>设置附加数值属性（Canvas.Left/Top 等；Grid.Row/Column 自 RFC 037 走 typed DependencyProperty&lt;int&gt;，不再经此路径）。</summary>

@@ -30,6 +30,7 @@
 
 namespace Arc.UI;
 
+using Arc.UI.Layout;
 using Arc.UI.Media;
 
 /// <summary>
@@ -47,10 +48,13 @@ public class Control : FrameworkElement {
     public static DependencyProperty<Brush> BackgroundProperty =
         RegisterProperty<Brush>(nameof(Background), typeof(Control), new SolidColorBrush(Color.Transparent()));
 
-    /// <summary>Foreground 属性元数据——前景画刷（类型化 Brush；默认白）。
-    /// 环境属性（RFC 037 §4 元数据声明）：沿元素树继承。</summary>
+    /// <summary>Foreground 属性元数据——前景画刷（类型化 Brush）。环境属性（RFC 037 §4）：
+    /// 沿元素树继承。DP 默认 = Light <c>Color.Text.Primary</c>（冷启动 / 无 Application
+    /// 时的可读保底）；未本地/样式/继承写入时，平台镜像与渲染视为未设，走活动主题
+    /// <c>Color.Text.Primary</c> 或 VSM 键（SwitchTheme 全链跟随）。禁默认白。</summary>
     public static DependencyProperty<Brush> ForegroundProperty =
-        RegisterInheritedProperty<Brush>(nameof(Foreground), typeof(Control), new SolidColorBrush(Color.White()));
+        RegisterInheritedProperty<Brush>(nameof(Foreground), typeof(Control),
+            new SolidColorBrush(Color.Parse("#E0000000")));
 
     /// <summary>FontFamily 属性元数据——字体族。环境属性（元数据声明）：沿
     /// 元素树继承，Window/根容器设置一次全树生效（全局字体默认单一源即本 DP 默认值）。</summary>
@@ -135,5 +139,42 @@ public class Control : FrameworkElement {
     public bool IsTabStop {
         get { return this.GetValue<bool>(IsTabStopProperty); }
         set { this.SetValue<bool>(IsTabStopProperty, value); }
+    }
+
+    /// <summary>是否已套用模板视觉子树（Children[0] 为模板根）。</summary>
+    protected bool HasTemplateVisual() {
+        object slot = this.Template;
+        if (slot == null) {
+            return false;
+        }
+        if (this.Children == null || this.Children.Count == 0) {
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>测量模板根（ControlTemplate 套用后唯一子节点）。</summary>
+    protected LayoutSize MeasureTemplateVisual(LayoutSize availableSize) {
+        if (this.Children == null || this.Children.Count == 0) {
+            return new LayoutSize(0.0, 0.0);
+        }
+        FrameworkElement root = (FrameworkElement)this.Children[0];
+        if (root == null) {
+            return new LayoutSize(0.0, 0.0);
+        }
+        root.Measure(availableSize);
+        return root.DesiredSize;
+    }
+
+    /// <summary>排列模板根铺满控件客户区。</summary>
+    protected void ArrangeTemplateVisual(LayoutSize finalSize) {
+        if (this.Children == null || this.Children.Count == 0) {
+            return;
+        }
+        FrameworkElement root = (FrameworkElement)this.Children[0];
+        if (root == null) {
+            return;
+        }
+        LayoutHelper.ArrangeChild(this, root, 0.0, 0.0, finalSize.Width, finalSize.Height);
     }
 }

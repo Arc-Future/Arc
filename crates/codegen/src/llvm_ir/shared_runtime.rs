@@ -225,7 +225,16 @@ fn collect_defined_symbols(objs: &[&Path]) -> Result<BTreeSet<String>, CodegenEr
         // 合法 C 标识符不含 `@`——凡含之者皆为编译器/链接器内部符号
         //（MSVC mangled 字符串字面量 `??_C@...`、浮点常量 `__real@...`、
         // 特性标记 `@feat.00`），模块映像自足，不入导出面。
-        if first.is_ascii_uppercase() && !name.starts_with('.') && !name.contains('@') {
+        // Weak（`W`）跳过：如 rt_debug 的 `__arc_dbg_*` 弱缺省——强符号在
+        // 主程序 / 插件 TU；若写入 .def，MSVC 链接共享库会 LNK2001。
+        if first.is_ascii_uppercase()
+            && first != 'W'
+            && !name.starts_with('.')
+            && !name.contains('@')
+            // 主程序 / 插件 TU 强符号；rt_debug 弱缺省不得进共享库导出面。
+            && name != "__arc_dbg_count"
+            && name != "__arc_dbg_table"
+        {
             symbols.insert(name.to_string());
         }
     }

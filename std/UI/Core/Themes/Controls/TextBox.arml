@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TextBox：BasedOn Medium；默认 Template = DefaultControlTemplates.TextBox
+     （PART_Chrome 壳；文本/caret 仍宿主层）。Template 由 AttachDefaultTemplates 挂载。 -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+    <Style TargetType="TextBox" BasedOn="{StaticResource Medium}">
+    </Style>
+</ResourceDictionary>

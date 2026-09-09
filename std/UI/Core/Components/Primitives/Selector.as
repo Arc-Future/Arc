@@ -27,6 +27,7 @@
 namespace Arc.UI.Components.Primitives;
 
 using Arc.UI.Components;
+using Arc.UI.Internal;
 
 /// <summary>承载单选语义的 ItemsControl 派生层（WPF Selector 对标）。</summary>
 public class Selector : ItemsControl {
@@ -106,6 +107,51 @@ public class Selector : ItemsControl {
         this.SyncMirrorSelection();
         this.OnSelectionApplied();
         this.RaiseSelectionChanged();
+    }
+
+    /// <summary>
+    /// 键盘导航选中（FocusManager 分发）：Up/Down/Home/End/Enter → SelectIndex。
+    /// 消费则返回 true（阻断焦点环方向导航）；非导航键返回 false。
+    /// </summary>
+    internal bool TryHandleKey(int virtualKey) {
+        int count = this.SelectionItemCount();
+        if (count <= 0) {
+            return false;
+        }
+        int cur = this.SelectedIndex;
+        int next = cur;
+        if (virtualKey == FocusManager.VirtualKeyUp()) {
+            if (cur < 0) {
+                next = count - 1;
+            } else if (cur > 0) {
+                next = cur - 1;
+            } else {
+                return true;
+            }
+        } else if (virtualKey == FocusManager.VirtualKeyDown()) {
+            if (cur < 0) {
+                next = 0;
+            } else if (cur < count - 1) {
+                next = cur + 1;
+            } else {
+                return true;
+            }
+        } else if (virtualKey == FocusManager.VirtualKeyHome()) {
+            next = 0;
+        } else if (virtualKey == FocusManager.VirtualKeyEnd()) {
+            next = count - 1;
+        } else if (virtualKey == FocusManager.VirtualKeyReturn()) {
+            if (cur < 0) {
+                next = 0;
+            } else {
+                this.SelectIndex(cur);
+                return true;
+            }
+        } else {
+            return false;
+        }
+        this.SelectIndex(next);
+        return true;
     }
 
     /// <summary>可选条目总数（SelectIndex 校验上界）。默认项宿主 ItemCount；

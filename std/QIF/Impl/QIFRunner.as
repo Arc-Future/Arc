@@ -3,14 +3,13 @@ namespace Arc.QIF;
 using Arc;
 using Arc.Collections;
 using Arc.Diagnostics;
-using Arc.IO;
 using Arc.Threading;
 
 /// <summary>
 /// QIF 测试执行编排器。对标 XUnit TestRunner。
-/// Phase 2c 支持串行与并行（Parallel.For）执行；M3+ 支持 Order 分组并行、
-/// Collection 集合内串行。所有对共享状态（_results、计数器）的访问均通过
-/// 内部 Lock 保护，使 `--parallel` 真正可用。
+/// 支持串行与并行（Parallel.For）执行；并行时以 Collection 为边界
+/// （集间并行、集内串行；无 [Collection] 时每类自成隐式集合）。
+/// 所有对共享状态（_results、计数器）的访问均通过内部 Lock 保护。
 /// </summary>
 public class QIFRunner {
     private List<QIFResult> _results;
@@ -20,6 +19,8 @@ public class QIFRunner {
     private int _failed;
     private int _skipped;
     private int _errors;
+    // [Fact(Skip)] / [Theory(Skip)] 属性跳过计数（RFC 032 §6 硬门禁）。
+    private int _factSkipped;
     // QIF-7：保护 _results 与计数器的 Lock（并行执行安全）。
     private Lock _sync;
     // 全量 wall-clock 计时（QIF 报告 summary 的 duration_ms 数据源）。
@@ -33,6 +34,7 @@ public class QIFRunner {
         _failed = 0;
         _skipped = 0;
         _errors = 0;
+        _factSkipped = 0;
         _wall = Stopwatch.StartNew();
     }
 
@@ -45,6 +47,13 @@ public class QIFRunner {
     /// <summary>默认单测试超时毫秒（0 = 不限制；生成代码/宿主据此强制超时）。</summary>
     public int DefaultTimeoutMs { get { return Options.DefaultTimeoutMs; } set { Options.DefaultTimeoutMs = value; } }
 
+    /// <summary>
+    /// Assert.Skip（运行时 QIF_SKIP）是否导致非零退出。
+    /// 默认 false——契约自测可计 Skipped；CI 可经 `--fail-on-skip` / `[qif].fail_on_skip` 开启。
+    /// 属性 Fact-Skip 始终硬失败（见 <see cref="ShouldFailExit"/>）。
+    /// </summary>
+    public bool FailOnSkip { get { return Options.FailOnSkip; } set { Options.FailOnSkip = value; } }
+
     public int Total { get { lock (_sync) { return _results.Count; } } }
 
     public int Passed { get { lock (_sync) { return _passed; } } }
@@ -55,8 +64,28 @@ public class QIFRunner {
 
     public int Errors { get { lock (_sync) { return _errors; } } }
 
+    /// <summary>属性级 Fact-Skip 计数（RFC 032 §6；≠ Assert.Skip）。</summary>
+    public int FactSkipped { get { lock (_sync) { return _factSkipped; } } }
+
     public bool HasFailures { get { lock (_sync) { return _failed > 0 || _errors > 0; } } }
     public bool AllPassed { get { lock (_sync) { return _failed == 0 && _errors == 0 && _skipped == 0; } } }
+
+    /// <summary>
+    /// 宿主退出判据：失败/错误、属性 Fact-Skip，或 FailOnSkip 开启时的任意 Skip。
+    /// </summary>
+    public bool ShouldFailExit {
+        get {
+            lock (_sync) {
+                if (_failed > 0 || _errors > 0 || _factSkipped > 0) {
+                    return true;
+                }
+                if (Options.FailOnSkip && _skipped > 0) {
+                    return true;
+                }
+                return false;
+            }
+        }
+    }
 
     /// <summary>全量 wall-clock 耗时（毫秒；从 Runner 创建起计）。</summary>
     public long TotalDurationMs { get { return _wall.ElapsedMilliseconds; } }
@@ -64,7 +93,6 @@ public class QIFRunner {
     internal void Record(QIFResult result) {
         lock (_sync) {
             _results.Add(result);
-            this.Tracer(result.Name);
             if (result.Status == QIFTestStatus.Pass) { _passed = _passed + 1; }
             else if (result.Status == QIFTestStatus.Fail) { _failed = _failed + 1; }
             else if (result.Status == QIFTestStatus.Skip) { _skipped = _skipped + 1; }
@@ -76,7 +104,6 @@ public class QIFRunner {
         QIFResult r = new QIFResult(name, kind, QIFTestStatus.Pass, durationNs);
         lock (_sync) {
             _results.Add(r);
-            this.Tracer(r.Name);
             _passed = _passed + 1;
         }
     }
@@ -97,7 +124,6 @@ public class QIFRunner {
         }
         lock (_sync) {
             _results.Add(result);
-            this.Tracer(result.Name);
             _passed = _passed + 1;
         }
     }
@@ -106,7 +132,6 @@ public class QIFRunner {
         QIFResult r = new QIFResult(name, kind, QIFTestStatus.Fail, durationNs, errorMessage);
         lock (_sync) {
             _results.Add(r);
-            this.Tracer(r.Name);
             _failed = _failed + 1;
         }
     }
@@ -115,7 +140,6 @@ public class QIFRunner {
         QIFResult r = new QIFResult(name, kind, QIFTestStatus.Error, durationNs, errorMessage);
         lock (_sync) {
             _results.Add(r);
-            this.Tracer(r.Name);
             _errors = _errors + 1;
         }
     }
@@ -136,7 +160,6 @@ public class QIFRunner {
         }
         lock (_sync) {
             _results.Add(result);
-            this.Tracer(result.Name);
             _failed = _failed + 1;
         }
     }
@@ -146,7 +169,6 @@ public class QIFRunner {
         result.SkipReason = skipReason;
         lock (_sync) {
             _results.Add(result);
-            this.Tracer(result.Name);
             _skipped = _skipped + 1;
         }
     }
@@ -168,18 +190,48 @@ public class QIFRunner {
         }
         lock (_sync) {
             _results.Add(result);
-            this.Tracer(result.Name);
             _skipped = _skipped + 1;
+        }
+    }
+
+    /// <summary>
+    /// 记录属性级 Fact-Skip（`[Fact(Skip=…)]` / `[Theory(Skip=…)]`）。
+    /// 计入 Skipped 与 FactSkipped；宿主经 ShouldFailExit 恒非零退出（RFC 032 §6）。
+    /// </summary>
+    public void RecordFactSkip(string name, QIFTestKind kind, string skipReason) {
+        QIFResult result = new QIFResult(name, kind, QIFTestStatus.Skip, 0);
+        result.SkipReason = skipReason;
+        lock (_sync) {
+            _results.Add(result);
+            _skipped = _skipped + 1;
+            _factSkipped = _factSkipped + 1;
+        }
+    }
+
+    /// <summary>RecordFactSkip 带 traits。</summary>
+    public void RecordFactSkipT(string name, QIFTestKind kind, string skipReason, string traits) {
+        QIFResult result = new QIFResult(name, kind, QIFTestStatus.Skip, 0);
+        result.SkipReason = skipReason;
+        // 内联 trait 解析
+        if (traits != "") {
+            int start = 0; int len = traits.Length;
+            while (start < len) {
+                int end = start;
+                while (end < len && traits.Substring(end, 1) != ";") { end = end + 1; }
+                string pair = traits.Substring(start, end - start);
+                if (pair != "") { result.Traits.Add(pair); }
+                start = end + 1;
+            }
+        }
+        lock (_sync) {
+            _results.Add(result);
+            _skipped = _skipped + 1;
+            _factSkipped = _factSkipped + 1;
         }
     }
 
     /// <summary>按索引取结果（框架内部：QIFReporting 消费）。调用方须已持有锁或单线程语境。</summary>
     internal QIFResult GetResult(int index) { return _results[index]; }
-
-    // TEMP-TRACE: 每条测试完成后覆盖写 trace（末态=最近完成的测试）。定位全量崩溃点。写完即删。
-    private void Tracer(string name) {
-        File.WriteAllText("d:/GitCode/RF/dlang/examples/UnitTest/obj/qif/trace.txt", name + "\n");
-    }
 
     /// <summary>设置最近记录的测试结果输出（仅在单线程或串行语境调用）。</summary>
     public void SetLastOutput(string output) {

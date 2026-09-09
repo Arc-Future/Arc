@@ -7,7 +7,7 @@
 
 ## 背景
 
-`arc` 是 Arc 的 AOT 编译器命令行工具（由 `crates/arc` 构建）。CLI 命令与参数全面对标 .NET CLI，使用体验一致，仅内部实现不同。`arc.toml` 是 Arc 项目的权威配置文件——单一可信来源，字段定义以章节 [17 arc.toml 项目清单](../user-guide/17-arc-toml-reference.md) 为最终权威，本 RFC 仅记录决策动机。
+`arc` 是 Arc 的 AOT 编译器命令行工具（由 `crates/arc` 构建）。CLI 命令与参数全面对标 .NET CLI，使用体验一致，仅内部实现不同。`arc.toml` 是 Arc 项目的权威配置文件——单一可信来源，字段定义以手册 [arc.toml 参考](../arc/10-toolchain/arc-toml-reference.md) 为最终权威，本 RFC 仅记录决策动机。
 
 工具链目标：确定性输出、`target` 膨胀可控。依赖遵循**源码打包**原则（见 [017](017-build-artifacts-packages.md)）：`path` 源码引用合并进单一编译单元，全静态链接输出单 exe；`--dynamic` 产出动态库（ALC 动态加载为完整保留的核心能力，见 [017](017-build-artifacts-packages.md)）。服务期产物（`.arcgr` 语义索引、`.xml` 文档注释）从源码直接生成，供 AI 工具链消费（见 [034](034-ai-toolchain-arcgr.md)）。
 
@@ -365,7 +365,7 @@ human 输出一行一个 `NAME="value"`（空值输出 `NAME=""`）；`--json` �
 - **调试器与 MIR 解释器**见 [035](035-debugger.md)。
 - **成熟度治理与宣称纪律**见 [036](036-maturity.md)。
 - **发布与分发（release manifest / self-update / `.aopkg` 源码分发包）**见本 RFC §13；依赖求解体系维持裁撤（[017](017-build-artifacts-packages.md)）。
-- **`arc.toml` 完整字段定义**以章节 [17 arc.toml 项目清单](../user-guide/17-arc-toml-reference.md) 为权威（`crates/arc/src/manifest.rs` 为参考实现）。
+- **`arc.toml` 完整字段定义**以手册 [arc.toml 参考](../arc/10-toolchain/arc-toml-reference.md) 为权威（`crates/arc/src/manifest.rs` 为参考实现）。
 
 ---
 

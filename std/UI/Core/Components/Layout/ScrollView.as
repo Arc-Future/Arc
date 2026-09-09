@@ -173,6 +173,23 @@ public class ScrollView : Panel {
         this.HorizontalOffset = value;
     }
 
+    /// <summary>是否按 production-surface §4 为竖条预留轨道宽。</summary>
+    bool ShouldReserveVScrollBar(double viewportH) {
+        ScrollBarVisibility vis = this.VerticalScrollBarVisibility;
+        if (vis == ScrollBarVisibility.Disabled || vis == ScrollBarVisibility.Hidden) {
+            return false;
+        }
+        if (vis == ScrollBarVisibility.Visible) {
+            return true;
+        }
+        // Auto：仅溢出时预留
+        return _extentHeight > viewportH + 0.5;
+    }
+
+    /// <summary>
+    /// 竖滚：交叉轴（宽）传有界约束（减条宽），主轴（高）无界；
+    /// 有界可用空间时 DesiredSize 取视口尺寸，使 Stretch 宿主拉满宽度。
+    /// </summary>
     protected override LayoutSize MeasureOverride(LayoutSize availableSize) {
         FrameworkElement content = this.resolveContent();
         if (content == null) {
@@ -180,28 +197,61 @@ public class ScrollView : Panel {
         }
         double availW = availableSize.Width;
         double availH = availableSize.Height;
-        
-        // 传递无限约束给内容（允许内容按自身大小测量）
-        LayoutSize unbounded = new LayoutSize(LayoutHelper.Unbounded, LayoutHelper.Unbounded);
-        LayoutHelper.MeasureChild(content, unbounded);
+        bool wBounded = availW > 0.0 && availW < LayoutHelper.Unbounded;
+        bool hBounded = availH > 0.0 && availH < LayoutHelper.Unbounded;
+
+        // Height DP 在 Measure 外包一层钳制；此处用其作 Auto 条宽预判视口提示。
+        double viewportHintH = availH;
+        if (this.Height > 0.0) {
+            viewportHintH = this.Height;
+        }
+        bool viewportHKnown = hBounded || this.Height > 0.0;
+
+        double barW = 0.0;
+        if (this.VerticalScrollBarVisibility == ScrollBarVisibility.Visible && wBounded) {
+            barW = LayoutHelper.VScrollBarWidth;
+        }
+
+        double contentAvailW = wBounded ? (availW - barW) : LayoutHelper.Unbounded;
+        if (contentAvailW < 0.0) {
+            contentAvailW = 0.0;
+        }
+        LayoutHelper.MeasureChild(content, new LayoutSize(contentAvailW, LayoutHelper.Unbounded));
         LayoutSize d = content.DesiredSize;
         _extentWidth = d.Width;
         _extentHeight = d.Height;
-        double w = d.Width;
+
+        // Auto：测出溢出后再减条宽重测（与绘制/命中同契约）。
+        if (this.VerticalScrollBarVisibility == ScrollBarVisibility.Auto
+            && wBounded
+            && viewportHKnown
+            && _extentHeight > viewportHintH + 0.5) {
+            barW = LayoutHelper.VScrollBarWidth;
+            contentAvailW = availW - barW;
+            if (contentAvailW < 0.0) {
+                contentAvailW = 0.0;
+            }
+            LayoutHelper.MeasureChild(content, new LayoutSize(contentAvailW, LayoutHelper.Unbounded));
+            d = content.DesiredSize;
+            _extentWidth = d.Width;
+            _extentHeight = d.Height;
+        }
+
+        double w = d.Width + barW;
         double h = d.Height;
-        
-        // 如果外层有有界约束，则裁剪内容大小
-        bool wBounded = availW > 0.0 && availW < 1000000000.0;
-        bool hBounded = availH > 0.0 && availH < 1000000000.0;
-        if (wBounded && w > availW) {
+        if (wBounded) {
             w = availW;
         }
-        if (hBounded && h > availH) {
+        if (hBounded) {
             h = availH;
         }
         return new LayoutSize(w, h);
     }
 
+    /// <summary>
+    /// 内容槽宽 ≥ 视口内容区（减条宽），使内部 StackPanel/Button Stretch 拉满；
+    /// 槽高取 extent，避免把可滚内容压成视口高。
+    /// </summary>
     protected override void ArrangeOverride(LayoutSize finalSize) {
         FrameworkElement content = this.resolveContent();
         if (content == null) {
@@ -210,7 +260,15 @@ public class ScrollView : Panel {
         double x = 0.0 - this.HorizontalOffset;
         double y = 0.0 - this.VerticalOffset;
 
-        // 使用内容的期望尺寸，如果为 0 则回退到 Extent 尺寸
+        double barW = 0.0;
+        if (this.ShouldReserveVScrollBar(finalSize.Height)) {
+            barW = LayoutHelper.VScrollBarWidth;
+        }
+        double slotW = finalSize.Width - barW;
+        if (slotW < 0.0) {
+            slotW = 0.0;
+        }
+
         LayoutSize d = content.DesiredSize;
         double contentW = d.Width;
         double contentH = d.Height;
@@ -219,6 +277,9 @@ public class ScrollView : Panel {
         }
         if (contentH <= 0.0) {
             contentH = _extentHeight;
+        }
+        if (contentW < slotW) {
+            contentW = slotW;
         }
         LayoutHelper.ArrangeChild(this, content, x, y, contentW, contentH);
     }

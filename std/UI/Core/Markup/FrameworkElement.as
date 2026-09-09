@@ -89,9 +89,16 @@ public class FrameworkElement : Element {
     public static DependencyProperty<VerticalAlignment> VerticalAlignmentProperty =
         RegisterProperty<VerticalAlignment>(nameof(VerticalAlignment), typeof(FrameworkElement), VerticalAlignment.Stretch);
 
-    /// <summary>Style 属性元数据——引用的 Style 对象。</summary>
+    /// <summary>Style 属性元数据——引用的 Style 对象 / 列表 / 请求键字符串。</summary>
     public static DependencyProperty<object> StyleProperty =
         RegisterProperty<object>(nameof(Style), typeof(FrameworkElement), null);
+
+    /// <summary>
+    /// 已应用显式 Style 的限定键串（逗号分隔；StyleManager 写入）。
+    /// 供 RenderTree 按 Style 键选 chrome 配方——禁 Appearance DP。
+    /// </summary>
+    public static DependencyProperty<string> AppliedStyleKeysProperty =
+        RegisterProperty<string>(nameof(AppliedStyleKeys), typeof(FrameworkElement), "");
 
     /// <summary>Resources 属性元数据——本地资源字典。</summary>
     public static DependencyProperty<object> ResourcesProperty =
@@ -161,6 +168,15 @@ public class FrameworkElement : Element {
     public object Style {
         get { return this.GetValue<object>(StyleProperty); }
         set { this.SetValue<object>(StyleProperty, value); }
+    }
+
+    /// <summary>
+    /// 已应用显式 Style 限定键（逗号分隔）。框架内部（StyleManager /
+    /// PlatformTreeSync）读写；作者面只用 <c>Style="{StaticResource …}"</c>。
+    /// </summary>
+    public string AppliedStyleKeys {
+        get { return this.GetValue<string>(AppliedStyleKeysProperty); }
+        internal set { this.SetValue<string>(AppliedStyleKeysProperty, value); }
     }
 
     /// <summary>本地资源字典。</summary>

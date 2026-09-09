@@ -14,7 +14,7 @@
 | `arc-ui` | `std/UI/**` / `crates/runtime-ui/**` / `**/*.arml` | **最高优先级**：渲染唯一对接 wgpu，禁止软件光栅/GDI/stub 降级方案 |
 | `arc-docs` | `docs/**` | 文档驱动流程、书籍结构、中文写作 |
 
-**动手前必读：** [docs/preface.md](docs/preface.md) → [docs/SUMMARY.md](docs/SUMMARY.md)（全书目录）→ 相关 [RFC](docs/rfc/index.md) / [领域文档](docs/domain/index.md) → 对应小节。文档为唯一权威；实现与 RFC 冲突时先对齐文档。
+**动手前必读：** [docs/arc/FOREWORD.md](docs/arc/FOREWORD.md) → [docs/SUMMARY.md](docs/SUMMARY.md)（全书目录）→ 相关 [RFC](docs/rfc/index.md) / [领域库手册](docs/arc/11-domain/INDEX.md) → 对应小节。文档为唯一权威；实现与 RFC 冲突时先对齐文档（用法叙述以 `docs/arc/` 为准，设计裁决以 `docs/rfc/` 为准）。
 
 ## 当前主线与状态
 

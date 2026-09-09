@@ -2,7 +2,7 @@
 
 > 本文是 实现规划）；实现进度亦不在此维护。
 >
-> 一主题一文档：本文只讲「系统 WebView 集成」。渲染原语与纹理生命周期契约见 [texture-surface](texture-surface.md)；能力系统见 [15 能力系统](../../../user-guide/15-capability-system.md)；编译期显式装配见 [037 §6(../../037-ui.md)；`.ani` 验证式 FFI 见 [016 验证式 FFI 与 Native 加载](../../016-verified-ffi.md)。
+> 一主题一文档：本文只讲「系统 WebView 集成」。渲染原语与纹理生命周期契约见 [texture-surface](texture-surface.md)；能力系统见手册 [能力系统](../../../arc/12-advanced/capabilities.md)；编译期显式装配见 [037 §6](../../037-ui.md)；`.ani` 验证式 FFI 见 [016 验证式 FFI 与 Native 加载](../../016-verified-ffi.md)。
 
 ## 1. 定位
 
@@ -150,7 +150,7 @@ public static Task<List<Row>> QueryAsync(string sql, CancellationToken ct);
 
 #### 3.3.4 异步与序列化
 
-- 命令签名强制 `Async` 后缀 + `CancellationToken`（[arc-language](../../../user-guide/03-encoding-standard.md) 契约 #4）；
+- 命令签名强制 `Async` 后缀 + `CancellationToken`（[编码规范](../../../arc/03-syntax/encoding-standard.md) 契约 #4）；
 - 载荷序列化走既有序列化家族（[022 异步任务与 LINQ/序列化](../../022-async-linq-serialization.md)：JSON 默认，二进制载荷用 [030 Protobuf](../../030-protobuf.md) 或裸字节通道）；
 - 引擎侧 JS 求值回调（`ExecuteScriptAsync` 结果）→ `UiDispatcher.Post` 上 UI 线程兑现，**禁止回调线程触碰 UI 对象**。
 
@@ -161,7 +161,7 @@ public static Task<List<Row>> QueryAsync(string sql, CancellationToken ct);
 
 #### 3.3.6 能力门闩
 
-- 每个 `[WebCommand]` 声明所需能力集；运行时在 **IPC 层**按窗口/WebView 强制执行（对齐 [15 能力系统](../../../user-guide/15-capability-system.md) 门闩语义）；
+- 每个 `[WebCommand]` 声明所需能力集；运行时在 **IPC 层**按窗口/WebView 强制执行（对齐手册 [能力系统](../../../arc/12-advanced/capabilities.md) 门闩语义）；
 - **页面默认零权限**——未声明的命令一律拒绝，拒绝须显式告警（P3 无静默丢弃，对齐 [037 §8(../../037-ui.md)）；
 - 未授权命令不可被 `invoke` 命中，也不暴露于注入脚本的能力探测面。
 

@@ -8,6 +8,7 @@
 | [WebView 表面与桥（WebBrowser 组件）](webview-surface.md) | 系统引擎零拷贝捕获进 wgpu 合成面；`IBrowserSurface`/`IBrowserBridge` 双面架构；注入脚本 + 自定义协议 + `[WebCommand]` 聚合 + 能力门闩；平台天花板 | 037 §4 §6–§8 |
 | [自定义字体（FontManager + markup）](custom-fonts.md) | 命名族注册、项目相对路径、FontFamily/FontSize/FontWeight 最小面；pack/HarfBuzz/emoji 非目标 | 037 §9 自定义字体 |
 | [内置主题资源（ResourceDictionary.arml）](builtin-theme-resources.md) | Light/Dark 色值与控件隐式 Style 的 ARML 正道；几何/motion 留 AS；禁色值双源 | 037 §4 主题 |
+| [主题 · 样式 · 交互架构与路线图](theme-style-interaction-architecture.md) | 行业组件库水准：Token/VSM/响应链路、病灶表、「非像素克隆」裁决、P0–P3 切片 | 037 §4 · production-surface |
 | [生产面契约（分层 · 对齐 · 滚动条）](production-surface.md) | 每层能力闭合；字体生产门禁；H/V 与 ContentAlignment；竖滚动条可见性/交互/样式 | 037 §4–§5 · §8 |
 | [渲染画质提升路径（wgpu 极致画质与流畅度）](rendering-quality-path.md) | 实证基线；正文逐字号位图 + LCD 子像素 + MSDF + MSAA + Instancing 能力路径 | 037 §4 · production-surface §2 |
 | [文本编辑契约（TextBoxModel · 改名清单）](text-editing.md) | TextBoxModel 内核契约；TextBlock/TextBox 命名修订与改名清单；输入栈缺陷定案 | 037 §8 |

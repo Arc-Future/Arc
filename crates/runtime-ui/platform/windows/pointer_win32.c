@@ -158,14 +158,19 @@ static void rt_ui_win32_pointer_down(RtUiElement** root, RtUiElement** pointer_d
             dirty = 1;
         }
         rt_ui_win32_set_hover(pointer_over, hit, &dirty);
-        /* track 点击跳转（Slider）：按下即按像素位置设置值。 */
-        if (rt_ui_dispatch_control_drag(hit, dip_x, dip_y)) {
-            dirty = 1;
+        /* track 点击跳转（Slider）：按下即按像素位置设置值。TextBox/PasswordBox 选区拖拽
+         * 仅在 MOVE 路径扩展，避免 DOWN 先于 click 定位破坏 Anchor。 */
+        if (!(hit->type_name && (strcmp(hit->type_name, "TextBox") == 0
+                || strcmp(hit->type_name, "PasswordBox") == 0))) {
+            if (rt_ui_dispatch_control_drag(hit, dip_x, dip_y)) {
+                dirty = 1;
+            }
         }
     }
-    if (hit && hit->type_name && strcmp(hit->type_name, "TextBox") == 0) {
-            fprintf(stderr, "[DBG] ptr hit TextBox elem=%p\n", (void*)hit);
-            rt_ui_dispatch_input_focus(hit);
+    if (hit && hit->type_name
+        && (strcmp(hit->type_name, "TextBox") == 0
+            || strcmp(hit->type_name, "PasswordBox") == 0)) {
+        rt_ui_dispatch_input_focus(hit);
         /* M-caret2：点击定位 caret——局部 DIP 坐标 = 命中坐标 - 元素左缘。 */
         int32_t local_x = (int32_t)((double)dip_x - hit->layout_x);
         rt_ui_dispatch_input_click_at(hit, local_x);

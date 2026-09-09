@@ -13,6 +13,7 @@ using Arc.UI.Components;
 using Arc.UI.Internal;
 using Arc.UI.Layout;
 using Arc.UI.Media;
+using Arc.UI.Rendering;
 using Arc.UI.Styling;
 
 public partial class WgpuRender {
@@ -39,8 +40,10 @@ public partial class WgpuRender {
         int scrollHover = WindowHost.ElementGetBool(handle, "IsMouseOver", 0);
         int scrollPressed = ScrollRouter.IsDragging(handle) ? 1 : 0;
         ControlVisual pal = VisualStateManager.ScrollBar(ControlState.Of(1, scrollHover, scrollPressed, 0, 0, 0));
-        Color track = this.StateColor(handle, "Background", pal.Background, MotionEngine.RoleBackground);
-        Color thumb = this.StateColor(handle, "AccentBrush", pal.Accent, MotionEngine.RoleAccent);
+        // 滚动条 chrome 只走 VSM/主题 token——禁止 StateColor 读宿主 Background：
+        // ScrollView 常设白底，会吞掉轨道只剩粗拇指，看起来像独立竖条。
+        Color track = this.ResolveThemeKey(pal.Track);
+        Color thumb = this.ResolveThemeKey(pal.Thumb);
         this.DrawRect(trackX, y, VScrollWidth, viewportH, track);
         double ratio = viewportH / extentH;
         if (ratio > 1.0) {
@@ -61,9 +64,10 @@ public partial class WgpuRender {
             if (frac > 1.0) { frac = 1.0; }
         }
         double thumbY = y + frac * travel;
-        double thumbW = VScrollWidth - 4.0;
+        double thumbW = VScrollWidth - ControlMetrics.VScrollThumbInset;
         double thumbR = pal.Radius.TopLeft;
-        this.DrawRoundedRect(trackX + 2.0, thumbY, thumbW, thumbH, thumbR, thumb);
+        double thumbInset = ControlMetrics.VScrollThumbInset / 2.0;
+        this.DrawRoundedRect(trackX + thumbInset, thumbY, thumbW, thumbH, thumbR, thumb);
     }
 
     /// <summary>
@@ -94,7 +98,7 @@ public partial class WgpuRender {
     /// <summary>
     /// 是否有显式/样式 Background（非 Control DP 默认透明）。
     /// WPF 心智：本地值/隐式样式 Setter 优先于主题 Primary 渐变配方；
-    /// 仅「未设底色」时才用 VSM AccentGradient 作为主按钮 chrome。
+    /// 仅「未设底色」时才用 VSM Primary 渐变槽（实为 Color.Primary）作为主按钮 chrome。
     /// </summary>
     private bool HasExplicitBackground(long handle) {
         string raw = WindowHost.ElementGetString(handle, "Background", "");
@@ -111,14 +115,15 @@ public partial class WgpuRender {
     /// <summary>
     /// 状态色解析：显式属性（用户 Style/本地覆盖）优先，否则 VSM 状态资源键默认；
     /// 结果经 MotionEngine 按角色插值后上屏（RFC 037 §3.6）。单一解析根 = Application.Current。
+    /// 未设 / 透明背景视为无显式值——回落主题键（禁 DP 默认透明挡住 chrome 配方）。
     /// </summary>
     private Color StateColor(long handle, string prop, string key, int role) {
         string def = "";
         if (Application.Current != null) {
             def = Application.Current.ResolveColor(key);
         }
-        string s = WindowHost.ElementGetString(handle, prop, def);
-        if (s == null || s.Length == 0) {
+        string s = WindowHost.ElementGetString(handle, prop, "");
+        if (this.IsUnsetBrushMirror(s)) {
             s = def;
         }
         if (s == null || s.Length == 0) {
@@ -132,18 +137,44 @@ public partial class WgpuRender {
     /// motion 覆写（<see cref="ControlVisual.MotionDuration"/>），实现「hover 跟手 / focus 从容」。
     /// </summary>
     private Color StateColorMotion(long handle, string prop, string key, int role, double durationMs) {
+        return this.StateColorMotionCore(handle, prop, key, role, durationMs, false);
+    }
+
+    /// <summary>
+    /// Chrome 交互态色：Hover/Pressed/Disabled 时 VSM 主题键覆盖静态 Background/Border
+    /// （WPF VisualState 覆盖本地 Setter 语义）。Rest 态仍允许显式 Style/本地值优先。
+    /// </summary>
+    private Color ChromeStateColor(long handle, string prop, string key, int role, double durationMs, bool forceTheme) {
+        return this.StateColorMotionCore(handle, prop, key, role, durationMs, forceTheme);
+    }
+
+    private Color StateColorMotionCore(long handle, string prop, string key, int role, double durationMs, bool forceTheme) {
         string def = "";
         if (Application.Current != null) {
             def = Application.Current.ResolveColor(key);
         }
-        string s = WindowHost.ElementGetString(handle, prop, def);
-        if (s == null || s.Length == 0) {
-            s = def;
+        string s = def;
+        if (!forceTheme) {
+            string mirror = WindowHost.ElementGetString(handle, prop, "");
+            if (!this.IsUnsetBrushMirror(mirror)) {
+                s = mirror;
+            }
         }
         if (s == null || s.Length == 0) {
             return Color.Transparent();
         }
         return MotionEngine.ResolveColorDur(handle, role, s, durationMs);
+    }
+
+    /// <summary>平台镜像画刷是否「未设」（空或透明）——与 HasExplicitBackground 同判据。</summary>
+    private bool IsUnsetBrushMirror(string raw) {
+        if (raw == null || raw.Length == 0) {
+            return true;
+        }
+        if (raw == "#00000000" || raw == "Transparent") {
+            return true;
+        }
+        return false;
     }
 
     public void RenderElementTree(long rootHandle) {
@@ -153,7 +184,8 @@ public partial class WgpuRender {
         if (rootHandle == 0) {
             return;
         }
-        Color rootBackground = this.ElementColor(rootHandle, "Background", Color.Parse("#FFFFFF"));
+        Color rootBackground = this.ElementColor(rootHandle, "Background",
+            this.ResolveThemeKey(BuiltInTheme.Background));
         this.DrawRect(0.0, 0.0, (double)_dipWidth, (double)_dipHeight, rootBackground);
         // 布局权威收敛：每个元素的绝对 rect 由 Arc 层 LayoutManager 计算并经
         // PlatformTreeSync 同步到平台镜像（LayoutX/Y/Width/Height → layout_*）。
@@ -246,7 +278,8 @@ public partial class WgpuRender {
             Color fill = this.ElementColor(handle, "Fill", this.ColorTransparent());
             this.DrawRect(lx, ly, rw, rh, fill);
             if (strokeWidth > 0.0) {
-                Color stroke = this.ElementColor(handle, "Stroke", Color.Parse("#FF000000"));
+                Color stroke = this.ElementColor(handle, "Stroke",
+                    this.ResolveThemeKey(BuiltInTheme.TextPrimary));
                 this.DrawRectBorder(lx, ly, rw, rh, stroke);
             }
         }
@@ -255,7 +288,12 @@ public partial class WgpuRender {
         if (type == ElTextBlock) {
             string text = WindowHost.ElementGetString(handle, "Text", "");
             Color bg = this.ElementColor(handle, "Background", Color.Transparent());
-            Color fg = this.ElementColor(handle, "Foreground", this.ColorTextDefault());
+            Color fg = this.ElementColor(handle, "Foreground",
+                this.ResolveThemeKey(BuiltInTheme.TextPrimary));
+            long contentHost = this.TemplateChromeHost(handle);
+            if (contentHost != 0 && this.TemplateChromeRole(handle) == "Content") {
+                fg = this.TemplateContentForeground(contentHost, fg);
+            }
             double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", 0.0);
             int family = this.ResolveFontFamily(WindowHost.ElementGetString(handle, "FontFamily", ""));
             int weight = this.ResolveFontWeight(WindowHost.ElementGetString(handle, "FontWeight", "Normal"));
@@ -263,22 +301,31 @@ public partial class WgpuRender {
         }
 
         // ---- 模板让位（WPF 语义）：已挂视觉子树的控件跳过内置 chrome 分支 ----
-        // ControlTemplate 套用后 chrome 完全由模板树负责（尾部队通用递归渲染），
-        // 防内置 chrome + 模板子树双轨叠加（production-surface Template-first 门禁）。
+        // 默认模板经 DefaultControlTemplates 挂到隐式 Style；chrome 画在 PART_*。
+        // 已迁：Button/Toggle/Check/Radio/TextBox/PasswordBox/Slider/ProgressBar/ComboBox。
+        // 无模板回退仅供遗留；禁止为已迁控件新增宿主硬编码 chrome。
+        // 未迁：TabControl（Panel 内容子树）/ DataGrid（专属分支 + ApplyTo 清行风险）。
         bool templated = WindowHost.ElementGetChildCount(handle) > 0;
 
-        // ---- Button / ToggleButton ----
+        // ---- Button / ToggleButton（无模板回退；有模板 → PART_Chrome）----
         if ((type == ElButton || type == ElToggleButton) && !templated) {
             string content = WindowHost.ElementGetString(handle, "Content", "");
             int isEnabled = WindowHost.ElementGetBool(handle, "IsEnabled", 1);
             int isChecked = WindowHost.ElementGetBool(handle, "IsChecked", 0);
-            double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", 14.0);
+            double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", ControlMetrics.FontBodySize);
             int family = this.ResolveFontFamily(WindowHost.ElementGetString(handle, "FontFamily", ""));
             int weight = this.ResolveFontWeight(WindowHost.ElementGetString(handle, "FontWeight", "Normal"));
-            double scaledGlyphHeight = GlyphHeight;
-            if (fontSize > 0.0) { scaledGlyphHeight = GlyphHeight * (fontSize / GlyphHeight); }
-            double estimatedWidthOriginal = this.EstTextWidth(content, LayoutPaddingX, fontSize, family, weight);
-            double estimatedHeight = scaledGlyphHeight + LayoutPaddingY;
+            // 行高与 DrawText 同源（per-size atlas 度量），禁 8x16 GlyphHeight 缩放公式。
+            double scaledGlyphHeight = this.EstTextHeight("Ag", 0.0, fontSize, family);
+            if (scaledGlyphHeight <= 0.0) {
+                scaledGlyphHeight = fontSize > 0.0 ? fontSize : GlyphHeight;
+            }
+            double padX = WindowHost.ElementGetNumber(handle, "PaddingX", LayoutPaddingX);
+            double padY = WindowHost.ElementGetNumber(handle, "PaddingY", LayoutPaddingY);
+            if (padX <= 0.0) { padX = LayoutPaddingX; }
+            if (padY < 0.0) { padY = LayoutPaddingY; }
+            double estimatedWidthOriginal = this.EstTextWidth(content, padX, fontSize, family, weight);
+            double estimatedHeight = scaledGlyphHeight + padY;
             double bw = lw;
             if (bw <= 0.0) { bw = estimatedWidthOriginal; }
             double bh = lh;
@@ -286,20 +333,32 @@ public partial class WgpuRender {
             int isMouseOver = WindowHost.ElementGetBool(handle, "IsMouseOver", 0);
             int isPressed = WindowHost.ElementGetBool(handle, "IsPressed", 0);
             int isFocused = WindowHost.ElementGetBool(handle, "IsFocused", 0);
-            ControlVisual pal = VisualStateManager.Button(ControlState.Of(isEnabled, isMouseOver, isPressed, isFocused, isChecked, 0));
+            ControlState st = ControlState.Of(isEnabled, isMouseOver, isPressed, isFocused, isChecked, 0);
+            ControlVisual pal = VisualStateManager.Button(st);
+            if (type == ElToggleButton) {
+                pal = VisualStateManager.Toggle(st);
+            } else {
+                string styleKeys = WindowHost.ElementGetString(handle, "StyleKeys", "");
+                pal = VisualStateManager.ButtonForStyleKeys(st, styleKeys);
+            }
+            // Hover/Pressed/Disabled：VSM token 覆盖静态 Background（宿主 Style 不挡交互反馈）。
+            bool forceChrome = isEnabled == 0 || isMouseOver != 0 || isPressed != 0;
+            if (type == ElToggleButton && isChecked != 0) {
+                forceChrome = true;
+            }
             // 现代深度反馈：hover/pressed 抬升软阴影 + focus 辉光（DrawSurfaceShadow，圆角贴合）。
             if (pal.Lift.IsVisible) {
                 this.DrawSurfaceShadow(lx, ly, bw, bh, pal.Lift.Radius, pal.Lift.Blur, pal.Lift.OffsetY, pal.Lift.Alpha);
             }
             double cr = pal.Radius.Max;
-            Color bg = this.StateColorMotion(handle, "Background", pal.Background, MotionEngine.RoleBackground, pal.MotionDuration);
+            Color bg = this.ChromeStateColor(handle, "Background", pal.Background, MotionEngine.RoleBackground, pal.MotionDuration, forceChrome);
             Color fg = this.StateColorMotion(handle, "Foreground", pal.Foreground, MotionEngine.RoleForeground, pal.MotionDuration);
-            Color border = this.StateColorMotion(handle, "BorderBrush", pal.Border, MotionEngine.RoleBorder, pal.MotionDuration);
-            // RFC 037 §3.6：圆角+渐变同一 SDF；显式 Background 优先生效（禁主题渐变盖住样式红）。
+            Color border = this.ChromeStateColor(handle, "BorderBrush", pal.Border, MotionEngine.RoleBorder, pal.MotionDuration, forceChrome);
+            // RFC 037 §3.6：圆角+渐变同一 SDF；Rest 显式 Background 优先生效；交互态走 VSM 纯色。
             Color gradStart = Color.Transparent();
             Color gradEnd = Color.Transparent();
             bool hasGradient = this.ResolveGradient(pal, ref gradStart, ref gradEnd);
-            if (!this.HasExplicitBackground(handle) && hasGradient) {
+            if (!forceChrome && !this.HasExplicitBackground(handle) && hasGradient) {
                 this.DrawLinearGradient(lx, ly, bw, bh, gradStart, gradEnd, 0.0, 0.0, 1.0, 0.0, cr);
             } else {
                 this.DrawRoundedRect(lx, ly, bw, bh, cr, bg);
@@ -308,29 +367,37 @@ public partial class WgpuRender {
             // ToggleButton 选中标记（Accent 强调）
             if (type == ElToggleButton && isChecked != 0) {
                 Color accent = this.StateColor(handle, "AccentBrush", pal.Accent, MotionEngine.RoleAccent);
-                double innerCr = cr - 3.0;
+                double inset = ControlMetrics.SpacingXS;
+                double innerCr = cr - inset;
                 if (innerCr < 0.0) { innerCr = 0.0; }
-                this.DrawRoundedRect(lx + 3.0, ly + 3.0, bw - 6.0, bh - 6.0, innerCr, accent);
+                this.DrawRoundedRect(lx + inset, ly + inset, bw - inset * 2.0, bh - inset * 2.0, innerCr, accent);
             }
-            // 焦点外晕（FocusRing）+ 辉光（FocusGlow）
-            if (isFocused != 0) {
+            // 焦点外晕（FocusRing）+ 辉光（FocusGlow）——仅 IsFocusVisible（键盘模态）
+            int isFocusVisible = WindowHost.ElementGetBool(handle, "IsFocusVisible", 0);
+            if (isFocusVisible != 0) {
                 if (pal.FocusGlow.IsVisible) {
                     this.DrawSurfaceShadow(lx, ly, bw, bh, pal.FocusGlow.Radius, pal.FocusGlow.Blur,
                                            pal.FocusGlow.OffsetY, pal.FocusGlow.Alpha);
                 }
                 Color ring = this.StateColor(handle, "FocusRingBrush", pal.FocusRing, MotionEngine.RoleFocusRing);
-                this.DrawRoundedBorder(lx - 2.0, ly - 2.0, bw + 4.0, bh + 4.0, cr + 2.0, pal.FocusRingWidth, ring);
+                this.DrawRoundedBorder(
+                    lx - ControlMetrics.FocusRingOutset,
+                    ly - ControlMetrics.FocusRingOutset,
+                    bw + ControlMetrics.FocusRingOutset * 2.0,
+                    bh + ControlMetrics.FocusRingOutset * 2.0,
+                    cr + ControlMetrics.FocusRingOutset,
+                    pal.FocusRingWidth, ring);
             }
             // 按钮文字居中（textWidth = 原始文本宽 - padding；EstTextWidth 对 padding
             // 严格可加，故与独立无 padding 度量数学等价）
-            double textWidth = estimatedWidthOriginal - LayoutPaddingX;
+            double textWidth = estimatedWidthOriginal - padX;
             double textX = lx + (bw - textWidth) / 2.0;
-            if (textX < lx + 4.0) { textX = lx + 4.0; }
+            if (textX < lx + ControlMetrics.SpacingXS) { textX = lx + ControlMetrics.SpacingXS; }
             double textY = ly + (bh - scaledGlyphHeight) / 2.0;
             this.DrawText(content, textX, textY, fontSize, this.ColorTransparent(), fg, family, weight);
         }
 
-        // ---- CheckBox ----
+        // ---- CheckBox（无模板回退；有模板 → PART_Glyph + PART_Content）----
         if (type == ElCheckBox && !templated) {
             string content = WindowHost.ElementGetString(handle, "Content", "");
             int isChecked = WindowHost.ElementGetBool(handle, "IsChecked", 0);
@@ -338,14 +405,15 @@ public partial class WgpuRender {
             int isMouseOver = WindowHost.ElementGetBool(handle, "IsMouseOver", 0);
             int isPressed = WindowHost.ElementGetBool(handle, "IsPressed", 0);
             int isFocused = WindowHost.ElementGetBool(handle, "IsFocused", 0);
-            double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", 14.0);
+            double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", ControlMetrics.FontBodySize);
             int family = this.ResolveFontFamily(WindowHost.ElementGetString(handle, "FontFamily", ""));
             int weight = this.ResolveFontWeight(WindowHost.ElementGetString(handle, "FontWeight", "Normal"));
-            double box = 14.0;
+            double box = ControlMetrics.ToggleBoxSize;
             ControlVisual pal = VisualStateManager.Toggle(ControlState.Of(isEnabled, isMouseOver, isPressed, isFocused, isChecked, 0));
+            bool forceChrome = isEnabled == 0 || isMouseOver != 0 || isPressed != 0 || isChecked != 0;
             double cr = pal.Radius.Max;
-            Color boxBackground = this.StateColorMotion(handle, "Background", pal.Background, MotionEngine.RoleBackground, pal.MotionDuration);
-            Color boxBorder = this.StateColorMotion(handle, "BorderBrush", pal.Border, MotionEngine.RoleBorder, pal.MotionDuration);
+            Color boxBackground = this.ChromeStateColor(handle, "Background", pal.Background, MotionEngine.RoleBackground, pal.MotionDuration, forceChrome);
+            Color boxBorder = this.ChromeStateColor(handle, "BorderBrush", pal.Border, MotionEngine.RoleBorder, pal.MotionDuration, forceChrome);
             // checked 态：无显式 Background 时用主题渐变；否则纯色。描边仅为边框。
             Color gradStart = Color.Transparent();
             Color gradEnd = Color.Transparent();
@@ -360,28 +428,90 @@ public partial class WgpuRender {
             this.DrawRoundedBorder(lx, ly, box, box, cr, (double)RectBorderThickness, boxBorder);
             if (isChecked != 0) {
                 Color accent = this.StateColor(handle, "AccentBrush", pal.Accent, MotionEngine.RoleAccent);
-                double innerCr = cr - 3.0;
+                double inset = ControlMetrics.SpacingXS;
+                double innerCr = cr - inset;
                 if (innerCr < 0.0) { innerCr = 0.0; }
-                this.DrawRoundedRect(lx + 3.0, ly + 3.0, box - 6.0, box - 6.0, innerCr, accent);
+                this.DrawRoundedRect(lx + inset, ly + inset, box - inset * 2.0, box - inset * 2.0, innerCr, accent);
+            }
+            if (WindowHost.ElementGetBool(handle, "IsFocusVisible", 0) != 0) {
+                Color ring = this.StateColor(handle, "FocusRingBrush", pal.FocusRing, MotionEngine.RoleFocusRing);
+                this.DrawRoundedBorder(
+                    lx - ControlMetrics.FocusRingOutset,
+                    ly - ControlMetrics.FocusRingOutset,
+                    box + ControlMetrics.FocusRingOutset * 2.0,
+                    box + ControlMetrics.FocusRingOutset * 2.0,
+                    cr + ControlMetrics.FocusRingOutset,
+                    pal.FocusRingWidth, ring);
             }
             Color fg = this.StateColor(handle, "Foreground", pal.Foreground, MotionEngine.RoleForeground);
-            double textX = lx + box + 4.0;
+            double textX = lx + box + ControlMetrics.ToggleLabelGap;
             this.DrawText(content, textX, ly + (box - GlyphHeight) / 2.0, fontSize, this.ColorTransparent(), fg, family, weight);
         }
 
-        // ---- TextBox ----
-        if (type == ElTextBox && !templated) {
+        // ---- RadioButton（无模板回退；有模板 → PART_Glyph 圆形）----
+        if (type == ElRadioButton && !templated) {
+            string content = WindowHost.ElementGetString(handle, "Content", "");
+            int isChecked = WindowHost.ElementGetBool(handle, "IsChecked", 0);
+            int isEnabled = WindowHost.ElementGetBool(handle, "IsEnabled", 1);
+            int isMouseOver = WindowHost.ElementGetBool(handle, "IsMouseOver", 0);
+            int isPressed = WindowHost.ElementGetBool(handle, "IsPressed", 0);
+            int isFocused = WindowHost.ElementGetBool(handle, "IsFocused", 0);
+            double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", ControlMetrics.FontBodySize);
+            int family = this.ResolveFontFamily(WindowHost.ElementGetString(handle, "FontFamily", ""));
+            int weight = this.ResolveFontWeight(WindowHost.ElementGetString(handle, "FontWeight", "Normal"));
+            double box = ControlMetrics.ToggleBoxSize;
+            double cr = box / 2.0;
+            ControlVisual pal = VisualStateManager.Toggle(ControlState.Of(isEnabled, isMouseOver, isPressed, isFocused, isChecked, 0));
+            bool forceChrome = isEnabled == 0 || isMouseOver != 0 || isPressed != 0 || isChecked != 0;
+            Color boxBackground = this.ChromeStateColor(handle, "Background", pal.Background, MotionEngine.RoleBackground, pal.MotionDuration, forceChrome);
+            Color boxBorder = this.ChromeStateColor(handle, "BorderBrush", pal.Border, MotionEngine.RoleBorder, pal.MotionDuration, forceChrome);
+            this.DrawRoundedRect(lx, ly, box, box, cr, boxBackground);
+            this.DrawRoundedBorder(lx, ly, box, box, cr, (double)RectBorderThickness, boxBorder);
+            if (isChecked != 0) {
+                Color accent = this.StateColor(handle, "AccentBrush", pal.Accent, MotionEngine.RoleAccent);
+                double inner = ControlMetrics.SpacingMD / 2.0;
+                double innerCr = inner / 2.0;
+                double inset = (box - inner) / 2.0;
+                this.DrawRoundedRect(lx + inset, ly + inset, inner, inner, innerCr, accent);
+            }
+            if (WindowHost.ElementGetBool(handle, "IsFocusVisible", 0) != 0) {
+                Color ring = this.StateColor(handle, "FocusRingBrush", pal.FocusRing, MotionEngine.RoleFocusRing);
+                this.DrawRoundedBorder(
+                    lx - ControlMetrics.FocusRingOutset,
+                    ly - ControlMetrics.FocusRingOutset,
+                    box + ControlMetrics.FocusRingOutset * 2.0,
+                    box + ControlMetrics.FocusRingOutset * 2.0,
+                    cr + ControlMetrics.FocusRingOutset,
+                    pal.FocusRingWidth, ring);
+            }
+            Color fg = this.StateColor(handle, "Foreground", pal.Foreground, MotionEngine.RoleForeground);
+            double textX = lx + box + ControlMetrics.ToggleLabelGap;
+            this.DrawText(content, textX, ly + (box - GlyphHeight) / 2.0, fontSize, this.ColorTransparent(), fg, family, weight);
+        }
+
+        // ---- TextBox / PasswordBox：有模板时先 PART_Chrome，再宿主文本层（禁被壳盖住）----
+        if (type == ElTextBox || type == ElPasswordBox) {
+            if (templated) {
+                // 子树（PART_Chrome）先画；文本/选区/caret 后画，否则不透明壳盖住内容层。
+                int tbChildCount = WindowHost.ElementGetChildCount(handle);
+                for (int tbi = 0; tbi < tbChildCount; tbi++) {
+                    long tbChild = WindowHost.ElementGetChild(handle, tbi);
+                    this.RenderElementNode(tbChild);
+                }
+                this.DrawTextBoxContentLayer(handle, lx, ly, lw, lh);
+                return;
+            }
             string text = WindowHost.ElementGetString(handle, "Text", "");
             string placeholder = WindowHost.ElementGetString(handle, "Placeholder", "");
             string composition = WindowHost.ElementGetString(handle, "CompositionText", "");
             double caretIdx = WindowHost.ElementGetNumber(handle, "CaretIndex", 0.0);
             int caretIndex = (int)caretIdx;
-            string display = text;
-            bool isPlaceholder = false;
-            if (display == null || display.Length == 0) {
-                display = placeholder;
-                isPlaceholder = true;
-            }
+            int isEnabled = WindowHost.ElementGetBool(handle, "IsEnabled", 1);
+            int isFocused = WindowHost.ElementGetBool(handle, "IsFocused", 0);
+            bool empty = text == null || text.Length == 0;
+            bool isPlaceholder = empty && isFocused == 0
+                && placeholder != null && placeholder.Length > 0;
+            string display = isPlaceholder ? placeholder : (text != null ? text : "");
             // 组字预览：composition 并入显示串，以下划线区分 committed 文本。
             string compPrefix = "";
             string compSuffix = "";
@@ -395,40 +525,51 @@ public partial class WgpuRender {
                 display = compPrefix + composition + compSuffix;
                 hasComposition = true;
             }
-            double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", 14.0);
+            double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", ControlMetrics.FontBodySize);
             int family = this.ResolveFontFamily(WindowHost.ElementGetString(handle, "FontFamily", ""));
             int weight = this.ResolveFontWeight(WindowHost.ElementGetString(handle, "FontWeight", "Normal"));
-            double scaledGlyphHeight = GlyphHeight;
-            if (fontSize > 0.0) { scaledGlyphHeight = GlyphHeight * (fontSize / GlyphHeight); }
-            double estimatedWidth = this.EstTextWidth(display, 16.0, fontSize, family, weight);
+            // 行高与 DrawText 同源（per-size atlas 度量），禁 8x16 GlyphHeight 缩放公式。
+            double scaledGlyphHeight = this.EstTextHeight("Ag", 0.0, fontSize, family);
+            if (scaledGlyphHeight <= 0.0) {
+                scaledGlyphHeight = fontSize > 0.0 ? fontSize : GlyphHeight;
+            }
+            double estimatedWidth = this.EstTextWidth(
+                display != null && display.Length > 0 ? display : "Ag", 16.0, fontSize, family, weight);
             double estimatedHeight = scaledGlyphHeight + 8.0;
             double iw = lw;
             if (iw <= 0.0) { iw = estimatedWidth; }
             double ih = lh;
             if (ih <= 0.0) { ih = estimatedHeight; }
-            int isEnabled = WindowHost.ElementGetBool(handle, "IsEnabled", 1);
-            int isFocused = WindowHost.ElementGetBool(handle, "IsFocused", 0);
             ControlVisual pal = VisualStateManager.TextBox(ControlState.Of(isEnabled, 0, 0, isFocused, 0, 0));
             double cr = pal.Radius.Max;
             Color bg = this.StateColorMotion(handle, "Background", pal.Background, MotionEngine.RoleBackground, pal.MotionDuration);
             Color border = this.StateColorMotion(handle, "BorderBrush", pal.Border, MotionEngine.RoleBorder, pal.MotionDuration);
             this.DrawRoundedRect(lx, ly, iw, ih, cr, bg);
             this.DrawRoundedBorder(lx, ly, iw, ih, cr, (double)RectBorderThickness, border);
-            if (isFocused != 0) {
+            if (WindowHost.ElementGetBool(handle, "IsFocusVisible", 0) != 0) {
                 if (pal.FocusGlow.IsVisible) {
                     this.DrawSurfaceShadow(lx, ly, iw, ih, pal.FocusGlow.Radius, pal.FocusGlow.Blur,
                                            pal.FocusGlow.OffsetY, pal.FocusGlow.Alpha);
                 }
                 Color ring = this.StateColor(handle, "FocusRingBrush", pal.FocusRing, MotionEngine.RoleFocusRing);
-                this.DrawRoundedBorder(lx - 2.0, ly - 2.0, iw + 4.0, ih + 4.0, cr + 2.0, pal.FocusRingWidth, ring);
+                this.DrawRoundedBorder(
+                    lx - ControlMetrics.FocusRingOutset,
+                    ly - ControlMetrics.FocusRingOutset,
+                    iw + ControlMetrics.FocusRingOutset * 2.0,
+                    ih + ControlMetrics.FocusRingOutset * 2.0,
+                    cr + ControlMetrics.FocusRingOutset,
+                    pal.FocusRingWidth, ring);
             }
-            Color fg = this.StateColor(handle, "Foreground",
-                                       isPlaceholder ? pal.Placeholder : pal.Foreground,
-                                       MotionEngine.RoleForeground);
-            double textX = lx + 4.0;
+            Color fg;
+            if (isPlaceholder) {
+                fg = this.ResolveThemeKey(pal.Placeholder);
+            } else {
+                fg = this.StateColor(handle, "Foreground", pal.Foreground, MotionEngine.RoleForeground);
+            }
+            // InputMetrics 同源：textX 使 DrawText 内部 pen = PenOriginX。
+            double textX = lx + InputMetrics.PenOriginX - (MinTextPaddingX / 2.0);
             double textY = ly + (ih - scaledGlyphHeight) / 2.0;
-            // M-caret2 选区高亮：背景之上、文本之下；几何与 caret 同源（pen 内缩
-            // MinTextPaddingX/2 + 前缀宽度），placeholder 态无选区。
+            double penOriginX = lx + InputMetrics.PenOriginX;
             double selStartV = WindowHost.ElementGetNumber(handle, "SelectionStart", 0.0);
             double selLenV = WindowHost.ElementGetNumber(handle, "SelectionLength", 0.0);
             int selStart = (int)selStartV;
@@ -438,24 +579,27 @@ public partial class WgpuRender {
                     selLen = text.Length - selStart;
                 }
                 if (selLen > 0) {
-                    double penX = textX + MinTextPaddingX / 2.0;
-                    double selX = penX
+                    double selX = penOriginX
                         + this.EstTextWidth(text.Substring(0, selStart), 0.0, fontSize, family, weight);
                     double selW = this.EstTextWidth(
                         text.Substring(selStart, selLen), 0.0, fontSize, family, weight);
                     if (selW > 0.0) {
-                        this.DrawRect(selX, textY, selW, scaledGlyphHeight, Color.Parse("#402F6FDE"));
+                        this.DrawRect(selX, textY, selW, scaledGlyphHeight,
+                            this.ResolveThemeKey(BuiltInTheme.TextSelection));
                     }
                 }
             }
-            this.DrawText(display, textX, textY, fontSize, this.ColorTransparent(), fg, family, weight);
+            if (display != null && display.Length > 0) {
+                this.DrawText(display, textX, textY, fontSize, this.ColorTransparent(), fg, family, weight);
+            }
             // 组字下划线预览：DrawText 起始 pen 自带 MinTextPaddingX/2 内缩，补齐对齐。
             if (hasComposition) {
-                double compX = textX + MinTextPaddingX / 2.0 + this.EstTextWidth(compPrefix, 0.0, fontSize, family, weight);
+                double compX = penOriginX + this.EstTextWidth(compPrefix, 0.0, fontSize, family, weight);
                 double compW = this.EstTextWidth(composition, 0.0, fontSize, family, weight);
                 double underlineY = textY + scaledGlyphHeight - 2.0;
                 if (compW > 0.0) {
-                    this.DrawRect(compX, underlineY, compW, 1.0, Color.Parse("#FF000000"));
+                    this.DrawRect(compX, underlineY, compW, 1.0,
+                        this.ResolveThemeKey(BuiltInTheme.TextPrimary));
                 }
             }
             // 软件 caret 竖线（焦点即画——空 Text/placeholder 态画于文本起点，桌面惯例；
@@ -471,11 +615,12 @@ public partial class WgpuRender {
                     if (ci > tlen) { ci = tlen; }
                     caretPrefix = text.Substring(0, ci);
                 }
-                double caretX = textX + MinTextPaddingX / 2.0
+                double caretX = penOriginX
                     + this.EstTextWidth(caretPrefix, 0.0, fontSize, family, weight);
                 Color caretColor = this.StateColor(handle, "Foreground", pal.Foreground, MotionEngine.RoleForeground);
                 this.DrawRect(caretX, textY, 1.5, scaledGlyphHeight, caretColor);
             }
+            return;
         }
 
         // ---- Image（RFC 029 M2：GIF/SVG/静态位图解码纹理采样；无纹理回退占位）----
@@ -521,9 +666,11 @@ public partial class WgpuRender {
             } else {
                 // 占位：未解码/解码失败/无源时灰底 + 边框（首版占位语义保留）。
                 if (bg.A <= 0.001) {
-                    this.DrawRect(lx, ly, lw, lh, Color.Parse("#FFD0D0D0"));
+                    this.DrawRect(lx, ly, lw, lh,
+                        this.ResolveThemeKey(BuiltInTheme.ImageFill));
                 }
-                this.DrawRectBorder(lx, ly, lw, lh, Color.Parse("#FF606060"));
+                this.DrawRectBorder(lx, ly, lw, lh,
+                    this.ResolveThemeKey(BuiltInTheme.ImageBorder));
             }
         }
 
@@ -546,56 +693,46 @@ public partial class WgpuRender {
             }
         }
 
-        // ---- Slider ----
+        // ---- Slider（无模板回退；有模板 → PART_Chrome Surface 画轨/thumb）----
         if (type == ElSlider && !templated) {
-            double val = WindowHost.ElementGetNumber(handle, "Value", 0.0);
-            double min = WindowHost.ElementGetNumber(handle, "Minimum", 0.0);
-            double max = WindowHost.ElementGetNumber(handle, "Maximum", 100.0);
-            int isEnabled = WindowHost.ElementGetBool(handle, "IsEnabled", 1);
-            double sw = lw;
-            if (sw <= 0.0) { sw = 200.0; }
-            double sh = GlyphHeight + 8.0;
-            ControlVisual pal = VisualStateManager.Slider(ControlState.Of(isEnabled, 0, 0, 0, 0, 0));
-            Color trackColor = this.StateColor(handle, "TrackBrush", pal.Track, MotionEngine.RoleBorder);
-            Color foregroundColor = this.StateColor(handle, "AccentBrush", pal.Accent, MotionEngine.RoleAccent);
-            this.DrawRoundedRect(lx + 4.0, ly + sh / 2.0 - 2.0, sw - 8.0, 4.0, 2.0, trackColor);
-            double range = max - min;
-            double t = (range > 0.0) ? (val - min) / range : 0.0;
-            if (t < 0.0) { t = 0.0; } if (t > 1.0) { t = 1.0; }
-            double fillWidth = (sw - 8.0) * t;
-            this.DrawRoundedRect(lx + 4.0, ly + sh / 2.0 - 2.0, fillWidth, 4.0, 2.0, foregroundColor);
-            this.DrawRoundedRect(lx + 4.0 + fillWidth - 6.0, ly + sh / 2.0 - 8.0, 12.0, 16.0, 6.0, foregroundColor);
+            this.DrawSliderChrome(handle, lx, ly, lw, lh);
         }
 
-        // ---- ComboBox（折叠态 chrome；选项列表属展开 Popup 轨，选项行不经通用
-        //      递归渲染——同 DataGrid 行镜像内联消费先例，防选项行与 chrome 叠加）----
+        // ---- ProgressBar（无模板回退；有模板 → PART Surface；含 IsIndeterminate）----
+        if (type == ElProgressBar && !templated) {
+            this.DrawProgressBarChrome(handle, lx, ly, lw, lh);
+        }
+
+        // ---- ComboBox（折叠态；选项属 Popup 轨。有模板：先 PART 壳，再文本/chevron）----
         if (type == ElComboBox) {
+            if (templated) {
+                int cbChildCount = WindowHost.ElementGetChildCount(handle);
+                for (int cbi = 0; cbi < cbChildCount; cbi++) {
+                    long cbChild = WindowHost.ElementGetChild(handle, cbi);
+                    this.RenderElementNode(cbChild);
+                }
+                this.DrawComboBoxContentLayer(handle, lx, ly, lw, lh);
+                return;
+            }
             int isEnabled = WindowHost.ElementGetBool(handle, "IsEnabled", 1);
-            double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", 14.0);
+            double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", ControlMetrics.FontBodySize);
             int family = this.ResolveFontFamily(WindowHost.ElementGetString(handle, "FontFamily", ""));
             int weight = this.ResolveFontWeight(WindowHost.ElementGetString(handle, "FontWeight", "Normal"));
-            double scaledGlyphHeight = GlyphHeight;
-            if (fontSize > 0.0) { scaledGlyphHeight = GlyphHeight * (fontSize / GlyphHeight); }
+            double scaledGlyphHeight = this.EstTextHeight("Ag", 0.0, fontSize, family);
+            if (scaledGlyphHeight <= 0.0) {
+                scaledGlyphHeight = fontSize > 0.0 ? fontSize : GlyphHeight;
+            }
             double iw = lw;
             if (iw <= 0.0) { iw = 160.0; }
             double ih = lh;
-            if (ih <= 0.0) { ih = scaledGlyphHeight + 12.0; }
+            if (ih <= 0.0) { ih = scaledGlyphHeight + ControlMetrics.SpacingMD; }
             ControlVisual pal = VisualStateManager.ComboBox(ControlState.Of(isEnabled, 0, 0, 0, 0, 0));
             double cr = pal.Radius.Max;
             Color bg = this.StateColorMotion(handle, "Background", pal.Background, MotionEngine.RoleBackground, pal.MotionDuration);
             Color border = this.StateColorMotion(handle, "BorderBrush", pal.Border, MotionEngine.RoleBorder, pal.MotionDuration);
             this.DrawRoundedRect(lx, ly, iw, ih, cr, bg);
             this.DrawRoundedBorder(lx, ly, iw, ih, cr, (double)RectBorderThickness, border);
-            Color fg = this.StateColor(handle, "Foreground", pal.Foreground, MotionEngine.RoleForeground);
-            string selectedText = WindowHost.ElementGetString(handle, "SelectedText", "");
-            double textY = ly + (ih - scaledGlyphHeight) / 2.0;
-            this.DrawText(selectedText, lx + 4.0, textY, fontSize, this.ColorTransparent(), fg, family, weight);
-            // 下拉 chevron：无三角绘制原语，右侧三条渐窄横条堆叠近似（水平居中于 chevron 轴）
-            double chevronCx = lx + iw - 12.0;
-            double chevronCy = ly + ih / 2.0 - 2.25;
-            this.DrawRect(chevronCx - 4.0, chevronCy, 8.0, 1.5, fg);
-            this.DrawRect(chevronCx - 2.5, chevronCy + 2.0, 5.0, 1.5, fg);
-            this.DrawRect(chevronCx - 1.0, chevronCy + 4.0, 2.0, 1.5, fg);
+            this.DrawComboBoxContentLayer(handle, lx, ly, lw, lh);
             return;
         }
 
@@ -606,12 +743,125 @@ public partial class WgpuRender {
             return;
         }
 
+        // ---- CodeEditor（RFC 037 §4 M-CE1：视口虚拟化 DrawList → ExecuteDrawList）----
+        if (type == ElCodeEditor) {
+            Color bg = this.ElementColor(handle, "Background",
+                this.ResolveThemeKey(BuiltInTheme.Surface));
+            this.DrawBackground(bg, lx, ly, lw, lh);
+            IFrameDrawListProvider provider = FrameDrawListRouter.Lookup(handle);
+            if (provider != null) {
+                DrawList list = provider.BuildFrameDrawList();
+                if (list != null && list.Count > 0 && lw > 0.0 && lh > 0.0) {
+                    this.PushClip(lx, ly, lw, lh);
+                    this.ExecuteDrawList(list, lx, ly);
+                    this.PopClip();
+                }
+            }
+            return;
+        }
+
+        // ---- TabControl（内置页签栏 chrome：内容测宽左对齐 + 选中 Accent 底线）----
+        if (type == "TabControl") {
+            Color bg = this.ElementColor(handle, "Background", Color.Transparent());
+            this.DrawBackground(bg, lx, ly, lw, lh);
+            int tabCount = (int)WindowHost.ElementGetNumber(handle, "TabCount", 0.0);
+            double barH = WindowHost.ElementGetNumber(handle, "HeaderBarHeight",
+                ControlMetrics.TabHeaderBarHeight);
+            if (barH <= 0.0) {
+                barH = ControlMetrics.TabHeaderBarHeight;
+            }
+            int selected = (int)WindowHost.ElementGetNumber(handle, "SelectedIndex", 0.0);
+            if (tabCount > 0 && lw > 0.0) {
+                Color barBg = this.ResolveThemeKey(BuiltInTheme.SurfaceStripe);
+                Color border = this.ResolveThemeKey(BuiltInTheme.Border);
+                Color accent = this.ResolveThemeKey(BuiltInTheme.Primary);
+                Color fg = this.ResolveThemeKey(BuiltInTheme.TextPrimary);
+                Color fgMuted = this.ResolveThemeKey(BuiltInTheme.TextSecondary);
+                this.DrawRect(lx, ly, lw, barH, barBg);
+                this.DrawRect(lx, ly + barH - ControlMetrics.BorderWidth, lw,
+                    ControlMetrics.BorderWidth, border);
+                double fontSize = ControlMetrics.TabHeaderFontSize;
+                int family = this.ResolveFontFamily("");
+                int weight = this.ResolveFontWeight("Normal");
+                double cursorX = lx;
+                double fallbackCell = lw / (double)tabCount;
+                int ti = 0;
+                while (ti < tabCount) {
+                    string header = WindowHost.ElementGetString(handle, "Header" + ti, "");
+                    if (header == null || header.Length == 0) {
+                        header = "Tab " + (ti + 1).ToString();
+                    }
+                    double cellW = WindowHost.ElementGetNumber(handle, "HeaderWidth" + ti, 0.0);
+                    if (cellW <= 0.0) {
+                        cellW = fallbackCell;
+                    }
+                    bool isSel = ti == selected;
+                    Color labelFg = isSel ? fg : fgMuted;
+                    double textW = this.EstTextWidth(header, 0.0, fontSize, family, weight);
+                    double textX = cursorX + (cellW - textW) / 2.0;
+                    if (textX < cursorX + ControlMetrics.SpacingXS) {
+                        textX = cursorX + ControlMetrics.SpacingXS;
+                    }
+                    double textY = ly + (barH - fontSize) / 2.0 - ControlMetrics.TabLabelNudgeY;
+                    this.DrawText(header, textX, textY, fontSize, this.ColorTransparent(),
+                        labelFg, family, isSel ? 1 : weight);
+                    if (isSel) {
+                        this.DrawRect(
+                            cursorX + ControlMetrics.SpacingXS,
+                            ly + barH - ControlMetrics.TabIndicatorInsetBottom,
+                            cellW - ControlMetrics.SpacingSM,
+                            ControlMetrics.FocusRingWidth,
+                            accent);
+                    }
+                    cursorX = cursorX + cellW;
+                    ti++;
+                }
+            }
+            int childCountTabs = WindowHost.ElementGetChildCount(handle);
+            for (int ci = 0; ci < childCountTabs; ci++) {
+                long child = WindowHost.ElementGetChild(handle, ci);
+                this.RenderElementNode(child);
+            }
+            return;
+        }
+
+        // ---- Border（布局装饰；模板 PART_* 走宿主 VSM chrome）----
+        if (type == ElBorder) {
+            string chromeRole = this.TemplateChromeRole(handle);
+            long chromeHost = this.TemplateChromeHost(handle);
+            if (chromeHost != 0 && (chromeRole == "Surface" || chromeRole == "Glyph")) {
+                this.DrawTemplateChromePart(handle, chromeHost, chromeRole, lx, ly, lw, lh);
+            } else {
+                double cr = WindowHost.ElementGetNumber(handle, "CornerRadius", ControlMetrics.ControlRadius);
+                double bt = WindowHost.ElementGetNumber(handle, "BorderThicknessUniform", ControlMetrics.BorderWidth);
+                Color bg = this.ElementColor(handle, "Background", this.ResolveThemeKey(BuiltInTheme.Surface));
+                Color border = this.ElementColor(handle, "BorderBrush", this.ResolveThemeKey(BuiltInTheme.Border));
+                if (bg.A > 0.001) {
+                    this.DrawRoundedRect(lx, ly, lw, lh, cr, bg);
+                }
+                if (bt > 0.0 && border.A > 0.001) {
+                    this.DrawRoundedBorder(lx, ly, lw, lh, cr, bt, border);
+                }
+            }
+        }
+
         // ---- VisualHost / LayoutShell（Grid/DockPanel/WrapPanel/Canvas/ListView）----
         if (type == ElVisualHost || this.IsLayoutShell(type)) {
             Color bg = this.ElementColor(handle, "Background", Color.Transparent());
             double cw = lw;
             double ch = lh;
             this.DrawBackground(bg, lx, ly, cw, ch);
+            // ListView：裁剪项宿主，防错位行画出视口（视觉重叠/叠层）。
+            if (type == ElListView && lw > 0.0 && lh > 0.0) {
+                this.PushClip(lx, ly, lw, lh);
+                int lvChildCount = WindowHost.ElementGetChildCount(handle);
+                for (int lvi = 0; lvi < lvChildCount; lvi++) {
+                    long lvChild = WindowHost.ElementGetChild(handle, lvi);
+                    this.RenderElementNode(lvChild);
+                }
+                this.PopClip();
+                return;
+            }
         }
 
         // ---- Window / Element / 未知容器：仅背景 ----
@@ -720,14 +970,14 @@ public partial class WgpuRender {
     /// </summary>
     private void RenderDataGrid(long handle, double lx, double ly, double lw, double lh) {
         int colCount = (int)WindowHost.ElementGetNumber(handle, "ColumnCount", 0.0);
-        double headerH = WindowHost.ElementGetNumber(handle, "HeaderHeight", 32.0);
-        double stride = WindowHost.ElementGetNumber(handle, "RowHeight", 32.0);
+        double headerH = WindowHost.ElementGetNumber(handle, "HeaderHeight", ControlMetrics.ControlHeight);
+        double stride = WindowHost.ElementGetNumber(handle, "RowHeight", ControlMetrics.ControlHeight);
         if (stride <= 0.0) {
-            stride = 32.0;
+            stride = ControlMetrics.ControlHeight;
         }
         int selectedIndex = (int)WindowHost.ElementGetNumber(handle, "SelectedIndex", -1.0);
         int isEnabled = WindowHost.ElementGetBool(handle, "IsEnabled", 1);
-        double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", 14.0);
+        double fontSize = WindowHost.ElementGetNumber(handle, "FontSize", ControlMetrics.FontBodySize);
         int family = this.ResolveFontFamily(WindowHost.ElementGetString(handle, "FontFamily", ""));
         int weight = this.ResolveFontWeight(WindowHost.ElementGetString(handle, "FontWeight", "Normal"));
         double gw = lw > 0.0 ? lw : 320.0;
@@ -820,9 +1070,9 @@ public partial class WgpuRender {
                 int cj = 0;
                 while (cj < colCount) {
                     string cell = WindowHost.ElementGetString(rowHandle, "C" + cj, "");
-                    string clipped = this.ClipTextToWidth(cell, colW[cj] - 16.0, fontSize, family, weight);
+                    string clipped = this.ClipTextToWidth(cell, colW[cj] - ControlMetrics.SpacingLG, fontSize, family, weight);
                     if (clipped.Length > 0) {
-                        this.DrawText(clipped, colX[cj] + 8.0, textY, fontSize,
+                        this.DrawText(clipped, colX[cj] + ControlMetrics.SpacingSM, textY, fontSize,
                             this.ColorTransparent(), rowForeground, family, weight);
                     }
                     cj++;
@@ -837,9 +1087,9 @@ public partial class WgpuRender {
         ci = 0;
         while (ci < colCount) {
             string headerText = WindowHost.ElementGetString(handle, "Header" + ci, "");
-            string clippedHeader = this.ClipTextToWidth(headerText, colW[ci] - 16.0, fontSize, family, headerWeight);
+            string clippedHeader = this.ClipTextToWidth(headerText, colW[ci] - ControlMetrics.SpacingLG, fontSize, family, headerWeight);
             if (clippedHeader.Length > 0) {
-                this.DrawText(clippedHeader, colX[ci] + 8.0, headerTextY, fontSize,
+                this.DrawText(clippedHeader, colX[ci] + ControlMetrics.SpacingSM, headerTextY, fontSize,
                     this.ColorTransparent(), headerForeground, family, headerWeight);
             }
             ci++;

@@ -201,18 +201,20 @@ fn check_a11y(element: &Element, report: &mut VerificationReport) {
     // Button/Input/CheckBox 等交互控件应有 Content/Text/AutomationProperties.Name
     let interactive = matches!(
         element.name.as_str(),
-        "Button" | "TextBox" | "CheckBox" | "Slider"
+        "Button" | "TextBox" | "PasswordBox" | "CheckBox" | "RadioButton" | "ToggleButton" | "Slider" | "ComboBox"
     );
     if interactive {
         let has_label = element.attr("Content").is_some()
             || element.attr("Text").is_some()
+            || element.attr("Password").is_some()
+            || element.attr("Placeholder").is_some()
             || element
                 .attr_with_prefix("AutomationProperties", "Name")
                 .is_some();
         if !has_label {
             report.a11y_issues.push(ArmlError::type_error(
                 element.span,
-                format!("interactive `<{}>` lacks accessible label (Content/Text/AutomationProperties.Name)", element.name),
+                format!("interactive `<{}>` lacks accessible label (Content/Text/Password/Placeholder/AutomationProperties.Name)", element.name),
             ));
         }
     }

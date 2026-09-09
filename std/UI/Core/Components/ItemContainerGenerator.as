@@ -388,16 +388,24 @@ public class ItemContainerGenerator {
     private void BindItemTextBlock(TextBlock text, string display, TextBlock itemDefaults) {
         _totalRebinds++;
         text.Text = display;
-        text.FontSize = itemDefaults.FontSize;
-        text.Foreground = itemDefaults.Foreground;
+        if (itemDefaults.HasAmbientValue(Control.FontSizeProperty.Id)) {
+            text.FontSize = itemDefaults.FontSize;
+        }
+        if (itemDefaults.HasAmbientValue(Control.ForegroundProperty.Id)) {
+            text.Foreground = itemDefaults.Foreground;
+        }
     }
 
     private TextBlock CreateItemTextBlock(TextBlock itemDefaults) {
         _totalCreated++;
         TextBlock text = new TextBlock();
         text.TypeName = "TextBlock";
-        text.FontSize = itemDefaults.FontSize;
-        text.Foreground = itemDefaults.Foreground;
+        if (itemDefaults.HasAmbientValue(Control.FontSizeProperty.Id)) {
+            text.FontSize = itemDefaults.FontSize;
+        }
+        if (itemDefaults.HasAmbientValue(Control.ForegroundProperty.Id)) {
+            text.Foreground = itemDefaults.Foreground;
+        }
         return text;
     }
 

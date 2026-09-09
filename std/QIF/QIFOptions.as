@@ -8,8 +8,13 @@ internal class QIFOptions {
     public QIFOptions() { }
 
     public int MaxParallel { get; set; } = 1;
-    public int DefaultTimeoutMs { get; set; } = 30000;
+    /// <summary>默认单测超时毫秒；0 = 不限制（与 RFC 032 / CLI <c>--timeout</c> 默认对齐）。</summary>
+    public int DefaultTimeoutMs { get; set; } = 0;
     public bool StopOnFail { get; set; }
+    /// <summary>
+    /// Assert.Skip（QIF_SKIP）计 Skipped 时是否非零退出。默认 false。
+    /// 属性 Fact-Skip 不经此开关——宿主恒硬失败（RFC 032 §6）。
+    /// </summary>
     public bool FailOnSkip { get; set; }
     public string OutputFormat { get; set; } = "human";
     public string Filter { get; set; } = "";

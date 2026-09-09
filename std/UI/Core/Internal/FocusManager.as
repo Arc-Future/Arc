@@ -1,39 +1,32 @@
-// RFC 037 M-focus Draft · RFC 037 Internal: Tab / Shift+Tab focus cycle + keyboard activation.
+// RFC 037 §8 M-focus2：Tab / Shift+Tab 焦点循环 + 键盘激活。
 //
-// Draft: fixed-slot tab registry (List<long> monomorphization not ready for Show).
+// 动态容量注册表（List）：可聚焦控件数不受固定 8 槽静默上限约束；
+// SoftCapacity=64 起溢出告警（P3 无静默丢弃），仍继续登记。
+// Enter/Space → InputElement.Activate（Button→Click、ToggleButton→Toggle）。
 //
-// 【已知根因 · RFC 037 §8 修订（M-focus2）】固定 8 槽注册表与 InputFocusRouter 的 8 槽
-// slot 在可聚焦控件 >8 时静默丢弃注册（ArmlDemo「点击 TextBox 无 caret、无法输入」根因）——
-// 待 IN-R3 重构：动态容量 + SetFocusedControl 唯一焦点出口 + ImeBridge 单向跟随，
-// 契约见 docs/rfc/037-ui.md §8，任务表见 docs/plan.md「UI 输入栈重构」。
+// **IsFocusVisible**：键盘导航（Tab/方向）置 true；指针聚焦置 false。
+// 焦点环仅在 IsFocusVisible 时绘制（对标 :focus-visible）；IsFocused 仍驱动 caret/VSM。
 
 namespace Arc.UI.Internal;
 
+using Arc.Collections;
+using Arc.Diagnostics;
 using Arc.UI;
 using Arc.UI.Components;
+using Arc.UI.Components.Primitives;
 using Arc.UI.Input;
 
 internal class FocusManager {
-    static int _tabCount = 0;
-    static long _handle0 = 0;
-    static long _handle1 = 0;
-    static long _handle2 = 0;
-    static long _handle3 = 0;
-    static long _handle4 = 0;
-    static long _handle5 = 0;
-    static long _handle6 = 0;
-    static long _handle7 = 0;
-    static Control _ctrl0 = null;
-    static Control _ctrl1 = null;
-    static Control _ctrl2 = null;
-    static Control _ctrl3 = null;
-    static Control _ctrl4 = null;
-    static Control _ctrl5 = null;
-    static Control _ctrl6 = null;
-    static Control _ctrl7 = null;
+    /// <summary>软容量：超出后告警但仍登记（RFC 037 §8 ≥64 + 溢出告警）。</summary>
+    const int SoftCapacity = 64;
+
+    static List<long> _handles = new List<long>();
+    static List<Control> _controls = new List<Control>();
     static int _focusIndex;
     static long _windowHandle;
     static int _installed;
+    /// <summary>是否显示焦点环（键盘模态；指针聚焦清除）。</summary>
+    static bool _focusVisible;
 
     private FocusManager() {
     }
@@ -41,6 +34,8 @@ internal class FocusManager {
     // Win32 虚拟键码（RFC 037 M-focus M5 方向导航 + InputElement.OnKeyDown 消费集）。
     internal static int VirtualKeyTab() { return 9; }
     internal static int VirtualKeyReturn() { return 13; }
+    /// <summary>Win32 VK_ESCAPE — Popup 轻关闭 / 无弹层时退主窗。</summary>
+    internal static int VirtualKeyEscape() { return 27; }
     internal static int VirtualKeySpace() { return 32; }
     internal static int VirtualKeyLeft() { return 37; }
     internal static int VirtualKeyUp() { return 38; }
@@ -51,62 +46,34 @@ internal class FocusManager {
     internal static int VirtualKeyBackspace() { return 8; }
     internal static int VirtualKeyDelete() { return 46; }
 
+    /// <summary>当前是否应绘制焦点环（键盘导航后为 true）。</summary>
+    internal static bool IsFocusVisible() {
+        return _focusVisible;
+    }
+
     internal static void Reset() {
-        _tabCount = 0;
-        _handle0 = 0;
-        _handle1 = 0;
-        _handle2 = 0;
-        _handle3 = 0;
-        _handle4 = 0;
-        _handle5 = 0;
-        _handle6 = 0;
-        _handle7 = 0;
-        _ctrl0 = null;
-        _ctrl1 = null;
-        _ctrl2 = null;
-        _ctrl3 = null;
-        _ctrl4 = null;
-        _ctrl5 = null;
-        _ctrl6 = null;
-        _ctrl7 = null;
+        _handles.Clear();
+        _controls.Clear();
         _focusIndex = -1;
         _windowHandle = 0;
         _installed = 0;
+        _focusVisible = false;
     }
 
     internal static void RegisterTabStop(Control ctrl, long platformHandle) {
-        if (ctrl == null || platformHandle == 0 || _tabCount >= 8) {
+        if (ctrl == null || platformHandle == 0) {
             return;
         }
         if (!ctrl.Focusable || !ctrl.IsTabStop || !ctrl.IsEnabled) {
             return;
         }
-        if (_tabCount == 0) {
-            _handle0 = platformHandle;
-            _ctrl0 = ctrl;
-        } else if (_tabCount == 1) {
-            _handle1 = platformHandle;
-            _ctrl1 = ctrl;
-        } else if (_tabCount == 2) {
-            _handle2 = platformHandle;
-            _ctrl2 = ctrl;
-        } else if (_tabCount == 3) {
-            _handle3 = platformHandle;
-            _ctrl3 = ctrl;
-        } else if (_tabCount == 4) {
-            _handle4 = platformHandle;
-            _ctrl4 = ctrl;
-        } else if (_tabCount == 5) {
-            _handle5 = platformHandle;
-            _ctrl5 = ctrl;
-        } else if (_tabCount == 6) {
-            _handle6 = platformHandle;
-            _ctrl6 = ctrl;
-        } else if (_tabCount == 7) {
-            _handle7 = platformHandle;
-            _ctrl7 = ctrl;
+        int count = _handles.Count;
+        if (count >= SoftCapacity) {
+            Console.WriteLine("[FocusManager] tab registry soft capacity exceeded ("
+                + SoftCapacity + "); registering anyway (count=" + count + ")");
         }
-        _tabCount = _tabCount + 1;
+        _handles.Add(platformHandle);
+        _controls.Add(ctrl);
     }
 
     internal static void SetWindowHandle(long windowHandle) {
@@ -117,67 +84,42 @@ internal class FocusManager {
         if (_installed != 0) {
             return;
         }
-        Action<int, int> handler = FocusManager.RouteKey;
-        WindowHost.SetKeyboardHandler(handler);
+        // IN-R2：键盘入口归 KeyboardRouter（key+text）；本类仅承接导航。
+        KeyboardRouter.Install();
         _installed = 1;
     }
 
     internal static void ActivateInitialFocus() {
-        if (_tabCount == 0) {
+        // 启动焦点不显示环——等首次 Tab/方向键才置 IsFocusVisible。
+        _focusVisible = false;
+        if (_handles.Count == 0) {
             _focusIndex = -1;
             return;
+        }
+        // 优先首个 TextBox，使启动 caret/IME 与 Tab 环一致。
+        int i = 0;
+        int count = _handles.Count;
+        while (i < count) {
+            Control c = ControlAt(i);
+            if (c != null && (c.TypeName == "TextBox" || c.TypeName == "PasswordBox")) {
+                FocusManager.SetFocusIndex(i);
+                return;
+            }
+            i = i + 1;
         }
         FocusManager.SetFocusIndex(0);
     }
 
     static long HandleAt(int idx) {
-        if (idx == 0) {
-            return _handle0;
-        }
-        if (idx == 1) {
-            return _handle1;
-        }
-        if (idx == 2) {
-            return _handle2;
-        }
-        if (idx == 3) {
-            return _handle3;
-        }
-        if (idx == 4) {
-            return _handle4;
-        }
-        if (idx == 5) {
-            return _handle5;
-        }
-        if (idx == 6) {
-            return _handle6;
-        }
-        return _handle7;
+        return _handles[idx];
     }
 
     static Control ControlAt(int idx) {
-        if (idx == 0) {
-            return _ctrl0;
-        }
-        if (idx == 1) {
-            return _ctrl1;
-        }
-        if (idx == 2) {
-            return _ctrl2;
-        }
-        if (idx == 3) {
-            return _ctrl3;
-        }
-        if (idx == 4) {
-            return _ctrl4;
-        }
-        if (idx == 5) {
-            return _ctrl5;
-        }
-        if (idx == 6) {
-            return _ctrl6;
-        }
-        return _ctrl7;
+        return _controls[idx];
+    }
+
+    static int TabCount() {
+        return _handles.Count;
     }
 
     /// <summary>
@@ -191,11 +133,18 @@ internal class FocusManager {
             return;
         }
         WindowHost.ElementSetBool(handle, "IsFocused", focused ? 1 : 0);
+        int vis = 0;
+        if (focused) {
+            if (_focusVisible) {
+                vis = 1;
+            }
+        }
+        WindowHost.ElementSetBool(handle, "IsFocusVisible", vis);
         FramePump.Invalidate();
     }
 
     static void SetFocusIndex(int idx) {
-        int count = _tabCount;
+        int count = FocusManager.TabCount();
         if (count == 0) {
             return;
         }
@@ -226,14 +175,16 @@ internal class FocusManager {
         FramePump.Invalidate();
     }
 
-    /// <summary>按平台句柄设置焦点（点击 TextBox / 外部同步 Tab 索引）。</summary>
+    /// <summary>按平台句柄设置焦点（点击 TextBox / 外部同步 Tab 索引）。指针路径：清 IsFocusVisible。</summary>
     internal static bool FocusPlatformHandle(long platformHandle) {
-        if (platformHandle == 0 || _tabCount <= 0) {
+        if (platformHandle == 0) {
             return false;
         }
+        int count = FocusManager.TabCount();
         int i = 0;
-        while (i < _tabCount) {
+        while (i < count) {
             if (FocusManager.HandleAt(i) == platformHandle) {
+                _focusVisible = false;
                 FocusManager.SetFocusIndex(i);
                 return true;
             }
@@ -242,16 +193,27 @@ internal class FocusManager {
         return false;
     }
 
+    /// <summary>
+    /// 焦点导航键分发（KeyboardRouter 未消费编辑键后调用）。
+    /// TextBox 编辑已由 TextBoxController.HandleKey 处理；此处仅 Tab/
+    /// 方向导航与 Enter/Space 激活。
+    /// </summary>
     internal static void RouteKey(int virtualKey, int shiftDown) {
-        if (_tabCount == 0) {
+        int tabCount = FocusManager.TabCount();
+        if (tabCount == 0) {
             return;
         }
-        // 键盘消费统一入口（InputElement.OnKeyDown 契约）：焦点元素优先消费
-        // （TextBox 光标/编辑键经 native 通道处理，此处声明消费即止），
-        // 未消费才进入 Tab/方向焦点导航——根治方向键双路由。
-        if (_focusIndex >= 0 && _focusIndex < _tabCount) {
+        // 非 TextBox 的 InputElement 仍可经 OnKeyDown 消费（Button 等）。
+        if (_focusIndex >= 0 && _focusIndex < tabCount) {
             Control focused = ControlAt(_focusIndex);
-            if (focused is InputElement) {
+            if (focused is Selector) {
+                Selector selector = (Selector)focused;
+                if (selector.TryHandleKey(virtualKey)) {
+                    _focusVisible = true;
+                    return;
+                }
+            }
+            if (focused is InputElement && !(focused is TextBox)) {
                 InputElement el = (InputElement)focused;
                 if (el.OnKeyDown(virtualKey, shiftDown)) {
                     return;
@@ -262,13 +224,13 @@ internal class FocusManager {
             int delta = shiftDown != 0 ? -1 : 1;
             int next = _focusIndex + delta;
             if (_focusIndex < 0) {
-                next = shiftDown != 0 ? _tabCount - 1 : 0;
+                next = shiftDown != 0 ? tabCount - 1 : 0;
             }
+            _focusVisible = true;
             FocusManager.SetFocusIndex(next);
             return;
         }
         // M5 方向导航（RFC 037 M5）：方向键沿 Tab 循环顺序移动焦点。
-        // Left/Up 前移一位，Right/Down 后移一位（与 Tab 循环同一 registry）。
         int directionDelta = 0;
         if (virtualKey == FocusManager.VirtualKeyLeft() ||
             virtualKey == FocusManager.VirtualKeyUp()) {
@@ -280,14 +242,15 @@ internal class FocusManager {
         if (directionDelta != 0) {
             int next = _focusIndex + directionDelta;
             if (_focusIndex < 0) {
-                next = directionDelta > 0 ? 0 : _tabCount - 1;
+                next = directionDelta > 0 ? 0 : tabCount - 1;
             }
+            _focusVisible = true;
             FocusManager.SetFocusIndex(next);
             return;
         }
         if (virtualKey == FocusManager.VirtualKeyReturn() ||
             virtualKey == FocusManager.VirtualKeySpace()) {
-            if (_focusIndex < 0 || _focusIndex >= _tabCount) {
+            if (_focusIndex < 0 || _focusIndex >= tabCount) {
                 return;
             }
             // Enter/Space 默认激活（InputElement.Activate）：Button→Click、

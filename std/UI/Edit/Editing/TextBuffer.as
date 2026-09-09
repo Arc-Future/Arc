@@ -25,15 +25,15 @@ public class TextBuffer {
 
     /// <summary>文档字节长度。</summary>
     [Builtin(ABI = "rt_editor_length")]
-    public long Length { get; }
+    public long Length { get { return 0; } }
 
     /// <summary>总行数（含末行无换行）。</summary>
     [Builtin(ABI = "rt_editor_line_count")]
-    public int LineCount { get; }
+    public int LineCount { get { return 0; } }
 
     /// <summary>是否由 mmap 原稿支撑（OpenPath 路径）。</summary>
     [Builtin(ABI = "rt_editor_is_mmap_backed")]
-    public bool IsMmapBacked { get; }
+    public bool IsMmapBacked { get { return false; } }
 
     /// <summary>
     /// 从路径 mmap 打开（静态工厂）。大文件零拷贝；禁止 ReadAllText。

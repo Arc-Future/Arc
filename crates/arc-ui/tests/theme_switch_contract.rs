@@ -26,29 +26,29 @@ fn dark_theme_provides_distinct_values_for_all_color_keys() {
     let dark_arml = read_file(arc_ui::DARK_ARML_REL);
     let colors_g = read_file(arc_ui::COLORS_G_AS_REL);
 
-    // Dark 值与 Light 不同（深色系），且经 ARML → Colors.g.as 注册。
+    // Dark 值与 Light 不同（Ant Design 5 darkAlgorithm 预烘焙），且经 ARML → Colors.g.as 注册。
     let dark_pairs = [
-        ("Background", "Color.Background", "#FF0F0F12"),
-        ("Surface", "Color.Surface", "#FF17171C"),
-        ("Border", "Color.Border", "#FF2A2A33"),
-        ("TextPrimary", "Color.Text.Primary", "#FFF3F3F7"),
-        ("TextSecondary", "Color.Text.Secondary", "#FF9C9CA8"),
-        ("Primary", "Color.Primary", "#FF6366F1"),
-        ("PrimaryHover", "Color.Primary.Hover", "#FF818CF8"),
-        ("PrimaryPressed", "Color.Primary.Pressed", "#FF4F46E5"),
-        ("FocusRing", "Color.Focus.Ring", "#8C6366F1"),
-        ("DisabledFill", "Color.Disabled.Fill", "#FF23232A"),
-        ("DisabledText", "Color.Disabled.Text", "#FF5A5A66"),
-        ("SurfaceHover", "Color.Surface.Hover", "#FF222229"),
-        ("ScrollTrack", "Color.Scroll.Track", "#FF1A1A20"),
-        ("ScrollThumb", "Color.Scroll.Thumb", "#FF5A5A66"),
-        ("ScrollThumbHover", "Color.Scroll.Thumb.Hover", "#FF7A7A88"),
+        ("Background", "Color.Background", "#FF000000"),
+        ("Surface", "Color.Surface", "#FF141414"),
+        ("Border", "Color.Border", "#FF424242"),
+        ("TextPrimary", "Color.Text.Primary", "#D9FFFFFF"),
+        ("TextSecondary", "Color.Text.Secondary", "#A6FFFFFF"),
+        ("Primary", "Color.Primary", "#FF1668DC"),
+        ("PrimaryHover", "Color.Primary.Hover", "#FF3C89E8"),
+        ("PrimaryPressed", "Color.Primary.Pressed", "#FF1554AD"),
+        ("FocusRing", "Color.Focus.Ring", "#661668DC"),
+        ("DisabledFill", "Color.Disabled.Fill", "#FF1F1F1F"),
+        ("DisabledText", "Color.Disabled.Text", "#FF595959"),
+        ("SurfaceHover", "Color.Surface.Hover", "#FF111A2C"),
+        ("ScrollTrack", "Color.Scroll.Track", "#FF1F1F1F"),
+        ("ScrollThumb", "Color.Scroll.Thumb", "#FF595959"),
+        ("ScrollThumbHover", "Color.Scroll.Thumb.Hover", "#FF8C8C8C"),
         (
-            "ScrollThumbActive",
-            "Color.Scroll.Thumb.Active",
-            "#FF9A9AA8",
+            "ScrollThumbPressed",
+            "Color.Scroll.Thumb.Pressed",
+            "#FFBFBFBF",
         ),
-        ("SliderTrack", "Color.Slider.Track", "#FF2E2E38"),
+        ("SliderTrack", "Color.Slider.Track", "#FF303030"),
     ];
     for (field, key, val) in dark_pairs {
         assert!(
@@ -77,6 +77,7 @@ fn switch_theme_rebuilds_merged_dictionaries_and_invalidates() {
     assert!(app.contains("ThemeDictionaries.Switch(name)"));
     assert!(app.contains("Resources.MergedDictionaries.Clear()"));
     assert!(app.contains("Resources.MergedDictionaries.Add(ThemeDictionaries.Active)"));
+    assert!(app.contains("this.ApplyStyleTree()"));
     assert!(
         app.contains("FramePump.Invalidate()"),
         "SwitchTheme 必须触发帧失效以驱动全链重绘"
@@ -113,7 +114,7 @@ fn full_chain_resolves_through_single_root() {
     assert!(vsm.contains("public string GradientStart;"));
     assert!(vsm.contains("public double MotionDuration;"));
     assert!(vsm.contains("BuiltInTheme.MotionHoverMs"));
-    assert!(vsm.contains("BuiltInTheme.AccentGradientA"));
+    assert!(vsm.contains("BuiltInTheme.Primary"));
 
     assert!(render.contains("Application.Current.ResolveColor(key)"));
     assert!(render.contains("StateColorMotion"));
@@ -126,4 +127,42 @@ fn full_chain_resolves_through_single_root() {
 
     assert!(app.contains("public string ResolveColor(string key)"));
     assert!(app.contains("Resources.TryLookup(key, ref v)"));
+}
+
+/// 环境前景 / 未设背景：镜像不上 DP 默认，渲染回落主题键（RFC 037 §4 继承完备）。
+#[test]
+fn ambient_foreground_unset_does_not_bake_dp_default_into_mirror() {
+    let sync = read_file("std/UI/Core/Internal/PlatformTreeSync.as");
+    let element = read_file("std/UI/Core/Markup/Element.as");
+    let render = read_file("std/UI/Core/Rendering/wgpu/WgpuRender.RenderTree.as");
+    let control = read_file("std/UI/Core/Markup/Control.as");
+
+    assert!(
+        element.contains("HasAmbientValue"),
+        "Element must expose HasAmbientValue for ambient DP mirror gating"
+    );
+    assert!(
+        sync.contains("SyncAmbientForeground"),
+        "PlatformTreeSync must gate Foreground sync on HasAmbientValue"
+    );
+    assert!(
+        sync.contains("SyncOwnBrush"),
+        "PlatformTreeSync must gate Background sync on HasOwnValue"
+    );
+    assert!(
+        render.contains("IsUnsetBrushMirror"),
+        "StateColor must treat empty/transparent mirror as unset → theme key"
+    );
+    assert!(
+        render.contains("BuiltInTheme.TextPrimary"),
+        "TextBlock unset Foreground must fall back to theme Text.Primary"
+    );
+    assert!(
+        control.contains("RegisterInheritedProperty<Brush>(nameof(Foreground)"),
+        "Foreground remains ambient inherited DP"
+    );
+    assert!(
+        control.contains("RegisterInheritedProperty<string>(nameof(FontFamily)"),
+        "FontFamily remains ambient inherited DP"
+    );
 }

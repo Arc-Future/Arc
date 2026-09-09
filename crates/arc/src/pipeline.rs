@@ -80,6 +80,8 @@ pub struct QifTestMethod {
     traits: Vec<(String, String)>,
     /// 命名空间（用于 --namespace 前缀过滤）
     namespace: String,
+    /// [Fact(Timeout=N)] / [Theory(Timeout=N)]；0 = 使用套件默认超时
+    timeout_ms: i32,
 }
 
 /// RFC 038: 声明式 `[AITool]` 工具方法条目（供生成 `__AIToolHost`）。
@@ -152,6 +154,9 @@ pub struct QifCompileOptions {
     pub emit_json_report: bool,
     /// RFC 032 §7：是否持久化 `.arcqif`（[qif].persist_results，默认 true）。
     pub persist_results: bool,
+    /// Assert.Skip（运行时 QIF_SKIP）是否导致非零退出（默认 false）。
+    /// 属性 Fact-Skip 始终硬失败，不经此开关。
+    pub fail_on_skip: bool,
 }
 
 /// 编译选项（RFC 036 §2.5 / RFC 005 §2.3）。
@@ -937,6 +942,7 @@ fn collect_from_items(
                     let mut order: i32 = 0;
                     let mut display_name = String::new();
                     let mut skip_reason: Option<String> = None;
+                    let mut timeout_ms: i32 = 0;
 
                     // 收集方法级 [Trait]
                     let method_traits = extract_traits(&method.node.sig.attributes);
@@ -953,6 +959,9 @@ fn collect_from_items(
                                     display_name = v;
                                 }
                                 skip_reason = extract_named_arg(attr, "Skip");
+                                if let Some(t) = extract_named_int_arg(attr, "Timeout") {
+                                    timeout_ms = t;
+                                }
                             }
                             "Theory" => {
                                 is_theory = true;
@@ -960,6 +969,9 @@ fn collect_from_items(
                                     display_name = v;
                                 }
                                 skip_reason = extract_named_arg(attr, "Skip");
+                                if let Some(t) = extract_named_int_arg(attr, "Timeout") {
+                                    timeout_ms = t;
+                                }
                             }
                             "InlineData" => {
                                 let args: Vec<QifInlineArg> = attr
@@ -1008,6 +1020,7 @@ fn collect_from_items(
                         skip_reason,
                         traits: all_traits,
                         namespace: ns_prefix.to_string(),
+                        timeout_ms,
                     });
                 }
             }
@@ -1113,6 +1126,19 @@ fn extract_named_arg(attr: &ast::Attribute, name: &str) -> Option<String> {
     None
 }
 
+fn extract_named_int_arg(attr: &ast::Attribute, name: &str) -> Option<i32> {
+    for arg in &attr.args {
+        if let ast::AttributeArg::Named { name: n, value } = arg {
+            if n.as_str() == name {
+                if let ast::AttributeArg::Int(v) = value.as_ref() {
+                    return Some(*v as i32);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// 从属性列表中提取 [Trait("name", "value")]。
 fn extract_traits(attrs: &[ast::Attribute]) -> Vec<(String, String)> {
     attrs
@@ -1146,6 +1172,41 @@ fn escape_arc_string(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// xUnit 集合键：显式 `[Collection("name")]` 优先；否则每类自成隐式集合。
+fn qif_collection_key(m: &QifTestMethod) -> String {
+    match &m.collection_name {
+        Some(name) => name.clone(),
+        None => format!("__class__:{}", m.class_name),
+    }
+}
+
+/// 按集合分组并保持各集合内相对序（对标 xUnit：集内串行、集间可并行）。
+///
+/// 返回重排后的方法列表与各集合在重排列表中的半开区间 `[start, end)`。
+fn group_methods_by_collection<'a>(
+    methods: &[&'a QifTestMethod],
+) -> (Vec<&'a QifTestMethod>, Vec<(String, usize, usize)>) {
+    let mut key_order: Vec<String> = Vec::new();
+    let mut buckets: HashMap<String, Vec<&QifTestMethod>> = HashMap::new();
+    for m in methods {
+        let key = qif_collection_key(m);
+        if !buckets.contains_key(&key) {
+            key_order.push(key.clone());
+        }
+        buckets.entry(key).or_default().push(*m);
+    }
+    let mut reordered = Vec::with_capacity(methods.len());
+    let mut ranges = Vec::with_capacity(key_order.len());
+    for key in key_order {
+        let group = buckets.remove(&key).expect("collection bucket");
+        let start = reordered.len();
+        let end = start + group.len();
+        reordered.extend(group);
+        ranges.push((key, start, end));
+    }
+    (reordered, ranges)
+}
+
 /// RFC 032 Phase 2c: 生成合成 __QifTestHost.Main() 的 Arc 源码。
 ///
 /// 生成的 Main 函数：
@@ -1159,6 +1220,8 @@ fn escape_arc_string(s: &str) -> String {
 /// - 含 `async` Fact/Theory 时：Main/RunBatch 为 async，调用处 `await`（EventLoop 驱动）；
 ///   异步套件强制串行（Parallel.For 无法 await），失败时 `Environment.Exit(1)`
 ///   （async Main 的 EventLoop wrapper 固定 `ret i32 0`）
+/// - `--parallel`：对标 xUnit——集合间并行、集合内串行；无 `[Collection]` 时每类隐式集合；
+///   CLI `--parallel`/`--max-parallel` 覆盖 Attribute；默认入口仍串行（确定性优先）
 ///
 /// RFC 032 §7：Reporting 后、`Environment.Exit` 前写入 `report.json` / `.arcqif` 落盘产物。
 pub(crate) fn generate_qif_test_main(
@@ -1170,9 +1233,19 @@ pub(crate) fn generate_qif_test_main(
     let mut out = String::new();
 
     // --- 方法列表已在 `apply_qif_filter` 阶段过滤完成；此处直接引用 ---
-    let filtered: Vec<&QifTestMethod> = methods.iter().collect();
+    let filtered_raw: Vec<&QifTestMethod> = methods.iter().collect();
 
-    let has_async = filtered.iter().any(|m| m.is_async);
+    let has_async = filtered_raw.iter().any(|m| m.is_async);
+    // async Fact 强制串行：Parallel.For 回调无法 await（对标 xUnit 有界并行的诚实子集）。
+    let use_parallel = qif_opts.parallel && filtered_raw.len() > 1 && !has_async;
+
+    // 并行时按 Collection 重排（集内串行区间连续）；串行保持全局 Order。
+    let (filtered, collection_ranges): (Vec<&QifTestMethod>, Vec<(String, usize, usize)>) =
+        if use_parallel {
+            group_methods_by_collection(&filtered_raw)
+        } else {
+            (filtered_raw, Vec::new())
+        };
 
     // --- 收集需要 IClassFixture 构造注入的类 ---
     let ctor_map: std::collections::HashMap<String, Vec<String>> = {
@@ -1270,10 +1343,10 @@ pub(crate) fn generate_qif_test_main(
 
         let traits_str = build_traits_str(cls, &method.method_name);
         let has_traits = !traits_str.is_empty();
-        let (rp_method, rs_method) = if has_traits {
-            ("RecordPassT", "RecordSkipT")
+        let (rp_method, rs_method, rfs_method) = if has_traits {
+            ("RecordPassT", "RecordSkipT", "RecordFactSkipT")
         } else {
-            ("RecordPass", "RecordSkip")
+            ("RecordPass", "RecordSkip", "RecordFactSkip")
         };
         let trait_param = if has_traits {
             format!(", \"{traits_str}\"")
@@ -1281,7 +1354,6 @@ pub(crate) fn generate_qif_test_main(
             String::new()
         };
 
-        // 超时失败统一走 traits 感知的 fail 方法（无 traits 时回退 RecordFail）。
         let fail_method = if has_traits {
             "RecordFailT"
         } else {
@@ -1293,11 +1365,15 @@ pub(crate) fn generate_qif_test_main(
             String::new()
         };
 
-        let timeout_enabled = qif_opts.default_timeout_ms > 0;
-        let timeout_ms_expr = "this.runner.DefaultTimeoutMs";
+        let timeout_ms = if method.timeout_ms > 0 {
+            method.timeout_ms
+        } else {
+            qif_opts.default_timeout_ms
+        };
+        let timeout_enabled = timeout_ms > 0;
+        let timeout_ms_expr = timeout_ms.to_string();
         let dur_ns = "_sw.ElapsedTicks * 1000000000 / Stopwatch.Frequency";
 
-        // 生成"方法调用 + 计时 + 通过/超时判定"段。
         let emit_invoke = |out: &mut String, display: &str, kind: &str, args_str: &str| {
             let method_call = if args_str.is_empty() {
                 format!("_obj.{}()", method.method_name)
@@ -1308,12 +1384,9 @@ pub(crate) fn generate_qif_test_main(
                 "            this.runner.{rp_method}(\"{display}\", QIFTestKind.{kind}, _durNs{trait_param});\n"
             );
             let timeout_record = format!(
-                "            this.runner.{fail_method}(\"{display}\", QIFTestKind.{kind}, _durNs, \"Timeout after \" + {timeout_ms_expr}.ToString() + \"ms\"{fail_trait_param});\n"
+                "            this.runner.{fail_method}(\"{display}\", QIFTestKind.{kind}, _durNs, \"Timeout after \" + ({timeout_ms_expr}).ToString() + \"ms\"{fail_trait_param});\n"
             );
             if method.is_async && timeout_enabled {
-                // 异步超时：Task.WhenAny 真实唤醒（WhenAny 返回 Task<Void>，不返回胜者 inner；
-                // 故 await 后以 _testTask.IsCompleted 判定哪个先完成——测试先完成记通过，
-                // delay 先完成记超时；测试任务后台继续，结果按超时计）。
                 out.push_str(&format!(
                     "                Task _testTask = {method_call};\n"
                 ));
@@ -1338,7 +1411,6 @@ pub(crate) fn generate_qif_test_main(
                 out.push_str("                _sw.Stop();\n");
                 out.push_str(&format!("                long _durNs = {dur_ns};\n"));
                 if timeout_enabled && !method.is_async {
-                    // 同步超时：软超时（事后判定超时，无法中断阻塞代码）。
                     out.push_str(&format!("                if ({timeout_ms_expr} > 0 && _durNs / 1000000 > {timeout_ms_expr}) {{\n"));
                     out.push_str(&timeout_record);
                     out.push_str("                } else {\n");
@@ -1350,7 +1422,6 @@ pub(crate) fn generate_qif_test_main(
             }
         };
 
-        // 共享模板：对象构造 + Stopwatch + try/catch + 生命周期 + teardown。
         let emit_block = |out: &mut String, display: &str, kind: &str, args_str: &str| {
             out.push_str(&format!("            {cls} _obj = {new_expr};\n"));
             out.push_str("            Stopwatch _sw = Stopwatch.StartNew();\n");
@@ -1360,7 +1431,7 @@ pub(crate) fn generate_qif_test_main(
             out.push_str("            } catch (Exception ex) {\n");
             out.push_str("                _sw.Stop();\n");
             out.push_str(&format!("                long _durNs = {dur_ns};\n"));
-            out.push_str(&format!("                if (ex.Message.StartsWith(\"QIF_SKIP:\")) {{ runner.{rs_method}(\"{display}\", QIFTestKind.{kind}, ex.Message{trait_param}); }} else {{ runner.{fail_method}(\"{display}\", QIFTestKind.{kind}, _durNs, ex.Message{fail_trait_param}); }}\n"));
+            out.push_str(&format!("                if (ex.Message.StartsWith(\"QIF_SKIP:\")) {{ this.runner.{rs_method}(\"{display}\", QIFTestKind.{kind}, ex.Message{trait_param}); }} else {{ this.runner.{fail_method}(\"{display}\", QIFTestKind.{kind}, _durNs, ex.Message{fail_trait_param}); }}\n"));
             out.push_str("            }\n");
             if let Some(output_idx) = output_fixtures.get(cls.as_str()) {
                 out.push_str(&format!("            this.runner.SetLastOutput(this._fixture_{cls}_{output_idx}.Output);\n"));
@@ -1375,7 +1446,7 @@ pub(crate) fn generate_qif_test_main(
         if method.attr_name == "Fact" || method.inline_data.is_empty() {
             out.push_str(&format!("            // [Fact] {display_name}\n"));
             if let Some(ref skip) = method.skip_reason {
-                out.push_str(&format!("            this.runner.{rs_method}(\"{display_name}\", QIFTestKind.Fact, \"{skip}\"{trait_param});\n"));
+                out.push_str(&format!("            this.runner.{rfs_method}(\"{display_name}\", QIFTestKind.Fact, \"{skip}\"{trait_param});\n"));
             } else {
                 emit_block(out, &display_name, "Fact", "");
             }
@@ -1389,7 +1460,7 @@ pub(crate) fn generate_qif_test_main(
 
                 out.push_str(&format!("            // [Theory] {theory_display}\n"));
                 if let Some(ref skip) = method.skip_reason {
-                    out.push_str(&format!("            this.runner.{rs_method}(\"{theory_display}\", QIFTestKind.Theory, \"{skip}\"{trait_param});\n"));
+                    out.push_str(&format!("            this.runner.{rfs_method}(\"{theory_display}\", QIFTestKind.Theory, \"{skip}\"{trait_param});\n"));
                 } else {
                     emit_block(out, &theory_display, "Theory", &args_str);
                 }
@@ -1397,13 +1468,13 @@ pub(crate) fn generate_qif_test_main(
         }
     };
 
-    // --- 计算批次 ---
     let total = filtered.len();
     let num_batches = if total == 0 {
         0
     } else {
         total.div_ceil(BATCH_SIZE)
     };
+    let num_collections = collection_ranges.len();
 
     out.push_str("// RFC 032 Phase 4: auto-generated QIF test host (batched + parallel).\n");
     out.push_str("using Arc;\n");
@@ -1414,7 +1485,8 @@ pub(crate) fn generate_qif_test_main(
 
     out.push_str("public class __QifTestHost {\n");
     out.push_str("    QIFRunner runner;\n");
-    // Fixture instances as fields
+    out.push_str("    string[] __qif_names;\n");
+    out.push_str("    string __qif_progress;\n");
     for (cls, params) in &ctor_map {
         for (i, p) in params.iter().enumerate() {
             let fixture_type = if p == "IQIFOutput" {
@@ -1427,8 +1499,6 @@ pub(crate) fn generate_qif_test_main(
     }
     out.push('\n');
 
-    // Main: create instance and dispatch
-    // 含 async Fact 时走 async Main → EventLoop；失败用 Environment.Exit（wrapper 固定 ret 0）
     if has_async {
         out.push_str("    public static async Task Main() {\n");
     } else {
@@ -1445,9 +1515,16 @@ pub(crate) fn generate_qif_test_main(
         "        self.runner.DefaultTimeoutMs = {};\n",
         qif_opts.default_timeout_ms
     ));
+    out.push_str(&format!(
+        "        self.runner.FailOnSkip = {};\n",
+        if qif_opts.fail_on_skip {
+            "true"
+        } else {
+            "false"
+        }
+    ));
     out.push('\n');
 
-    // Initialize fixtures on self
     for (cls, params) in &ctor_map {
         for (i, p) in params.iter().enumerate() {
             let fixture_type = if p == "IQIFOutput" {
@@ -1462,9 +1539,6 @@ pub(crate) fn generate_qif_test_main(
     }
     out.push('\n');
 
-    // QIF_PROGRESS 诊断插桩：运行期环境变量开关的逐测试进度打印。
-    // 烘焙进二进制但默认静默；设 QIF_PROGRESS=1 后每测试执行前打一行
-    // `[qif-run] <idx> <fqn>`，用于定位静默执行模式下 0xC0000005 的崩溃点。
     let qif_names: Vec<String> = filtered
         .iter()
         .map(|m| {
@@ -1477,11 +1551,11 @@ pub(crate) fn generate_qif_test_main(
         })
         .collect();
     out.push_str(&format!(
-        "        string[] __qif_names = [ {} ];\n",
+        "        self.__qif_names = [ {} ];\n",
         qif_names.join(", ")
     ));
     out.push_str(
-        "        string __qif_progress = Environment.GetEnvironmentVariable(\"QIF_PROGRESS\");\n",
+        "        self.__qif_progress = Environment.GetEnvironmentVariable(\"QIF_PROGRESS\");\n",
     );
     out.push('\n');
 
@@ -1496,31 +1570,30 @@ pub(crate) fn generate_qif_test_main(
         return out;
     }
 
-    // Sequential or parallel dispatch - call instance methods on self.
-    // async Fact 强制串行：Parallel.For 回调无法 await。
-    let use_parallel = qif_opts.parallel && total > 1 && !has_async;
     if use_parallel {
-        out.push_str("        // Parallel execution (XUnit default)\n");
+        out.push_str(
+            "        // Parallel across collections (xUnit); serial within each collection\n",
+        );
         out.push_str("        ParallelOptions parOpts = new ParallelOptions();\n");
         out.push_str("        // 绑定默认线程池：Scheduler 字段被 codegen 读取为 rt_parallel_for 的 pool 实参，\n");
         out.push_str("        // 缺省为 null 时 rt_parallel_for 退化为同步执行（无并行加速）。\n");
         out.push_str("        parOpts.Scheduler = new ThreadPoolScheduler();\n");
         out.push_str("        parOpts.MaxDegreeOfParallelism = self.runner.MaxParallel;\n");
         out.push_str(&format!(
-            "        Parallel.For(0, {total}, parOpts, idx => self.DispatchTest(idx));\n"
+            "        Parallel.For(0, {num_collections}, parOpts, cidx => self.DispatchCollection(cidx));\n"
         ));
     } else {
         if has_async && qif_opts.parallel {
             out.push_str(
-                "        // Sequential: async Fact/Theory 禁用 Parallel.For（无法 await）\n",
+                "        // Sequential: async Fact/Theory 强制串行（Parallel.For 无法 await）\n",
             );
         } else {
-            out.push_str("        // Sequential execution\n");
+            out.push_str("        // Sequential execution (default; deterministic)\n");
         }
         out.push_str(&format!(
             "        for (int idx = 0; idx < {total}; idx = idx + 1) {{\n"
         ));
-        out.push_str("            if (__qif_progress != \"\") { Console.WriteLine(\"[qif-run] \" + Convert.ToString(idx) + \" \" + __qif_names[idx]); }\n");
+        out.push_str("            if (self.__qif_progress != \"\") { Console.WriteLine(\"[qif-run] \" + Convert.ToString(idx) + \" \" + self.__qif_names[idx]); }\n");
         for b in 0..num_batches {
             let start = b * BATCH_SIZE;
             let end = std::cmp::min(start + BATCH_SIZE, total);
@@ -1541,7 +1614,6 @@ pub(crate) fn generate_qif_test_main(
     }
     out.push('\n');
 
-    // Report
     let fmt = qif_opts.output_format.as_str();
     if fmt == "json" {
         out.push_str("        QIFReporting.WriteJsonReport(self.runner);\n");
@@ -1550,23 +1622,35 @@ pub(crate) fn generate_qif_test_main(
     } else {
         out.push_str("        QIFReporting.WriteReport(self.runner);\n");
     }
-    // RFC 032 §7：报告产物落盘（report.json / .arcqif），在 Environment.Exit 前执行。
-    // output_dir 已由 CLI 解析为绝对路径并转义嵌入；布尔开关为编译期常量。
     out.push_str(&format!(
         "        QIFReporting.PersistArtifacts(self.runner, \"{}\", {}, {});\n",
         escape_arc_string(&qif_opts.output_dir),
         qif_opts.emit_json_report,
         qif_opts.persist_results,
     ));
-    // H1: 报告后 Environment.Exit→_exit，跳过 Main 返回后的局部/CRT 析构 free
-    // 风暴（应力：Wiki/Summary 已打完仍 0xC0000005）。
-    out.push_str("        if (self.runner.HasFailures) { Environment.Exit(1); }\n");
+    out.push_str("        if (self.runner.ShouldFailExit) { Environment.Exit(1); }\n");
     out.push_str("        Environment.Exit(0);\n");
     out.push_str("    }\n");
     out.push('\n');
 
-    // DispatchTest: sync only（并行路径）；async 套件不生成
     if use_parallel {
+        out.push_str("    void DispatchCollection(int cidx) {\n");
+        for (i, (key, start, end)) in collection_ranges.iter().enumerate() {
+            let comment = escape_arc_string(key);
+            out.push_str(&format!("        // Collection: {comment}\n"));
+            out.push_str(&format!("        if (cidx == {i}) {{\n"));
+            out.push_str(&format!(
+                "            for (int idx = {start}; idx < {end}; idx = idx + 1) {{\n"
+            ));
+            out.push_str("                if (this.__qif_progress != \"\") { Console.WriteLine(\"[qif-run] \" + Convert.ToString(idx) + \" \" + this.__qif_names[idx]); }\n");
+            out.push_str("                this.DispatchTest(idx);\n");
+            out.push_str("            }\n");
+            out.push_str("            return;\n");
+            out.push_str("        }\n");
+        }
+        out.push_str("    }\n");
+        out.push('\n');
+
         out.push_str("    void DispatchTest(int index) {\n");
         for b in 0..num_batches {
             let start = b * BATCH_SIZE;
@@ -1587,7 +1671,6 @@ pub(crate) fn generate_qif_test_main(
         out.push('\n');
     }
 
-    // Generate RunBatch{N} functions
     let batch_sig = if has_async { "async Task" } else { "void" };
     for b in 0..num_batches {
         let start = b * BATCH_SIZE;
@@ -5046,6 +5129,7 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.to_string()))
                 .collect(),
             namespace: ns.to_string(),
+            timeout_ms: 0,
         }
     }
 
@@ -5220,5 +5304,141 @@ mod tests {
     fn qif_filter_invalid_syntax_returns_err() {
         let err = QifFilterExpr::parse("ClassName=").unwrap_err();
         assert!(err.contains("empty value"), "got: {err}");
+    }
+
+    #[test]
+    fn qif_collection_key_explicit_and_implicit() {
+        let mut explicit = make_method("A", "T1", "Fact", vec![]);
+        explicit.collection_name = Some("Shared".into());
+        assert_eq!(qif_collection_key(&explicit), "Shared");
+
+        let implicit = make_method("Solo", "T1", "Fact", vec![]);
+        assert_eq!(qif_collection_key(&implicit), "__class__:Solo");
+    }
+
+    #[test]
+    fn qif_group_methods_by_collection_ranges() {
+        let mut a1 = make_method("ClassA", "M1", "Fact", vec![]);
+        a1.collection_name = Some("C1".into());
+        let mut a2 = make_method("ClassA", "M2", "Fact", vec![]);
+        a2.collection_name = Some("C1".into());
+        let mut b1 = make_method("ClassB", "M1", "Fact", vec![]);
+        b1.collection_name = Some("C2".into());
+        let solo = make_method("Solo", "M1", "Fact", vec![]);
+        let methods = vec![a1, b1, a2, solo];
+        let refs: Vec<&QifTestMethod> = methods.iter().collect();
+        let (reordered, ranges) = group_methods_by_collection(&refs);
+        assert_eq!(reordered.len(), 4);
+        assert_eq!(ranges.len(), 3);
+        // First-seen order: C1, C2, __class__:Solo
+        assert_eq!(ranges[0], ("C1".into(), 0, 2));
+        assert_eq!(ranges[1].0, "C2");
+        assert_eq!(ranges[1].1, 2);
+        assert_eq!(ranges[1].2, 3);
+        assert_eq!(ranges[2].0, "__class__:Solo");
+        // Within C1, relative order preserved (a1 then a2)
+        assert_eq!(reordered[0].method_name, "M1");
+        assert_eq!(reordered[1].method_name, "M2");
+    }
+
+    #[test]
+    fn qif_generate_parallel_emits_dispatch_collection() {
+        let m1 = make_method("A", "T1", "Fact", vec![]);
+        let m2 = make_method("B", "T2", "Fact", vec![]);
+        let opts = QifCompileOptions {
+            parallel: true,
+            max_parallel: 4,
+            output_dir: "obj/qif".into(),
+            ..Default::default()
+        };
+        let src = generate_qif_test_main(&[m1, m2], &opts);
+        assert!(
+            src.contains("DispatchCollection"),
+            "expected collection-level parallel dispatch"
+        );
+        assert!(
+            src.contains("Parallel.For(0, 2,"),
+            "two implicit class collections: {src}"
+        );
+        assert!(
+            src.contains("ShouldFailExit"),
+            "exit path must use ShouldFailExit"
+        );
+        assert!(
+            src.contains("FailOnSkip = false"),
+            "default FailOnSkip false"
+        );
+    }
+
+    #[test]
+    fn qif_generate_async_forces_sequential_even_if_parallel() {
+        let mut m1 = make_method("A", "T1", "Fact", vec![]);
+        m1.is_async = true;
+        let m2 = make_method("B", "T2", "Fact", vec![]);
+        let opts = QifCompileOptions {
+            parallel: true,
+            max_parallel: 4,
+            output_dir: "obj/qif".into(),
+            ..Default::default()
+        };
+        let src = generate_qif_test_main(&[m1, m2], &opts);
+        assert!(
+            !src.contains("DispatchCollection"),
+            "async suite must not emit collection parallel"
+        );
+        assert!(
+            src.contains("强制串行") || src.contains("Sequential"),
+            "expected sequential comment"
+        );
+    }
+
+    #[test]
+    fn qif_generate_fact_skip_uses_record_fact_skip() {
+        let mut m = make_method("A", "Skipped", "Fact", vec![]);
+        m.skip_reason = Some("not ready".into());
+        let opts = QifCompileOptions {
+            output_dir: "obj/qif".into(),
+            ..Default::default()
+        };
+        let src = generate_qif_test_main(&[m], &opts);
+        assert!(
+            src.contains("RecordFactSkip"),
+            "attribute skip must use RecordFactSkip: {src}"
+        );
+    }
+
+    #[test]
+    fn qif_generate_fact_timeout_overrides_default() {
+        let mut m = make_method("A", "Slow", "Fact", vec![]);
+        m.timeout_ms = 250;
+        let opts = QifCompileOptions {
+            default_timeout_ms: 5000,
+            output_dir: "obj/qif".into(),
+            ..Default::default()
+        };
+        let src = generate_qif_test_main(&[m], &opts);
+        assert!(
+            src.contains("Task.Delay(250)") || src.contains("/ 1000000 > 250"),
+            "per-Fact Timeout must override suite default: {src}"
+        );
+        assert!(
+            !src.contains("/ 1000000 > 5000"),
+            "suite default must not win over Fact.Timeout: {src}"
+        );
+    }
+
+    #[test]
+    fn qif_generate_suite_timeout_when_fact_timeout_zero() {
+        let m = make_method("A", "Fast", "Fact", vec![]);
+        let opts = QifCompileOptions {
+            default_timeout_ms: 1200,
+            output_dir: "obj/qif".into(),
+            ..Default::default()
+        };
+        let src = generate_qif_test_main(&[m], &opts);
+        assert!(
+            src.contains("/ 1000000 > 1200"),
+            "suite default timeout must apply when Fact.Timeout=0: {src}"
+        );
     }
 }

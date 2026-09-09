@@ -68,8 +68,10 @@ internal struct ControlState {
 /// <summary>
 /// 控件状态解析出的视觉配方（颜色角色=资源键，几何/深度=结构化常量；
 /// 渲染器解析 + 插值后上屏）。
+/// 以 class 承载：字段含多 string + 嵌套几何/深度，按值 struct 返回在当前
+/// codegen 下会栈破坏（ArmlDemo 首帧 Button→ControlVisual.Base AV）。
 /// </summary>
-internal struct ControlVisual {
+internal class ControlVisual {
     /// <summary>主填充（按钮底 / 输入底 / 勾选底）。</summary>
     public string Background;
 
@@ -146,7 +148,7 @@ internal class VisualStateManager {
     private static ControlVisual Disabled(ControlVisual v) {
         v.Background = BuiltInTheme.DisabledFill;
         v.Foreground = BuiltInTheme.DisabledText;
-        v.Border = BuiltInTheme.Border;
+        v.Border = BuiltInTheme.BorderDisabled;
         v.FocusRing = BuiltInTheme.Transparent;
         v.Accent = BuiltInTheme.DisabledText;
         v.Track = BuiltInTheme.DisabledFill;
@@ -179,12 +181,12 @@ internal class VisualStateManager {
         v.FocusRing = s.Focused != 0 ? BuiltInTheme.FocusRing : BuiltInTheme.Transparent;
         v.Accent = BuiltInTheme.Primary;
         // 现代渐变强调（渲染器经 DrawLinearGradient 消费；缺渐变键回退 Background 纯色）。
-        v.GradientStart = BuiltInTheme.AccentGradientA;
-        v.GradientEnd = BuiltInTheme.AccentGradientB;
+        v.GradientStart = BuiltInTheme.Primary;
+        v.GradientEnd = BuiltInTheme.Primary;
         return v;
     }
 
-    /// <summary>Ghost 次级按钮：Surface 底 + 边框，hover 提亮边框。</summary>
+    /// <summary>Ghost / Default 次级按钮：Surface 底 + 边框，hover 提亮边框。</summary>
     public static ControlVisual GhostButton(ControlState s) {
         ControlVisual v = ControlVisual.Base();
         if (s.Enabled == 0) {
@@ -209,7 +211,134 @@ internal class VisualStateManager {
         return v;
     }
 
-    /// <summary>Button 聚合入口：按语义选择 Primary 或 Ghost（默认 Primary，RFC 037 §2 主按钮）。</summary>
+    /// <summary>
+    /// Dashed：Default 族 + 常显 Primary 描边（Ant dashed 语义；真虚线描边后置，
+    /// 禁 Style.Triggers 第三套）。
+    /// </summary>
+    public static ControlVisual DashedButton(ControlState s) {
+        ControlVisual v = VisualStateManager.GhostButton(s);
+        if (s.Enabled == 0) {
+            return v;
+        }
+        v.Border = s.Hover != 0 || s.Pressed != 0
+            ? BuiltInTheme.PrimaryHover
+            : BuiltInTheme.Primary;
+        return v;
+    }
+
+    /// <summary>Text：透明底；Hover 浅底；字色 Primary 族。</summary>
+    public static ControlVisual TextButton(ControlState s) {
+        ControlVisual v = ControlVisual.Base();
+        if (s.Enabled == 0) {
+            return VisualStateManager.Disabled(v);
+        }
+        if (s.Pressed != 0) {
+            v.Background = BuiltInTheme.SurfaceHover;
+            v.Lift = BuiltInTheme.PressedLift();
+            v.MotionDuration = BuiltInTheme.MotionPressMs;
+        } else if (s.Hover != 0) {
+            v.Background = BuiltInTheme.SurfaceHover;
+            v.Lift = BuiltInTheme.HoverLift();
+            v.MotionDuration = BuiltInTheme.MotionHoverMs;
+        } else {
+            v.Background = BuiltInTheme.Transparent;
+            v.MotionDuration = 0.0;
+        }
+        v.Foreground = s.Hover != 0 || s.Pressed != 0
+            ? BuiltInTheme.PrimaryHover
+            : BuiltInTheme.TextPrimary;
+        v.Border = BuiltInTheme.Transparent;
+        v.FocusRing = s.Focused != 0 ? BuiltInTheme.FocusRing : BuiltInTheme.Transparent;
+        v.Accent = BuiltInTheme.Primary;
+        return v;
+    }
+
+    /// <summary>Link：透明底；字色始终 Primary；Hover 提亮字色。</summary>
+    public static ControlVisual LinkButton(ControlState s) {
+        ControlVisual v = ControlVisual.Base();
+        if (s.Enabled == 0) {
+            return VisualStateManager.Disabled(v);
+        }
+        if (s.Pressed != 0) {
+            v.Background = BuiltInTheme.Transparent;
+            v.Foreground = BuiltInTheme.PrimaryPressed;
+            v.MotionDuration = BuiltInTheme.MotionPressMs;
+        } else if (s.Hover != 0) {
+            v.Background = BuiltInTheme.Transparent;
+            v.Foreground = BuiltInTheme.PrimaryHover;
+            v.MotionDuration = BuiltInTheme.MotionHoverMs;
+        } else {
+            v.Background = BuiltInTheme.Transparent;
+            v.Foreground = BuiltInTheme.Primary;
+            v.MotionDuration = 0.0;
+        }
+        v.Border = BuiltInTheme.Transparent;
+        v.FocusRing = s.Focused != 0 ? BuiltInTheme.FocusRing : BuiltInTheme.Transparent;
+        v.Accent = BuiltInTheme.Primary;
+        return v;
+    }
+
+    /// <summary>Danger button: Danger fill + OnAccent text (Ant colorError*).</summary>
+    public static ControlVisual DangerButton(ControlState s) {
+        ControlVisual v = ControlVisual.Base();
+        if (s.Enabled == 0) {
+            return VisualStateManager.Disabled(v);
+        }
+        if (s.Pressed != 0) {
+            v.Background = BuiltInTheme.DangerPressed;
+            v.Lift = BuiltInTheme.PressedLift();
+            v.MotionDuration = BuiltInTheme.MotionPressMs;
+        } else if (s.Hover != 0) {
+            v.Background = BuiltInTheme.DangerHover;
+            v.Lift = BuiltInTheme.HoverLift();
+            v.MotionDuration = BuiltInTheme.MotionHoverMs;
+        } else {
+            v.Background = BuiltInTheme.Danger;
+            v.MotionDuration = 0.0;
+        }
+        v.Foreground = BuiltInTheme.TextOnAccent;
+        v.AccentText = BuiltInTheme.TextOnAccent;
+        v.Border = BuiltInTheme.Transparent;
+        v.FocusRing = s.Focused != 0 ? BuiltInTheme.FocusRing : BuiltInTheme.Transparent;
+        v.Accent = BuiltInTheme.Danger;
+        v.GradientStart = BuiltInTheme.Danger;
+        v.GradientEnd = BuiltInTheme.Danger;
+        return v;
+    }
+
+    /// <summary>
+    /// Button chrome entry via applied Style keys（AppliedStyleKeys / 限定或短键展开后）。
+    /// VSM 为本引擎的内部实现细节——非第二套样式作者 API（见 theme-style-interaction-architecture §0.2）。
+    /// 末个命中的 Primary / Default|Ghost / Dashed / Text / Link / Danger；无则 Primary。
+    /// </summary>
+    public static ControlVisual ButtonForStyleKeys(ControlState s, string styleKeys) {
+        string recipe = StyleKeyResolver.ButtonChromeFromStyleKeys(styleKeys);
+        return VisualStateManager.ButtonForChromeRecipe(s, recipe);
+    }
+
+    /// <summary>Button chrome by recipe leaf（Primary/Default/…）；空或未知 → Primary。</summary>
+    public static ControlVisual ButtonForChromeRecipe(ControlState s, string recipe) {
+        if (recipe != null) {
+            if (recipe == "Default" || recipe == "Ghost") {
+                return VisualStateManager.GhostButton(s);
+            }
+            if (recipe == "Dashed") {
+                return VisualStateManager.DashedButton(s);
+            }
+            if (recipe == "Text") {
+                return VisualStateManager.TextButton(s);
+            }
+            if (recipe == "Link") {
+                return VisualStateManager.LinkButton(s);
+            }
+            if (recipe == "Danger") {
+                return VisualStateManager.DangerButton(s);
+            }
+        }
+        return VisualStateManager.PrimaryButton(s);
+    }
+
+    /// <summary>Button entry without style keys (= Primary).</summary>
     public static ControlVisual Button(ControlState s) {
         return VisualStateManager.PrimaryButton(s);
     }
@@ -228,8 +357,8 @@ internal class VisualStateManager {
             v.AccentText = BuiltInTheme.TextOnAccent;
             v.Lift = s.Pressed != 0 ? BuiltInTheme.PressedLift() : BuiltInTheme.HoverLift();
             v.MotionDuration = s.Pressed != 0 ? BuiltInTheme.MotionPressMs : BuiltInTheme.MotionHoverMs;
-            v.GradientStart = BuiltInTheme.AccentGradientA;
-            v.GradientEnd = BuiltInTheme.AccentGradientB;
+            v.GradientStart = BuiltInTheme.Primary;
+            v.GradientEnd = BuiltInTheme.Primary;
         } else {
             v.Background = s.Pressed != 0 || s.Hover != 0
                 ? BuiltInTheme.SurfaceHover
@@ -257,7 +386,7 @@ internal class VisualStateManager {
         v.Border = s.Focused != 0 ? BuiltInTheme.Primary : BuiltInTheme.Border;
         v.FocusRing = s.Focused != 0 ? BuiltInTheme.FocusRing : BuiltInTheme.Transparent;
         v.Accent = BuiltInTheme.Primary;
-        v.Placeholder = BuiltInTheme.Placeholder;
+        v.Placeholder = BuiltInTheme.TextPlaceholder;
         v.MotionDuration = s.Focused != 0 ? BuiltInTheme.MotionFocusMs : 0.0;
         return v;
     }
@@ -285,7 +414,7 @@ internal class VisualStateManager {
     /// <summary>竖滚动条：轨道 subtle 灰底，thumb 可交互加深（hover/pressed 提亮），圆角矩形。</summary>
     public static ControlVisual ScrollBar(ControlState s) {
         ControlVisual v = ControlVisual.Base();
-        v.Radius = new CornerRadius(4.0);
+        v.Radius = new CornerRadius(ControlMetrics.VScrollThumbRadius);
         v.Background = BuiltInTheme.ScrollTrack;
         v.Foreground = BuiltInTheme.TextPrimary;
         v.Border = BuiltInTheme.Transparent;
@@ -293,7 +422,7 @@ internal class VisualStateManager {
         // Pressed 状态使用更深的颜色（Active），Hover 次之，默认最浅。
         string thumbColor = BuiltInTheme.ScrollThumb;
         if (s.Pressed != 0) {
-            thumbColor = BuiltInTheme.ScrollThumbActive;
+            thumbColor = BuiltInTheme.ScrollThumbPressed;
         } else if (s.Hover != 0) {
             thumbColor = BuiltInTheme.ScrollThumbHover;
         }

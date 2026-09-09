@@ -542,9 +542,17 @@ fn emit_child_elements(
             })
         });
 
-        let ctor_line = format!("{}var {} = new {}();\n", pad, var, elem.name);
+        // ComboBox&lt;T&gt; 为泛型开发者面；ARML 标签映射非泛型基座 ComboBoxBase
+        //（与 DefaultElementFactory 同构——禁 `new ComboBox()` 无类型实参）。
+        let ctor_type = if elem.name == "ComboBox" {
+            "ComboBoxBase"
+        } else {
+            elem.name.as_str()
+        };
+        let field_type = ctor_type;
+        let ctor_line = format!("{}var {} = new {}();\n", pad, var, ctor_type);
         out.push_str(&ctor_line);
-        // M3 样式系统：TypeName 供 StyleManager 隐式匹配
+        // M3 样式系统：TypeName 供 StyleManager 隐式匹配（标签名，非基座类名）
         out.push_str(&format!("{}{}.TypeName = \"{}\";\n", pad, var, elem.name));
         if needs_p {
             out.push_str(&format!("{}long {} = 0;\n", pad, var_p));
@@ -563,7 +571,7 @@ fn emit_child_elements(
                 if named_fields.iter().any(|(n, _)| n.as_str() == name) {
                     return Err(format!("duplicate x:Name `{name}` in window"));
                 }
-                named_fields.push((name.to_string(), elem.name.to_string()));
+                named_fields.push((name.to_string(), field_type.to_string()));
                 out.push_str(&format!("{}this.{} = {};\n", pad, name, var));
             }
         }
@@ -610,32 +618,52 @@ fn emit_child_elements(
                 if markup.kind == MarkupKind::StaticResource && attr.name == "Style" {
                     if markup.args.is_empty() {
                         return Err(
-                            "`{StaticResource}` in `Style` requires a resource key (e.g., `{StaticResource CardStyle}`)"
+                            "`{StaticResource}` in `Style` requires a resource key (e.g., `{StaticResource Primary}`)"
                                 .to_string(),
                         );
                     }
-                    let resolved: Option<Vec<&String>> = markup
-                        .args
-                        .iter()
-                        .map(|k| style_keys.get(k.as_str()))
-                        .collect();
-                    match resolved {
-                        Some(vars) if vars.len() == 1 => {
-                            out.push_str(&format!("{}{}.Style = {};\n", pad, var, vars[0]));
+                    // §0.1.1：窗口字典命中 → 定型对象；否则保留作者短键字符串，
+                    // 应用期 StyleKeyResolver 走 控件作用域 → 全局 回退（禁编译期
+                    // 只展开成 Button.Size.SM 跳过全局回退）。
+                    let refs = crate::style_key::codegen_style_key_tokens(
+                        &markup.args,
+                        elem.name.as_str(),
+                        style_keys,
+                    )?;
+                    match refs.as_slice() {
+                        [crate::style_key::CodegenStyleRef::Typed(style_var)] => {
+                            out.push_str(&format!("{}{}.Style = {};\n", pad, var, style_var));
                         }
-                        Some(vars) => {
+                        typed
+                            if typed
+                                .iter()
+                                .all(|r| matches!(r, crate::style_key::CodegenStyleRef::Typed(_))) =>
+                        {
                             let list_var = format!("_style_refs_{}", *bind_counter);
                             *bind_counter += 1;
                             out.push_str(&format!(
                                 "{}var {} = new List<Style>();\n",
                                 pad, list_var
                             ));
-                            for style_var in vars {
-                                out.push_str(&format!("{}{}.Add({});\n", pad, list_var, style_var));
+                            for r in typed {
+                                if let crate::style_key::CodegenStyleRef::Typed(style_var) = r {
+                                    out.push_str(&format!(
+                                        "{}{}.Add({});\n",
+                                        pad, list_var, style_var
+                                    ));
+                                }
                             }
                             out.push_str(&format!("{}{}.Style = {};\n", pad, var, list_var));
                         }
-                        None => {
+                        [crate::style_key::CodegenStyleRef::RuntimeKey(joined)] => {
+                            out.push_str(&format!(
+                                "{}{}.Style = \"{}\";\n",
+                                pad,
+                                var,
+                                escape_arc_string(joined)
+                            ));
+                        }
+                        _ => {
                             let joined = markup
                                 .args
                                 .iter()
@@ -1043,6 +1071,14 @@ fn is_numeric_attr(name: &str) -> bool {
             | "Column"
             | "RowSpan"
             | "ColumnSpan"
+            | "SelectedIndex"
+            | "ItemHeight"
+            | "ItemWidth"
+            | "RowHeight"
+            | "HeaderHeight"
+            | "CacheLengthBefore"
+            | "CacheLengthAfter"
+            | "CornerRadius"
     )
 }
 
@@ -1059,6 +1095,7 @@ fn is_bool_attr(name: &str) -> bool {
             | "IsCancel"
             | "Focusable"
             | "IsTabStop"
+            | "IsIndeterminate"
     )
 }
 
@@ -2125,6 +2162,30 @@ mod tests {
         assert!(!code.contains("_p = WindowHost"));
         // `_p` 仅在有平台回写需求（x:Bind）时声明，普通元素不生成
         assert!(!code.contains("child_0_p"));
+    }
+
+    #[test]
+    fn codegen_progress_bar_is_indeterminate_emits_bool() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
+    <ProgressBar Width="320" Height="10" IsIndeterminate="true"/>
+</Window>"#;
+        let doc = Parser::parse(src).expect("parse");
+        let code = generate(
+            &doc,
+            &CodegenOptions {
+                namespace: "Ns".into(),
+                ..CodegenOptions::default()
+            },
+        )
+        .expect("generate");
+        assert!(
+            code.contains("child_0.IsIndeterminate = true;"),
+            "IsIndeterminate must emit bool true, got:\n{code}"
+        );
+        assert!(
+            !code.contains("IsIndeterminate = \"true\""),
+            "IsIndeterminate must not emit string literal"
+        );
     }
 
     #[test]

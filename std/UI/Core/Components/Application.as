@@ -151,13 +151,27 @@ public class Application : Element {
     public void SwitchTheme(string name) {
         ThemeDictionaries.Switch(name);
         this.SyncActiveTheme();
-        // 主题切换后重应用宿主样式（与 RunCore 启动路径同一引擎：
-        // VisualHost.ApplyAllHostStyles；旧 `StyleManager.ApplyImplicitStyles`
-        // 为 M3 期 API，已被两趟宿主样式通道取代）。
-        if (this.MainWindow != null) {
-            VisualHost.ApplyAllHostStyles(this.MainWindow);
-        }
+        this.ApplyStyleTree();
         FramePump.Invalidate();
+    }
+
+    /// <summary>
+    /// 应用隐式/显式样式全树：窗口域 primary + Application.Resources fallback
+    /// （含活动主题 MergedDictionaries 内 CreateControls 隐式 Style），再递归
+    /// VisualHost 帧内样式。RunCore / SwitchTheme 共用。
+    /// </summary>
+    void ApplyStyleTree() {
+        if (this.MainWindow == null) {
+            return;
+        }
+        ResourceDictionary windowResources = null;
+        object raw = this.MainWindow.Resources;
+        if (raw is ResourceDictionary) {
+            windowResources = (ResourceDictionary)raw;
+        }
+        StyleManager sm = new StyleManager();
+        sm.ApplyAllStyles(this.MainWindow, windowResources, this.Resources);
+        VisualHost.ApplyAllHostStyles(this.MainWindow);
     }
 
     /// <summary>
@@ -216,12 +230,9 @@ public class Application : Element {
         this.OnStartup();
         ImeBridge.WarmupHandler();
 
-        // RFC 037 VisualHost 边界：宿主样式（隐式/显式两趟）统一经
-        // VisualHost.ApplyAllHostStyles 递归应用（旧 `ApplyStyleTree` 为
-        // M3 期占位，未落地即被本通道取代）。
-        if (this.MainWindow != null) {
-            VisualHost.ApplyAllHostStyles(this.MainWindow);
-        }
+        // 隐式/显式两趟：窗口 Resources + Application.Resources（活动主题含
+        // Controls 隐式 Style）→ VisualHost 帧内样式。
+        this.ApplyStyleTree();
 
         ImeBridge.InstallHandler();
     }

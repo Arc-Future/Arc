@@ -9,25 +9,29 @@ alwaysApply: false
 ## 文档驱动（编辑 docs 时）
 
 1. 语义变更 → 先 RFC（`docs/rfc/`）或规范章节，再改 `crates/`
-2. 同一变更集同步代码与文档；冲突时以**已接受 RFC**（`docs/rfc/`）> `docs/user-guide/` 为准
-3. 禁止在 `docs/domain/`、`docs/user-guide/`、`docs/white-paper/` 等平行目录重复维护设计决策
+2. 同一变更集同步代码与文档；冲突时以**已接受 RFC**（`docs/rfc/`）> `docs/arc/` 用法叙述为准
+3. **权威仅** `docs/arc/`（可发布手册）与 `docs/rfc/`（设计）。禁止再建 `user-guide/` / `domain/` / `white-paper/` 平行正文树
 
 ## 结构
 
 ```
 docs/
-├── preface.md  manifesto.md  SUMMARY.md  plan.md
-├── rfc/        # 已接受设计决策（001–042 + 091，一主题一文档）
-│   └── index.md
-├── user-guide/ # 用户文档（01–18 + 附录）
-├── domain/     # 领域库
-└── white-paper/
+├── SUMMARY.md          # 仓库导航（指向 arc/ + rfc/）
+├── preface.md · manifesto.md  # 旧书签单页跳转（非权威）
+├── arc/                # ★ 官方可发布手册（Docbit slug）
+│   ├── FOREWORD.md · INDEX.md · INDEX.json · UPLOAD.md
+│   └── 01-…/ … 12-…/   # 面向语言使用者
+├── rfc/                # 设计权威（默认不上传）
+└── plan.md · reviews/  # 内部过程（永不发布）
 ```
+
+上传：拷贝 `docs/arc/` → `<app_base>/docs/arc/`（见 `docs/arc/UPLOAD.md`）。
 
 ## 写作
 
 - **全文中文**（标识符、`Arc`、`.as`、代码块除外）
-- `index.md` 渐进式披露：目标、收获、目录表、上下章链接
-- 小节：先结论后细节；示例路径用 `crates/`、`std/`、`examples/`
-- 交叉引用用相对路径；**不以 C#/Rust 等外部语言为设计依据**
-- 变更时同步 `SUMMARY.md` 与各目录 `index.md`（`docs/rfc/`、`docs/user-guide/`）
+- 受众 = **用 Arc 写程序的开发者**；禁止把发布册做成 RFC 001–052 目录浏览
+- `INDEX.md` 渐进式披露：目标、收获、目录表、上下章链接
+- 小节：先结论后细节；示例路径用 `examples/`、`std/`
+- 交叉引用用相对路径；发布包内链到 RFC 时用 GitHub 绝对 URL（避免上传后断链）
+- 变更时同步 `docs/arc/INDEX.md`、`INDEX.json` 与 `docs/SUMMARY.md`

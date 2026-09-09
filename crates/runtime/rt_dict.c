@@ -48,11 +48,38 @@ typedef struct RtDict {
     int32_t owned;          /* RFC 051 S3b: 1=值所有权字典（rt_dict_create_owned）——
                                set 覆盖/remove/clear/destroy 释放条目值（rt_arc_dec）；
                                0=legacy（标量/string 值，不维护 ARC） */
+    int32_t str_keys;       /* 1=string 键（C 字面量 / char*）；创建期解析，勿靠函数指针== */
 } RtDict;
+
+/* EXE→DLL IAT 蹦床：`FF 25 disp32` = jmp qword ptr [rip+disp]。
+ * codegen 把 @rt_hash_str 等以蹦床地址传入 create；裸指针 == 永远失败，
+ * 导致 int_keys 误判为 0、owns_class_keys 把 inttoptr(TypeId) 当 class 键
+ * rt_arc_inc → 0xC0000005（ArmlDemo 启动 DependencyPropertyRegistry 实证）。 */
+static void* rt_dict_resolve_fn(void* p) {
+    if (!p) {
+        return NULL;
+    }
+#if defined(_WIN32) || defined(_WIN64)
+    {
+        const unsigned char* c = (const unsigned char*)p;
+        if (c[0] == 0xFFu && c[1] == 0x25u) {
+            int32_t disp;
+            memcpy(&disp, c + 2, sizeof(disp));
+            void* const* slot = (void* const*)(c + 6 + disp);
+            return *slot;
+        }
+    }
+#endif
+    return p;
+}
+
+static int32_t rt_dict_fn_is(void* passed, void* canonical) {
+    return rt_dict_resolve_fn(passed) == canonical;
+}
 
 /* RFC 052 S4：owned gen 键且非 string → class 键所有权（与值同律）。 */
 static int32_t rt_dict_owns_class_keys(const RtDict* d) {
-    return d && d->owned && d->int_keys == 0 && d->hash != rt_hash_str;
+    return d && d->owned && d->int_keys == 0 && !d->str_keys;
 }
 
 uint32_t rt_hash_str(void* key) {
@@ -318,8 +345,15 @@ static void* rt_dict_create_impl(rt_hash_fn hash, rt_eq_fn eq, int32_t owned) {
     d->hash = hash;
     d->eq = eq;
     d->owned = owned;
-    d->int_keys = (hash == rt_hash_int && eq == rt_eq_int) ? 1
-                : (hash == rt_hash_long && eq == rt_eq_int) ? 2 : 0;
+    /* 经 IAT 蹦床解析后再判定键档（见 rt_dict_resolve_fn）。 */
+    d->int_keys = (rt_dict_fn_is((void*)hash, (void*)rt_hash_int)
+                   && rt_dict_fn_is((void*)eq, (void*)rt_eq_int))
+                      ? 1
+                      : (rt_dict_fn_is((void*)hash, (void*)rt_hash_long)
+                         && rt_dict_fn_is((void*)eq, (void*)rt_eq_int))
+                            ? 2
+                            : 0;
+    d->str_keys = rt_dict_fn_is((void*)hash, (void*)rt_hash_str) ? 1 : 0;
     {
         int32_t init = d->int_keys ? RT_DICT_INITIAL_CAP_INT : RT_DICT_INITIAL_CAP;
         if (!rt_dict_alloc_tables(d, init)) {

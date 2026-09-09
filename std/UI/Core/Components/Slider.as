@@ -26,11 +26,6 @@ using Arc.UI.Layout;
 
 /// <summary>数值滑块控件，承载 [Minimum, Maximum] 区间内的数值选择。</summary>
 public class Slider : InputElement {
-    /// <summary>构造元素并绑定运行时类型身份（供动态依赖属性解析）。</summary>
-    public Slider() {
-        this.Type = typeof(Slider);
-    }
-
     // ===== 静态依赖属性元数据（RFC 051 D1 WPF 同构）=====
 
     /// <summary>Value 属性元数据——当前滑块值，默认 0.0。</summary>
@@ -85,6 +80,7 @@ public class Slider : InputElement {
 
     public Slider() {
         this.Type = typeof(Slider);
+        this.TypeName = "Slider";
         this.ValueChanged = new Signal<double>(0.0);
     }
 
@@ -154,8 +150,26 @@ public class Slider : InputElement {
     public string ValueChangedHandler;
 
     protected override LayoutSize MeasureOverride(LayoutSize availableSize) {
+        if (this.HasTemplateVisual()) {
+            LayoutSize templated = this.MeasureTemplateVisual(availableSize);
+            double tw = templated.Width;
+            double th = templated.Height;
+            if (tw < 120.0) {
+                tw = 120.0;
+            }
+            if (th < ControlMetrics.SliderDefaultHeight) {
+                th = ControlMetrics.SliderDefaultHeight;
+            }
+            if (this.Width > 0.0) {
+                tw = this.Width;
+            }
+            if (this.Height > 0.0) {
+                th = this.Height;
+            }
+            return new LayoutSize(tw, th);
+        }
         double w = 200.0;
-        double h = 24.0;
+        double h = ControlMetrics.SliderDefaultHeight;
         if (w < 120.0) {
             w = 120.0;
         }
@@ -170,5 +184,11 @@ public class Slider : InputElement {
             h = this.Height;
         }
         return new LayoutSize(w, h);
+    }
+
+    protected override void ArrangeOverride(LayoutSize finalSize) {
+        if (this.HasTemplateVisual()) {
+            this.ArrangeTemplateVisual(finalSize);
+        }
     }
 }

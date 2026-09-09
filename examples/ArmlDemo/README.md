@@ -1,26 +1,27 @@
 # ArmlDemo
 
-合并自 9 个分散 ARML UI 案例的**单一综合演示**，展示 Arc 声明式 UI（ARML）编码模型与能力面。`Application.Run()` 是单主窗口阻塞入口、无导航/TabControl/Visibility，故形态为**单 Window + ScrollView 内分区堆叠**。
+合并自分散 ARML UI 案例的**单一综合演示**。形态为 **`TabControl` 内置页签栏 chrome + 互斥分页**（仅展示 `SelectedIndex` 对应 `TabItem`）。
 
 | 项 | 说明 |
 |----|------|
 | 权威 | [RFC 037](../../docs/rfc/037-ui.md) · 控件矩阵见 [COMPONENTS.md](../../std/UI/Core/COMPONENTS.md) |
-| 角色 | 文档 / 演示；**非**默认硬绿权威（原 `arc-integration` 硬绿已随该 crate 退场） |
-| 前置 | Win32 + `clang`（原 opt-in e2e 前置条件；该 e2e 已随 arc-integration 退场 a2627a0f） |
+| 角色 | 文档 / 演示；**非**默认硬绿权威 |
+| 前置 | Win32 + `clang` |
 
-## 合并来源（旧案例已删除）
+## 页签盘点（能力对接）
 
-| 分区 | 内容 | 原案例 |
-|------|------|--------|
-| 1 | Hello 元素树与事件（嵌套 StackPanel + Click 计数器） | ArmlHello |
-| 2 | Controls 控件面（Rectangle / Primary/Secondary/Disabled Button / ScrollView 12 行 + ArmlStyle 默认 Input 观感） | ArmlControls + ArmlStyle |
-| 3 | x:Bind 绑定（`Signal<string>` OneWay → Text 刷新） | XBindHello |
-| 4 | ListView / ItemContainerGenerator（ItemsSource → Text 项） | ArmlList |
-| 5 | Image（ImageDecoder 门面解码 → wgpu 纹理 `DrawTexture` 采样；解码失败回退占位框） | ArmlImage |
-| 6 | Slider（Minimum/Maximum/Value + Foreground/IsEnabled） | ArmlSlider |
-| 7 | IME / Input（英文直输 / 中文 IME + caret） | ArmlIme |
-| 8 | Style & Isolation（宿主隐式 Button 红 vs VisualHost Light Primary 蓝） | ArmlVisualHost |
-| 9 | CodeEditor 视口虚拟化（mmap piece-table + `RenderVirtualizedLines`） | ArmlCodeEditor |
+| 页签 | 内容 | 本轮状态 | 诚实边界 |
+|------|------|----------|----------|
+| 1 Hello | 元素树 / 自定义字体 / Button Click | ✅ 可交互 | — |
+| 2 Controls | Button Style 多绑定 + Toggle/Check/Radio/TextBox/PasswordBox **Size keyed Style** + Border 装饰 + VSM；Progress/Combo/Popup/Scroll/MessageBox | ✅ Style 权威变体 | PasswordBox：禁 Copy/Cut；允许 Paste |
+| 3 Bind | x:Bind OneWay + Change/Append Message（SyncText→Invalidate） | ✅ 数据驱动重画 | — |
+| 4 List | ListView 选中 + **键盘导航**（↑↓ Home/End/Enter） | ✅ 有界高度 + 多项 | Observable 多实例并发 ✅ |
+| 5 Media | Image + Slider（Value 标签联动） | ✅ 拖拽/态色已接 | — |
+| 6 IME | 双 TextBox + IME/caret + **Ctrl+C/V/X** + **双击词选** | ✅ | 三击行选后置 |
+| 7 Style | 显式 keyed DangerButtonStyle vs 短键 `Danger` / `Primary, Large`（亦可限定键）vs VisualHost | ✅ 非全局污染；禁 Class/Appearance | — |
+| 8 Data | CodeEditor + DataGrid ItemsSource | ✅ 选中/虚拟化 | Observable 行增量 + 多实例并发 ✅ |
+
+**浮层**：Controls 页「Open demo Popup」与 ComboBox 下拉均走 Popup M1（`Open(owner)` / 蒙层轻关闭 / Esc）。**MessageBox**：「OK」/「OKCancel」/「YesNo」/「YesNoCancel」→ `ShowAsync` + `MessageBoxImage` 自绘色块图标（Popup `IsLightDismissEnabled=false`；Esc 自管；禁原生对话框）。
 
 ## 运行
 
@@ -29,19 +30,18 @@ cargo run -p arc -- build examples/ArmlDemo
 examples/ArmlDemo/bin/Debug/ArmlDemo.exe
 ```
 
-Win32 上应弹出 720×640 窗口：ScrollView 内 9 个分区依次堆叠（滚轮/滚动条纵向浏览）。关闭窗口或按 Esc 退出。
+Win32 上应弹出 720×640 窗口：顶栏 8 个内置页签（**按文案测宽左对齐**，选中 Accent 底线）。Esc：若有 Popup 轻关闭则关下拉，否则关主窗。
 
-## 隐式样式全局性
+## 样式演示口径（P1）
 
-`App.arml.as`（原 ArmlVisualHost 逻辑）在 `OnStartup` 向 `Application.Resources` 注册 **Button 隐式红样式（#FFCC2222）**——它是应用级隐式样式，**作用于宿主层全部 Button**（分区 2 的 Controls 按钮会被染红，属预期演示效果）。分区 8 `VisualHost` 内层构造时合并 RFC 037 Light Theme，内层 Button 呈现 Primary 蓝（#1677FF），**不**受宿主隐式样式渗透（RFC 037 样式隔离）。
+`App.arml` **不再**注册全局隐式 `Button` colorError。显式 `DangerButtonStyle` / `Demo.SectionTitle` 仅 Style/节标题引用；Controls 页用 **`Style="{StaticResource Primary, Medium}"`**（短键；查找先 `{T}.K` 再 Shared 全局；Shared `Small`/`Medium`/`Large` 成套 MinHeight+Padding；隐式默认 = Medium/`BasedOn`；RFC 037 §0.1.1；**禁 Class/Appearance/`*.Size.SM`**）。默认皮肤 **Ant Design 6.x** 令牌对齐。
 
 ## 已知挂账
 
-- `x:Name` 字段访问未实现（codegen 跳过；RFC 026 M4+ 命名查找挂账）：分区 4/9 的 code-behind 用局部实例演示同款 API，ARML 中保留 `x:Name` 声明以标注意图。
-- 分区 5 Image `Source` 路径相对项目根（`assets/logo.png`）；`missing.png` 用于演示解码失败占位。
-
-## opt-in e2e（历史记录）
-
-原 `crates/arc-integration/tests/arml_demo_build_e2e.rs` 已随 arc-integration
-退场（a2627a0f）：`#[ignore]` opt-in，不随默认矩阵运行；断言
-`arc build examples/ArmlDemo` 成功、`bin/Debug/ArmlDemo.exe` 存在（不启动 GUI）。
+- TabControl：无切换动画 / 溢出滚动页签 / 关闭按钮。
+- 独立 ScrollBar 控件延后（竖条嵌于 ScrollView；命中在 C `rt_ui_vscroll_*`）。
+- ProgressBar `IsIndeterminate` 扫掠 ✅；PasswordBox 掩码 ✅（禁 Copy/Cut；允许 Paste）；Border ✅（非均匀描边绘制取 max）；TextBox/PasswordBox **剪贴板** ✅；**双击词选** ✅。
+- ComboBox 下拉 **钳高 ScrollView 外壳** ✅；多弹层 Z 序后置。
+- `ComboBox<T>`：`SetOptions` + `Enum.GetOptions&lt;DemoThemeKind&gt;()` 烘焙 count=3 冒烟；ARML 控件仍 `ComboBoxBase`+ItemsSource。
+- `IsFocusVisible`：Tab/方向键显示焦点环；点击 TextBox 等指针聚焦清环（caret 仍跟 `IsFocused`）。
+- ListView：**键盘导航**（↑↓/Home/End/Enter → Selector）✅。

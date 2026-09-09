@@ -1,12 +1,8 @@
 // App.arml.as: 应用生命周期 code-behind（对标 WPF App.xaml.cs）。
 //
 // 与 codegen 自动生成的 `App.g.as` 合并构成完整 `App` 类型。
-// 宿主隐式 Button 红样式（#FFCC2222）现以声明式呈现——见 App.arml 的
-// `<Application.Resources><Style TargetType="Button">`，由 `arc ui codegen`
-// 在 App.g.as 的 `InitializeComponent()` 中等价生成 `Resources.AddStyle`。
-// 该样式作用于宿主层全部 Button（分区 2 的 Controls 按钮会被染红，属预期
-// 演示效果）；VisualHost 内层合并 RFC 037 Light Theme，呈现 Primary 蓝
-// （见 MainWindow.arml 分区 8「Style & Isolation」）。
+// P1：全局隐式 Button=colorError 已撤；App.arml 仅注册显式
+// `DangerButtonStyle`（x:Key），Style 页演示 Rest 静态底 vs VSM Hover 覆盖。
 
 namespace ArmlDemo;
 

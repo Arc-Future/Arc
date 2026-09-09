@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ComboBox：隐式 = BasedOn Medium；默认 Template = DefaultControlTemplates.ComboBox
+     （PART_Chrome 壳；SelectedText/chevron 宿主层；展开 Popup 另轨）。
+     Template 由 AttachDefaultTemplates 挂载。 -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+    <Style TargetType="ComboBox" BasedOn="{StaticResource Medium}">
+    </Style>
+</ResourceDictionary>

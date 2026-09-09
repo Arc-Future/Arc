@@ -1,0 +1,370 @@
+{
+  "meta": {
+    "title": "Arc",
+    "subtitle": "纯 AOT · C# 惯用表面 · 面向应用开发者",
+    "docTitle": "Arc 开发者手册",
+    "description": "Arc 是纯 AOT 编译的系统级编程语言：C# 惯用表面语法、编译期 LINQ/Expression、无 STW GC。本手册面向用 Arc 写程序的开发者。 | Arc is a purely AOT-compiled systems language with idiomatic C# surface syntax — a handbook for application developers.",
+    "category": "language",
+    "tags": ["arc", "aot", "systems", "csharp-surface", "llvm"],
+    "repoUrl": "https://github.com/Arc-Future/Arc",
+    "demoUrl": "",
+    "featured": true,
+    "sortOrder": 1,
+    "version": "0.1",
+    "language": "zh-CN",
+    "author": "LUSIDA (Start)",
+    "logo": "logo.png",
+    "foreword": "FOREWORD.md",
+    "pathRules": {
+      "chapterIndex": "{chapterId}/INDEX.md",
+      "sectionFile": "{chapterId}/{sectionId}.md"
+    }
+  },
+  "parts": [
+    {
+      "id": "part-1-start",
+      "title": "第一部分 · 入门",
+      "chapters": [
+        {
+          "id": "01-introduction",
+          "title": "认识 Arc",
+          "subtitle": "定位、读者画像与仓库全景",
+          "sections": [
+            {
+              "id": "what-is-arc",
+              "title": "什么是 Arc",
+              "summary": "纯 AOT、C# 表面、同名消歧",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "who-should-use",
+              "title": "适用场景与边界",
+              "summary": "适合谁用、本书不覆盖什么",
+              "readingTime": 6,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "manifesto",
+              "title": "语言宣言",
+              "summary": "四元方程与设计信条",
+              "readingTime": 10,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "ecosystem-overview",
+              "title": "仓库与示例全景",
+              "summary": "examples / std / 文档分册",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            }
+          ]
+        },
+        {
+          "id": "02-quickstart",
+          "title": "快速上手",
+          "subtitle": "安装、构建与运行第一个程序",
+          "sections": [
+            {
+              "id": "getting-started",
+              "title": "安装与快速开始",
+              "summary": "SDK / 源码构建与 Hello World",
+              "readingTime": 15,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "build-run",
+              "title": "构建与运行",
+              "summary": "arc check / build / run",
+              "readingTime": 12,
+              "difficulty": "beginner"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-2-language",
+      "title": "第二部分 · 语言基础",
+      "chapters": [
+        {
+          "id": "03-syntax",
+          "title": "编码与语法",
+          "subtitle": "UTF-8、命名与表面语法",
+          "sections": [
+            {
+              "id": "encoding-standard",
+              "title": "编码与语法标准",
+              "summary": "UTF-8、命名与单一惯用法",
+              "readingTime": 12,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "lexicon-syntax",
+              "title": "词法与语法",
+              "summary": "声明、语句、表达式",
+              "readingTime": 18,
+              "difficulty": "beginner"
+            }
+          ]
+        },
+        {
+          "id": "04-types",
+          "title": "类型系统",
+          "subtitle": "基元、泛型、可空与模式匹配",
+          "sections": [
+            {
+              "id": "type-system",
+              "title": "类型系统",
+              "summary": "用法向类型专章",
+              "readingTime": 25,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "05-memory",
+          "title": "内存与资源",
+          "subtitle": "所有权、借用与确定性释放",
+          "sections": [
+            {
+              "id": "memory-resources",
+              "title": "内存与资源",
+              "summary": "用法向内存专章",
+              "readingTime": 22,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "06-objects",
+          "title": "对象模型",
+          "subtitle": "class、接口、record 与成员",
+          "sections": [
+            {
+              "id": "object-model",
+              "title": "对象模型",
+              "summary": "用法向对象模型专章",
+              "readingTime": 20,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "07-async",
+          "title": "异步与任务",
+          "subtitle": "Task、事件循环与并发",
+          "sections": [
+            {
+              "id": "async-tasks",
+              "title": "异步与任务",
+              "summary": "用法向异步专章",
+              "readingTime": 20,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "08-query",
+          "title": "查询与表达式树",
+          "subtitle": "LINQ 与 Expression<T>（用法向）",
+          "sections": [
+            {
+              "id": "query-language",
+              "title": "查询语言",
+              "summary": "Queryable / LINQ 编译期展开",
+              "readingTime": 18,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "expression-trees",
+              "title": "表达式树",
+              "summary": "Expression<T> 与编译期物化",
+              "readingTime": 18,
+              "difficulty": "advanced"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-3-libs-tools",
+      "title": "第三部分 · 标准库与工具链",
+      "chapters": [
+        {
+          "id": "09-stdlib",
+          "title": "标准库导览",
+          "subtitle": "命名空间、核心 API 与示例路径",
+          "sections": [
+            {
+              "id": "standard-library",
+              "title": "标准库导览",
+              "summary": "核心库用法与边界",
+              "readingTime": 20,
+              "difficulty": "intermediate"
+            }
+          ]
+        },
+        {
+          "id": "10-toolchain",
+          "title": "工具链",
+          "subtitle": "arc CLI、arc.toml、Native 与热重载",
+          "sections": [
+            {
+              "id": "compiler-cli",
+              "title": "编译器 CLI",
+              "summary": "arc 命令面",
+              "readingTime": 16,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "arc-toml-reference",
+              "title": "arc.toml 项目清单",
+              "summary": "项目清单参考",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "native-integration",
+              "title": "Native 组件集成",
+              "summary": "ANI / FFI 集成",
+              "readingTime": 16,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "hot-reload",
+              "title": "热重载编排",
+              "summary": "热重载与插件生命周期",
+              "readingTime": 14,
+              "difficulty": "advanced"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-4-domain",
+      "title": "第四部分 · 领域库",
+      "chapters": [
+        {
+          "id": "11-domain",
+          "title": "领域库使用",
+          "subtitle": "UI / AI / ORM / Web / Net / DI / Chord",
+          "sections": [
+            {
+              "id": "ui",
+              "title": "Arc.UI 用户界面",
+              "summary": "ARML、主题、wgpu 唯一后端",
+              "readingTime": 25,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "ai-host",
+              "title": "Arc.Agent AI 宿主",
+              "summary": "会话、工具、Harness",
+              "readingTime": 22,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "ai-inference",
+              "title": "Arc.AI 推理",
+              "summary": "Tensor 与推理后端",
+              "readingTime": 16,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "orm",
+              "title": "Arc.Orm 数据访问",
+              "summary": "DbContext 与查询翻译",
+              "readingTime": 18,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "web",
+              "title": "Arc.Web 网络应用",
+              "summary": "WebApplication 与 SSR",
+              "readingTime": 18,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "networking-p2p",
+              "title": "Arc.Net 网络与 P2P",
+              "summary": "HttpClient / WebSocket / P2P",
+              "readingTime": 16,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "di",
+              "title": "Arc.DI 依赖注入",
+              "summary": "注册、解析与生命周期",
+              "readingTime": 12,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "chord",
+              "title": "Arc.Chord 插件内核",
+              "summary": "可逆副作用与热替换",
+              "readingTime": 18,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "realism-engine",
+              "title": "拟真引擎（规划）",
+              "summary": "规划中的生成层",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "part-5-advanced",
+      "title": "第五部分 · 进阶与设计入口",
+      "chapters": [
+        {
+          "id": "12-advanced",
+          "title": "进阶与设计",
+          "subtitle": "诊断、能力、术语；设计决策链到 RFC",
+          "sections": [
+            {
+              "id": "diagnostics",
+              "title": "结构化诊断",
+              "summary": "面向人与智能体的诊断",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "capabilities",
+              "title": "能力系统",
+              "summary": "显式能力与边界",
+              "readingTime": 14,
+              "difficulty": "intermediate"
+            },
+            {
+              "id": "design-decisions",
+              "title": "设计决策入口",
+              "summary": "短页：何时查阅仓库 RFC",
+              "readingTime": 8,
+              "difficulty": "advanced"
+            },
+            {
+              "id": "glossary",
+              "title": "术语表",
+              "summary": "术语速查",
+              "readingTime": 8,
+              "difficulty": "beginner"
+            },
+            {
+              "id": "notation",
+              "title": "符号约定",
+              "summary": "文档符号约定",
+              "readingTime": 6,
+              "difficulty": "beginner"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

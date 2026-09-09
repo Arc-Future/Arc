@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Button：隐式 = BasedOn Medium；默认 Template = DefaultControlTemplates.Button
+     （PART_Chrome + PART_Content；VSM→PART；禁 Appearance/Class/Size.SM）。
+     作者：Style="{StaticResource Primary, Small}" → AppliedStyleKeys → VSM。
+     Template Setter 由 BuiltInTheme.AttachDefaultTemplates 挂载。 -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+
+    <Style TargetType="Button" BasedOn="{StaticResource Medium}">
+    </Style>
+</ResourceDictionary>

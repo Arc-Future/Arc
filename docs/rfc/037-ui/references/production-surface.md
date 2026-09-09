@@ -2,7 +2,7 @@
 
 > 本文是 [037 UI 声明式框架(../../037-ui.md) 的**渐进式披露子项**。定义「生产级」内置面的**分层完备性**与滚动条行为契约。**未经验收协议不得宣称生产完备**（宣称纪律）。
 >
-> 主题 ARML 正道见 [builtin-theme-resources](builtin-theme-resources.md)；字体最小面见 [custom-fonts](custom-fonts.md)。
+> 主题 ARML 正道见 [builtin-theme-resources](builtin-theme-resources.md)；主题/样式/交互架构与路线图见 [theme-style-interaction-architecture](theme-style-interaction-architecture.md)；字体最小面见 [custom-fonts](custom-fonts.md)。
 
 ## 1. 分层派生：每层能力必须闭合
 
@@ -20,7 +20,8 @@ FrameworkElement → Panel → StackPanel / Grid / DockPanel / WrapPanel / Canva
 | **FrameworkElement** | Measure/Arrange、`Margin`、`Width/Height`、`HorizontalAlignment`/`VerticalAlignment`、`Resources` | DP 存在但布局忽略 |
 | **Control** | `Background`/`Foreground`、字体三件套、`IsEnabled`、`Focusable`/`IsTabStop`、VSM 可查询状态 | 可交互控件未设 Focusable |
 | **ContentControl** | `Content` + **ContentAlignment** 影响内容槽布局与绘制 | ContentAlignment 仅解析不生效 |
-| **Panel / ScrollView** | 子代 Arrange 尊重对齐；ScrollView 视口裁剪命中与绘制一致 | 滚动条仅绘制无输入或仅输入无样式 |
+| **Panel / ScrollView** | 子代 Arrange 尊重对齐；ScrollView 视口裁剪命中与绘制一致；Measure 有界时 Desired=视口、内容交叉轴受视口宽约束；Arrange 内容槽宽 ≥ 视口 | 滚动条仅绘制无输入或仅输入无样式；内容槽按 Desired 收窄导致客户区空白 |
+| **TabItem（TabControl 页）** | Arrange 将子树铺满 `finalSize` 页槽（对齐经 `LayoutHelper.ArrangeChild`） | 按子 DesiredSize 收窄槽——Tab 客户区右侧空白 |
 
 **内置 chrome 正道**：`VisualStateManager` 状态色 + `WgpuRender.RenderTree` 分支。模板体系（WPF 对齐）已立：`Setter Property="Template"`（`Setter.TemplateValue` 载荷字段）走 StyleEvaluator **通用 DP 路径**——属性集合由源组件 DP 注册表决定（`ResolveProperty` 动态解析，评估器零属性名感知），ControlTemplate 经 wrapper 通道写入 Template DP 并套用 `ApplyTo`（换树幂等）；**Style.Triggers** 属性触发器（`StyleManager.EvaluateTriggers` 进入/退出生命周期——条件命中应用触发 Setters、失效快照回退，string/bool/int 载荷条件，BasedOn 链叠加）；**隐式 DataTemplate**（`ResourceDictionary.AddTemplate/LookupTemplate` 按 DataType 匹配 + `ContentControl.DataContent/DataTypeName` 数据载荷 + `ContentPresenter.ApplyDataTemplate` 显式模板优先 → 隐式匹配 → 兜底文本）；**TemplateBinding**（`TemplateBindingPropertyKey` 附加属性标记，`ApplyTo` 建立绑定时经 `Element.Observe`→`Signal.OnChanged` 静态方法组订阅宿主 DP 变更——宿主属性变更自动重同步模板树，单活跃宿主全自动、多宿主经 `RefreshBindings(host)` 手动兜底）；**模板多实例工厂化**（`ControlTemplate.Instantiate` 委托，多宿主独立视觉树）。`WgpuRender.RenderTree` 内置 chrome 分支（Button/CheckBox/TextBox/Slider）**模板让位**——元素已挂视觉子树（`templated`）时跳过内置 chrome、仅走通用递归，杜绝 chrome + 模板双轨叠加；`TreeDrawListBuilder` 设计时预览以**同构门禁**（已挂子树跳过文本 chrome）与之对齐。ItemsControl 类容器例外（ComboBox）：恒有子节点，其 chrome 分支以提前 `return` 跳过通用递归（折叠态只画 chrome、不铺子项）。新增/重构组件的三层编写动作见 §6 checklist。
 
@@ -34,7 +35,7 @@ FrameworkElement → Panel → StackPanel / Grid / DockPanel / WrapPanel / Canva
 
 | # | 要求 |
 |---|------|
-| F1 | `Control` 字体三件套经隐式 Style / 继承，在 TextBlock/Button/TextBox/CheckBox 上布局与绘制同源 |
+| F1 | `Control` 字体三件套经 **环境 DP 继承**（RFC 037 §4；**禁**烤进隐式 Style），在 TextBlock/Button/TextBox/CheckBox 上布局与绘制同源 |
 | F2 | atlas 文本采样与覆盖 AA 达到可读生产质感（Linear + 覆盖抗锯齿） |
 | F3 | 未注册族名回退默认族且不记假成功（见 custom-fonts） |
 
@@ -65,7 +66,7 @@ FrameworkElement → Panel → StackPanel / Grid / DockPanel / WrapPanel / Canva
 | 轨道空白点击 | **按页** `PAGE_UP` / `PAGE_DOWN`（一页 ≈ viewport）；禁止与「跳转到点击比例」双轨并存 |
 | 滚轮 | 作用于命中的最内层 ScrollView；偏移 DIP |
 | 几何 | C `rt_ui_vscroll_*` 与 `DrawVScrollBar` **同一公式**（宽、最小滑块、travel） |
-| 样式 | 轨道/滑块色经主题 `Color.Scroll.Thumb(+Hover)` + VSM `ScrollBar`；禁止硬编码灰 |
+| 样式 | 轨道/滑块色经主题 `Color.Scroll.*` + VSM `ScrollBar`；禁止硬编码灰；**禁止**经 `StateColor` 消费宿主 `Background`/`Accent`（白底 ScrollView 会吞掉轨道，只剩粗拇指） |
 
 **非目标（能力边界）**：横向滚动条 UI、overlay 自动隐藏动画、>8 ScrollView 槽扩容（后续能力，须诚实登记）。
 
@@ -74,8 +75,9 @@ FrameworkElement → Panel → StackPanel / Grid / DockPanel / WrapPanel / Canva
 | 项 | 契约 |
 |----|------|
 | 可交互内置控件 | Button / Input / CheckBox / ToggleButton / Slider 等须正确 `Focusable`+`IsTabStop`（或显式 false 并文档化） |
-| Tab 容量 | ≤8 槽；超出容量的生产级动态扩容属后续能力（须先立契约） |
-| Input | 点击命中 → `FocusManager` + `ImeBridge` + 平台 `IsFocused` + caret 同帧 |
+| **焦点注册** | `FocusManager.RegisterTabStop` **动态容量**（`List`；SoftCapacity=64 起溢出告警，仍登记——禁静默丢弃） |
+| Tab 软容量 | SoftCapacity=64（RFC 037 §8）；超限告警不拒登 |
+| Input | 点击命中 → `FocusManager`（单一写点）+ `ImeBridge` 跟随 + 平台 `IsFocused` + caret 同帧；命中/caret/选区几何 `InputMetrics.PenOriginX`；鼠标拖选扩展选区 |
 
 ## 6. 内置组件三层编写契约（checklist）
 
@@ -87,7 +89,9 @@ FrameworkElement → Panel → StackPanel / Grid / DockPanel / WrapPanel / Canva
 | ② 运行时渲染 | `WgpuRender.RenderTree.as` | 有内置 chrome 的控件须有类型分支；chrome 绘制前**模板让位**（已挂视觉子树 `templated` → 跳过 chrome、走通用递归）；ItemsControl 类恒有子节点，例外以提前 `return` 跳过通用递归（ComboBox 折叠态） |
 | ③ 设计时预览 | `TreeDrawListBuilder.as` | 与 ② 同构的类型分派 case（case 标签分组合法）；chrome 绘制前检查 `element.Children.Count > 0` 跳过文本 chrome——与 ② 语义等价的模板让位 |
 
-**浮层体系（Popup 轨）**：弹出型 UI（ComboBox 下拉 / 后续 Tooltip、ContextMenu）统一经 `Popup`（`std/UI/Core/Components/Popup.as`）附加层，三轨同构闭合：同步轨 `PlatformTreeSync.BuildFromArc` 独立建树挂窗口平台根（非主树子节点）+ `RootEpoch` 代际守卫（跨会话句柄回收复用自愈）；渲染轨 `WgpuRender` `PopupLayer`/`PopupBackdrop` 分支置顶绘制；输入轨 `PointerRouter` 蒙层槽点击关闭 + 下拉类选项行经既有槽表路由。浮层回调一律**静态方法组 + 互斥槽锚点路由**（`_activeCombo` 型），禁实例方法组订阅（逃逸闭包 ByRef 捕获悬垂 UB，ItemsControl 同根因先例）。
+**浮层体系（Popup 轨 · M1）**：弹出型 UI（ComboBox 下拉 / MessageBox / 后续 Tooltip、ContextMenu）统一经 `Popup`（`std/UI/Core/Components/Popup.as`）附加层，三轨同构闭合：同步轨 `PlatformTreeSync.BuildFromArc` 独立建树挂窗口平台根（非主树子节点）+ `RootEpoch` 代际守卫；渲染轨 `WgpuRender` `PopupLayer`/`PopupBackdrop` 置顶绘制；输入轨 `PointerRouter` 注册 `PopupBackdrop` 蒙层点击 → `RouteBackdropClick`（受 `IsLightDismissEnabled` 门控）+ `ComboBox` chrome 槽 + 下拉选项行既有槽表。**Owner**：`Open(Window?)` 显式宿主优先，否则 Parent 上溯，再回退 `Application.MainWindow`（浮层常不在逻辑树）。**轻关闭**：默认 `IsLightDismissEnabled=true`（蒙层点击 + Esc 经 `KeyboardRouter`/`TryDismissTopOnEscape` LIFO）；模态对话框（MessageBox）置 `false`。平台 Win32 不再无条件 Esc 退窗——无轻关闭弹层时由 KeyboardRouter `MainWindow.Close()`。**钳高**：`ComputeInWindowPlacement` + ComboBox `Popup{ScrollView{ListView}}`（视口=fittedH、内容=preferredH；滚轮/竖条经 ScrollRouter）。**后置**：多弹层 Z 序 / 无蒙层非模态。**MessageBox**：按钮 OK/OKCancel/YesNo/YesNoCancel + `MessageBoxImage` 自绘色块图标；Esc 由 MessageBox 自管。浮层回调一律**静态方法组 + 互斥槽锚点路由**（`_activeCombo` 型）。**窗口内翻定位**：`ComputeInWindowPlacement`；ComboBox 接入；`LayoutPopupContent` 兜底钳入。**MessageBox M1**：`MessageBox.ShowAsync(owner, text, caption, buttons[, image], ct)` 经 Popup（`IsLightDismissEnabled=false`）+ TCS 完成；按钮 OK/OKCancel/YesNo/YesNoCancel；Esc 经 `MessageBox.TryHandleEscape`（非轻关闭时不退主窗）；禁 Win32/原生对话框。**下拉主题化**：ComboBox 注入活动主题 `Color.Surface` + 环境 Foreground（未设则 `Text.Primary`）。**ARML ComboBox**：codegen/`DefaultElementFactory` 实例化为非泛型 `ComboBoxBase`（`ItemsSource` 轨）；`ComboBox<T>` 强类型面另排（泛型单态 prune）。
+
+**基础反馈/选择控件（本刀）**：`ProgressBar`（Value/Min/Max 比例填充，VSM.Progress；只读；`IsIndeterminate` → `MotionEngine.ResolveLoop01` 扫掠，周期 = `Motion.Duration.Normal` × `ControlMetrics.ProgressBarIndeterminatePeriodFactor`）；`RadioButton`（`GroupName` 互斥 + 圆形 chrome；`RaiseToggle` virtual）；**独立 `ScrollBar` 控件延后**——命中/几何在 C `rt_ui_vscroll_*` 绑定 ScrollView 元素句柄，抽成 RangeBase 控件需改 PointerRouter + ScrollView 组合模板，与 §4「竖条嵌于 ScrollView」能力面冲突；本刀强化嵌套竖条（ControlMetrics 几何 + VSM `ScrollBar` 圆角令牌 + 主题 `Color.Scroll.*`）。
 
 **ItemsControl 数据面（单一惯用法 · 强类型）**：项集合来源唯一入口是 `ItemsSource` 属性（object 槽四分支判别：`string` / `List<string>` / `ObservableCollection<string>` / `ItemSourceView` 直行；null 与未知源清空，WPF `ItemsSource = null` 同语义），全部物化收敛为 `ItemSourceView` 数据源视图（`std/UI/Core/Components/ItemSourceView.as`）——**object 数据本体管道**（`Count` / `ItemAt` 返数据本体 / `DisplayAt` 返显示投影），对标 WPF「ItemsSource 承载任意对象」。视图三种构造轨：string 便捷轨（`From(string)`）、强类型静态轨（`From<T>(List<T>, Func<T,string>)` 与 `From<T>(EnumOptions<T>)`，投影在构造期烘焙——编译期类型检查，非运行期字符串反射路径）、动态轨（`From(ObservableCollection<string>)` 订阅迁入视图）。选中态（`SelectedItem`）与多选态（`SelectedItems`）承载**数据本体**而非显示字符串；派生控件读数据源做派生物化（如 ComboBox 下拉）一律经 `View` **共享同一视图实例**（`Detach()` 对静态轨 no-op，共享安全），不重开写面。`DisplayMemberPath` 已撤除（运行期字符串投影与强类型数据面背道而驰，投影职责并入视图构造期）；呈现定制唯一入口是 `ItemTemplate`（`DataTemplate` Instantiate/Recycle 委托对经 `ItemContainerGenerator` 模板路径物化，容器回收池复用）；**命令式 `Set*Items` 公开 API 已撤面**（双轨禁令，RFC 001 单一惯用法）。
 

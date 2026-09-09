@@ -11,7 +11,7 @@ alwaysApply: true
 
 ## 五步循环
 
-1. **读** — `preface.md` → `docs/rfc/index.md` → 相关 RFC（语义变更必须先 RFC）
+1. **读** — `docs/arc/FOREWORD.md` / `docs/arc/INDEX.md` → `docs/rfc/index.md` → 相关 RFC（语义变更必须先 RFC）
 2. **写** — 文档与代码同一变更集；外科手术式 diff；无 `todo!()`/双轨 API
 3. **验** — 按变更类型跑验证矩阵（crate / arc-tests / full-rt 门控 / workspace）
 4. **审** — 无 scope creep；不扩大「已知技术债」表内项

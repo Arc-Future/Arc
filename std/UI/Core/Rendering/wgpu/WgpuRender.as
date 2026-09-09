@@ -97,7 +97,7 @@ public partial class WgpuRender : IRender, ITextMetrics {
 
     // 绘制
     private const int RectVertexCount = 6;
-    private const int RectBorderThickness = 1.0;
+    private const int RectBorderThickness = 1;
     private const int DrawDefaultInstanceCount = 1;
     private const int DrawDefaultFirstVertex = 0;
     private const int DrawDefaultFirstInstance = 0;
@@ -111,7 +111,7 @@ public partial class WgpuRender : IRender, ITextMetrics {
     private const int WgpuTexUsageCopyDst = 0x0002;
     private const int WgpuFormatRgba8Unorm = 22;       // WGPUTextureFormat_RGBA8Unorm (0x16)
 
-    // 布局——内置 8x16 点阵字体（fallback）+ 动态 stb_truetype atlas（主路径）
+    // 布局——尺寸令牌与 ControlMetrics 对齐（const 须字面量；权威见 ControlMetrics）
     private const double LayoutPaddingX = 16.0;
     private const double LayoutPaddingY = 8.0;
     // 8x16 点阵 fallback 常量
@@ -132,11 +132,15 @@ public partial class WgpuRender : IRender, ITextMetrics {
     private const string ElToggleButton = "ToggleButton";
     private const string ElRectangle = "Rectangle";
     private const string ElCheckBox = "CheckBox";
+    private const string ElRadioButton = "RadioButton";
     private const string ElTextBox = "TextBox";
+    private const string ElPasswordBox = "PasswordBox";
+    private const string ElBorder = "Border";
     private const string ElImage = "Image";
     private const string ElVideoSurface = "VideoSurface";
     private const string ElScrollView = "ScrollView";
     private const string ElSlider = "Slider";
+    private const string ElProgressBar = "ProgressBar";
     private const string ElComboBox = "ComboBox";
     private const string ElGrid = "Grid";
     private const string ElDockPanel = "DockPanel";
@@ -146,6 +150,7 @@ public partial class WgpuRender : IRender, ITextMetrics {
     private const string ElListView = "ListView";
     private const string ElDataGrid = "DataGrid";
     private const string ElDataGridRow = "DataGridRow";
+    private const string ElCodeEditor = "CodeEditor";
     private const string ElWindow = "Window";
     private const string ElElement = "Element";
     private const string ElPopupLayer = "PopupLayer";
@@ -153,10 +158,8 @@ public partial class WgpuRender : IRender, ITextMetrics {
 
     // 颜色常量（类型化 Arc.UI.Media.Color；sRGB 分量，渲染端写 uniform 前线性化）
     private static Color ColorTransparent() { return Color.Transparent(); }
-    private static Color ColorBorder() { return Color.Parse("#222222"); }
-    private static Color ColorTextDefault() { return Color.Parse("#000000"); }
 
-    // 滚动条
+    // 滚动条（字面量对齐 ControlMetrics.VScroll*；const 须字面量）
     private const double VScrollWidth = 12.0;
     private const double VScrollMinThumb = 20.0;
 
@@ -272,6 +275,9 @@ public partial class WgpuRender : IRender, ITextMetrics {
     private List<double> _clipH;
     private int _clipDepth;
 
+    /// <summary>本帧是否 Push 了 Present 脏区根裁剪（EndFrame 须配对 PopClip）。</summary>
+    private bool _presentRegionActive;
+
     // ===== RFC 037 M2 文本管线资源（内置点阵字体 + atlas + 纹理采样）=====
 
     /// <summary>glyph atlas 纹理（128x96 RGBA8，95 可打印 ASCII 字形）。</summary>
@@ -350,8 +356,8 @@ public partial class WgpuRender : IRender, ITextMetrics {
     // references/texture-surface）：_texTexture/_texView/_texBindGroup/_texW/
     // _texH/_texInUse。textureId = 槽位+1。
 
-    /// <summary>帧命令记录：image 命令（pipeline 3）的纹理 id（FlushFrameCommands
-    /// 重放时按 id 查注册表绑对应 bind group）。</summary>
+    /// <summary>帧命令记录：仅 image 命令（pipeline 3）追加的纹理 id（稠密下标）。
+    /// FlushFrameCommands 用独立 texIdx 消费，不可与全命令下标 i 对齐。</summary>
     private List<int> _cmdTexture;
 
     /// <summary>
@@ -692,6 +698,8 @@ public partial class WgpuRender : IRender, ITextMetrics {
                 _configuredWidth = _surfaceWidth;
                 _configuredHeight = _surfaceHeight;
             }
+            // 新 surface 内容未定义——禁 LoadOp_Load 区域 Present。
+            FramePump.ForceFullPaint();
         }
 
         // 重置 uniform offset——新帧从 0 开始写入
@@ -708,6 +716,12 @@ public partial class WgpuRender : IRender, ITextMetrics {
         _cmdScissorH.Clear();
         _lastPipeline = -1;
         _lastScissorIdx = -1;
+        _clipX.Clear();
+        _clipY.Clear();
+        _clipW.Clear();
+        _clipH.Clear();
+        _clipDepth = 0;
+        _presentRegionActive = false;
         if (_staging == null) {
             _staging = wgpu_native.wgpu_batch_staging_create(UniformBufferSize);
         }
@@ -727,19 +741,39 @@ public partial class WgpuRender : IRender, ITextMetrics {
         }
         _frameTextureView = view;
 
-        // 创建 CommandEncoder + 开始 RenderPass（clear 黑色）。
+        // 整窗 Clear。Swapchain 纹理不可 LoadOp_Load 区域 Present（Fifo 交替缓冲
+        // 使 Load 读到过期/未定义内容 → 黑屏闪烁）；见 FramePump.InvalidateRegion。
+        bool region = FramePump.HasPresentRegion();
+        int clearFlag = 1;
+        if (region) {
+            clearFlag = 0;
+        }
         _encoder = wgpu_native.wgpu_command_encoder_create(_device);
         _pass = wgpu_native.wgpu_render_pass_begin(
             _encoder,
             _frameTextureView,
-            1,            // clear=1
-            0.0, 0.0, 0.0, 1.0  // RGBA 黑色
+            clearFlag,
+            0.0, 0.0, 0.0, 1.0  // RGBA 黑色（仅 clearFlag=1 生效；随后树绘制铺满）
         );
+        if (region) {
+            double rx = FramePump.PresentDirtyX();
+            double ry = FramePump.PresentDirtyY();
+            double rw = FramePump.PresentDirtyW();
+            double rh = FramePump.PresentDirtyH();
+            // 焦点环 / 阴影余量；与 RenderTree CullMargin 同量级。
+            double pad = 8.0;
+            this.PushClip(rx - pad, ry - pad, rw + pad * 2.0, rh + pad * 2.0);
+            _presentRegionActive = true;
+        }
     }
 
     public void EndFrame() {
         if (!_initialized) {
             return;
+        }
+        if (_presentRegionActive) {
+            this.PopClip();
+            _presentRegionActive = false;
         }
         this.FlushFrameCommands(true);
     }
@@ -768,6 +802,9 @@ public partial class WgpuRender : IRender, ITextMetrics {
             // 2. 按 pipeline/scissor 连续段去重 set_pipeline/set_scissor，逐项 set_bind_group(dynamic offset)+draw。
             int lastP = -1;
             int lastS = -1;
+            // _cmdTexture 仅在 DrawTexture（pipeline 3）时追加，与 _cmdOffset 下标不对齐；
+            // 须用稠密 texIdx 消费，禁止用全命令下标 i（滚动露出 Image 后即 list OOB）。
+            int texIdx = 0;
             for (int i = 0; i < cmdCount; i++) {
                 int p = _cmdPipeline[i];
                 // scissor 去重：仅当裁剪区域变化时切换（index 相同即同裁剪）。
@@ -804,7 +841,7 @@ public partial class WgpuRender : IRender, ITextMetrics {
                     }
                     lastP = p;
                 }
-                // 选当前命令的 bind group：p==3（image）按 _cmdTexture 查注册表
+                // 选当前命令的 bind group：p==3（image）按 _cmdTexture 稠密下标查注册表
                 //（多槽各绑各纹理视图）；其余用固定共享 bind group。纹理无效
                 //（帧内被销毁）防御性跳过绘制，避免 null bind group 崩溃。
                 NativePtr bgToUse = null;
@@ -813,7 +850,10 @@ public partial class WgpuRender : IRender, ITextMetrics {
                 } else if (p == 2) {
                     bgToUse = _shadowBindGroup;
                 } else if (p == 3) {
-                    bgToUse = this.GetTextureBindGroup(_cmdTexture[i]);
+                    if (texIdx < _cmdTexture.Count) {
+                        bgToUse = this.GetTextureBindGroup(_cmdTexture[texIdx]);
+                        texIdx = texIdx + 1;
+                    }
                 } else {
                     bgToUse = _textBindGroup;
                 }

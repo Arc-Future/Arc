@@ -8,6 +8,9 @@ using Arc.UI;
 using Arc.UI.Components;
 using Arc.UI.Components.Layout;
 using Arc.UI.Layout;
+using Arc.UI.Media;
+using Arc.UI.Rendering;
+using Arc.UI.Styling;
 
 internal class PlatformTreeSync {
     /// <summary>
@@ -20,8 +23,42 @@ internal class PlatformTreeSync {
     private PlatformTreeSync() {
     }
 
+    /// <summary>
+    /// 同步非继承画刷：仅本地/样式写入才上镜；未设写空串，供渲染回落主题 / VSM。
+    /// </summary>
+    private static void SyncOwnBrush(long handle, string propName, Element element,
+                                       DependencyProperty<Brush> prop) {
+        if (element.HasOwnValue(prop.Id)) {
+            WindowHost.ElementSetString(handle, propName, element.GetValue<Brush>(prop).ToHex());
+        } else {
+            WindowHost.ElementSetString(handle, propName, "");
+        }
+    }
+
+    /// <summary>
+    /// 同步环境前景：本地/样式/继承有效值上镜；纯 DP 默认不上镜（空串），
+    /// 避免 Light 默认 hex 挡住活动主题 Text.Primary / VSM TextOnAccent。
+    /// </summary>
+    private static void SyncAmbientForeground(long handle, Element element) {
+        if (element.HasAmbientValue(Control.ForegroundProperty.Id)) {
+            WindowHost.ElementSetString(handle, "Foreground",
+                element.GetValue<Brush>(Control.ForegroundProperty).ToHex());
+        } else {
+            WindowHost.ElementSetString(handle, "Foreground", "");
+        }
+    }
+
     /// <summary>从 Arc 逻辑树根递归构建平台 RtUiElement 树并返回根句柄。</summary>
     internal static long BuildFromArc(Element arcRoot) {
+        return PlatformTreeSync.BuildFromArcCore(arcRoot, 0);
+    }
+
+    /// <summary>
+    /// chromeHostHandle：模板宿主控件句柄。套用 ControlTemplate 的 Control 把自身
+    /// 句柄传给模板子树，PART_* 经 ChromeHostHandle/ChromeRole 镜像供 RenderTree
+    /// 把 VSM 画到部件（命中仍落宿主——Border/TextBlock 非 pointer target）。
+    /// </summary>
+    static long BuildFromArcCore(Element arcRoot, long chromeHostHandle) {
         string typeName = arcRoot.TypeName;
         if (typeName == null || typeName == "") {
             typeName = "Element";
@@ -30,33 +67,33 @@ internal class PlatformTreeSync {
 
         if (typeName == "Window") {
             Window window = (Window)arcRoot;
-            WindowHost.ElementSetString(handle, "Background", window.Background);
+            SyncOwnBrush(handle, "Background", window, Control.BackgroundProperty);
         } else if (typeName == "StackPanel") {
             StackPanel panel = (StackPanel)arcRoot;
             WindowHost.ElementSetString(handle, "Orientation",
                 UIEnumConverter.OrientationText(panel.Orientation));
             WindowHost.ElementSetNumber(handle, "Spacing", panel.Spacing);
-            WindowHost.ElementSetString(handle, "Background", panel.Background);
+            SyncOwnBrush(handle, "Background", panel, Panel.BackgroundProperty);
         } else if (typeName == "Grid") {
             Grid grid = (Grid)arcRoot;
             WindowHost.ElementSetNumber(handle, "ColumnSpacing", grid.ColumnSpacing);
             WindowHost.ElementSetNumber(handle, "RowSpacing", grid.RowSpacing);
-            WindowHost.ElementSetString(handle, "Background", grid.Background);
+            SyncOwnBrush(handle, "Background", grid, Panel.BackgroundProperty);
         } else if (typeName == "Canvas") {
             Canvas canvas = (Canvas)arcRoot;
-            WindowHost.ElementSetString(handle, "Background", canvas.Background);
+            SyncOwnBrush(handle, "Background", canvas, Panel.BackgroundProperty);
         } else if (typeName == "DockPanel") {
             DockPanel dock = (DockPanel)arcRoot;
             int lastFill = dock.LastChildFill ? 1 : 0;
             WindowHost.ElementSetBool(handle, "LastChildFill", lastFill);
-            WindowHost.ElementSetString(handle, "Background", dock.Background);
+            SyncOwnBrush(handle, "Background", dock, Panel.BackgroundProperty);
         } else if (typeName == "WrapPanel") {
             WrapPanel wrap = (WrapPanel)arcRoot;
             WindowHost.ElementSetString(handle, "Orientation",
                 UIEnumConverter.OrientationText(wrap.Orientation));
             WindowHost.ElementSetNumber(handle, "ItemWidth", wrap.ItemWidth);
             WindowHost.ElementSetNumber(handle, "ItemHeight", wrap.ItemHeight);
-            WindowHost.ElementSetString(handle, "Background", wrap.Background);
+            SyncOwnBrush(handle, "Background", wrap, Panel.BackgroundProperty);
         } else if (typeName == "ScrollView") {
             ScrollView scroll = (ScrollView)arcRoot;
             WindowHost.ElementSetString(handle, "HorizontalScrollBarVisibility",
@@ -69,19 +106,28 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetNumber(handle, "ExtentHeight", scroll.ExtentHeight);
             WindowHost.ElementSetNumber(handle, "ViewportWidth", scroll.ViewportWidth);
             WindowHost.ElementSetNumber(handle, "ViewportHeight", scroll.ViewportHeight);
-            WindowHost.ElementSetString(handle, "Background", scroll.Background);
+            SyncOwnBrush(handle, "Background", scroll, Panel.BackgroundProperty);
             ScrollRouter.RegisterScrollView(handle, scroll);
         } else if (typeName == "VisualHost") {
             VisualHost host = (VisualHost)arcRoot;
-            WindowHost.ElementSetString(handle, "Background", host.Background);
+            SyncOwnBrush(handle, "Background", host, Control.BackgroundProperty);
+        } else if (typeName == "TabControl") {
+            TabControl tabs = (TabControl)arcRoot;
+            SyncOwnBrush(handle, "Background", tabs, Panel.BackgroundProperty);
+            tabs.BindPlatformMirror(handle);
+            PointerRouter.RegisterTabControl(handle, tabs);
+        } else if (typeName == "TabItem") {
+            TabItem tab = (TabItem)arcRoot;
+            SyncOwnBrush(handle, "Background", tab, Panel.BackgroundProperty);
+            WindowHost.ElementSetString(handle, "Header", tab.Header);
         } else if (typeName == "TextBlock") {
             TextBlock text = (TextBlock)arcRoot;
             WindowHost.ElementSetString(handle, "Text", text.Text);
             WindowHost.ElementSetNumber(handle, "FontSize", text.FontSize);
             WindowHost.ElementSetString(handle, "FontFamily", text.FontFamily);
             WindowHost.ElementSetString(handle, "FontWeight", text.FontWeight);
-            WindowHost.ElementSetString(handle, "Background", text.Background);
-            WindowHost.ElementSetString(handle, "Foreground", text.Foreground);
+            SyncOwnBrush(handle, "Background", text, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, text);
             int textEnabled = text.IsEnabled ? 1 : 0;
             WindowHost.ElementSetBool(handle, "IsEnabled", textEnabled);
             // ItemIndex：VirtualizingStackPanel 物化的项行（点击行命中/选中高亮定位用）；
@@ -94,12 +140,26 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetNumber(handle, "FontSize", button.FontSize);
             WindowHost.ElementSetString(handle, "FontFamily", button.FontFamily);
             WindowHost.ElementSetString(handle, "FontWeight", button.FontWeight);
-            WindowHost.ElementSetString(handle, "Background", button.Background);
-            WindowHost.ElementSetString(handle, "Foreground", button.Foreground);
+            SyncOwnBrush(handle, "Background", button, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, button);
             int btnEnabled = button.IsEnabled ? 1 : 0;
             WindowHost.ElementSetBool(handle, "IsEnabled", btnEnabled);
             WindowHost.ElementSetBool(handle, "IsMouseOver", 0);
             WindowHost.ElementSetBool(handle, "IsPressed", 0);
+            string styleKeys = button.AppliedStyleKeys;
+            if (styleKeys == null) {
+                styleKeys = "";
+            }
+            WindowHost.ElementSetString(handle, "StyleKeys", styleKeys);
+            Thickness btnPad = Thickness.Parse(button.Padding).Sanitized();
+            double padX = btnPad.Left + btnPad.Right;
+            double padY = btnPad.Top + btnPad.Bottom;
+            if (button.Padding == null || button.Padding == "" || button.Padding == "0,0,0,0") {
+                padX = ControlMetrics.ButtonPaddingX;
+                padY = ControlMetrics.ButtonPaddingY;
+            }
+            WindowHost.ElementSetNumber(handle, "PaddingX", padX);
+            WindowHost.ElementSetNumber(handle, "PaddingY", padY);
             PointerRouter.RegisterButton(handle, button);
         } else if (typeName == "ToggleButton") {
             ToggleButton toggle = (ToggleButton)arcRoot;
@@ -107,8 +167,8 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetNumber(handle, "FontSize", toggle.FontSize);
             WindowHost.ElementSetString(handle, "FontFamily", toggle.FontFamily);
             WindowHost.ElementSetString(handle, "FontWeight", toggle.FontWeight);
-            WindowHost.ElementSetString(handle, "Background", toggle.Background);
-            WindowHost.ElementSetString(handle, "Foreground", toggle.Foreground);
+            SyncOwnBrush(handle, "Background", toggle, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, toggle);
             int toggleEnabled = toggle.IsEnabled ? 1 : 0;
             WindowHost.ElementSetBool(handle, "IsEnabled", toggleEnabled);
             int toggleChecked = toggle.IsChecked ? 1 : 0;
@@ -122,8 +182,8 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetNumber(handle, "FontSize", checkbox.FontSize);
             WindowHost.ElementSetString(handle, "FontFamily", checkbox.FontFamily);
             WindowHost.ElementSetString(handle, "FontWeight", checkbox.FontWeight);
-            WindowHost.ElementSetString(handle, "Background", checkbox.Background);
-            WindowHost.ElementSetString(handle, "Foreground", checkbox.Foreground);
+            SyncOwnBrush(handle, "Background", checkbox, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, checkbox);
             int cbEnabled = checkbox.IsEnabled ? 1 : 0;
             WindowHost.ElementSetBool(handle, "IsEnabled", cbEnabled);
             int cbChecked = checkbox.IsChecked ? 1 : 0;
@@ -131,6 +191,22 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetBool(handle, "IsMouseOver", 0);
             WindowHost.ElementSetBool(handle, "IsPressed", 0);
             PointerRouter.RegisterToggle(handle, checkbox);
+        } else if (typeName == "RadioButton") {
+            RadioButton radio = (RadioButton)arcRoot;
+            WindowHost.ElementSetString(handle, "Content", ContentHelper.TextOrEmpty(radio.Content));
+            WindowHost.ElementSetNumber(handle, "FontSize", radio.FontSize);
+            WindowHost.ElementSetString(handle, "FontFamily", radio.FontFamily);
+            WindowHost.ElementSetString(handle, "FontWeight", radio.FontWeight);
+            SyncOwnBrush(handle, "Background", radio, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, radio);
+            int radioEnabled = radio.IsEnabled ? 1 : 0;
+            WindowHost.ElementSetBool(handle, "IsEnabled", radioEnabled);
+            int radioChecked = radio.IsChecked ? 1 : 0;
+            WindowHost.ElementSetBool(handle, "IsChecked", radioChecked);
+            WindowHost.ElementSetBool(handle, "IsMouseOver", 0);
+            WindowHost.ElementSetBool(handle, "IsPressed", 0);
+            WindowHost.ElementSetString(handle, "GroupName", radio.GroupName);
+            PointerRouter.RegisterToggle(handle, radio);
         } else if (typeName == "TextBox") {
             TextBox input = (TextBox)arcRoot;
             WindowHost.ElementSetString(handle, "Text", input.Text);
@@ -139,13 +215,43 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetNumber(handle, "FontSize", input.FontSize);
             WindowHost.ElementSetString(handle, "FontFamily", input.FontFamily);
             WindowHost.ElementSetString(handle, "FontWeight", input.FontWeight);
-            WindowHost.ElementSetString(handle, "Background", input.Background);
-            WindowHost.ElementSetString(handle, "Foreground", input.Foreground);
+            SyncOwnBrush(handle, "Background", input, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, input);
             int readOnly = input.IsReadOnly ? 1 : 0;
             WindowHost.ElementSetBool(handle, "IsReadOnly", readOnly);
             int inputEnabled = input.IsEnabled ? 1 : 0;
             WindowHost.ElementSetBool(handle, "IsEnabled", inputEnabled);
             WindowHost.ElementSetArcPtr(handle, input);
+        } else if (typeName == "PasswordBox") {
+            // 镜像 Text = 掩码（GeometryText）；明文仅内核 / Password 属性面。
+            PasswordBox password = (PasswordBox)arcRoot;
+            WindowHost.ElementSetString(handle, "Text", password.GeometryText());
+            WindowHost.ElementSetString(handle, "CompositionText", "");
+            WindowHost.ElementSetString(handle, "Placeholder", password.Placeholder);
+            WindowHost.ElementSetString(handle, "PasswordChar", password.PasswordChar);
+            WindowHost.ElementSetNumber(handle, "FontSize", password.FontSize);
+            WindowHost.ElementSetString(handle, "FontFamily", password.FontFamily);
+            WindowHost.ElementSetString(handle, "FontWeight", password.FontWeight);
+            SyncOwnBrush(handle, "Background", password, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, password);
+            int pwReadOnly = password.IsReadOnly ? 1 : 0;
+            WindowHost.ElementSetBool(handle, "IsReadOnly", pwReadOnly);
+            int pwEnabled = password.IsEnabled ? 1 : 0;
+            WindowHost.ElementSetBool(handle, "IsEnabled", pwEnabled);
+            WindowHost.ElementSetArcPtr(handle, password);
+        } else if (typeName == "Border") {
+            Border border = (Border)arcRoot;
+            SyncOwnBrush(handle, "Background", border, Control.BackgroundProperty);
+            SyncOwnBrush(handle, "BorderBrush", border, Border.BorderBrushProperty);
+            Thickness bt = Thickness.Parse(border.BorderThickness).Sanitized();
+            double uniformBt = bt.Left;
+            if (bt.Top > uniformBt) { uniformBt = bt.Top; }
+            if (bt.Right > uniformBt) { uniformBt = bt.Right; }
+            if (bt.Bottom > uniformBt) { uniformBt = bt.Bottom; }
+            WindowHost.ElementSetNumber(handle, "BorderThicknessUniform", uniformBt);
+            WindowHost.ElementSetString(handle, "BorderThickness", border.BorderThickness);
+            WindowHost.ElementSetNumber(handle, "CornerRadius", border.CornerRadius);
+            WindowHost.ElementSetString(handle, "Padding", border.Padding);
         } else if (typeName == "Rectangle") {
             Rectangle rect = (Rectangle)arcRoot;
             WindowHost.ElementSetNumber(handle, "Width", rect.Width);
@@ -161,18 +267,33 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetNumber(handle, "Minimum", slider.Minimum);
             WindowHost.ElementSetNumber(handle, "Maximum", slider.Maximum);
             WindowHost.ElementSetNumber(handle, "Step", slider.Step);
-            WindowHost.ElementSetString(handle, "Background", slider.Background);
-            WindowHost.ElementSetString(handle, "Foreground", slider.Foreground);
+            SyncOwnBrush(handle, "Background", slider, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, slider);
             int sliderEnabled = slider.IsEnabled ? 1 : 0;
             WindowHost.ElementSetBool(handle, "IsEnabled", sliderEnabled);
+            WindowHost.ElementSetBool(handle, "IsMouseOver", 0);
+            WindowHost.ElementSetBool(handle, "IsPressed", 0);
             PointerRouter.RegisterSlider(handle, slider);
+        } else if (typeName == "ProgressBar") {
+            ProgressBar progress = (ProgressBar)arcRoot;
+            WindowHost.ElementSetNumber(handle, "Value", progress.Value);
+            WindowHost.ElementSetNumber(handle, "Minimum", progress.Minimum);
+            WindowHost.ElementSetNumber(handle, "Maximum", progress.Maximum);
+            int indeterminate = progress.IsIndeterminate ? 1 : 0;
+            WindowHost.ElementSetBool(handle, "IsIndeterminate", indeterminate);
+            SyncOwnBrush(handle, "Background", progress, Control.BackgroundProperty);
+            int progressEnabled = progress.IsEnabled ? 1 : 0;
+            WindowHost.ElementSetBool(handle, "IsEnabled", progressEnabled);
+            progress.BindPlatformMirror(handle);
         } else if (typeName == "ListView") {
             ListView listView = (ListView)arcRoot;
             WindowHost.ElementSetNumber(handle, "SelectedIndex", (double)listView.SelectedIndex);
             WindowHost.ElementSetNumber(handle, "LayoutHeight", listView.RenderHeight);
-            WindowHost.ElementSetString(handle, "Background", listView.Background);
+            SyncOwnBrush(handle, "Background", listView, Control.BackgroundProperty);
             listView.BindPlatformMirror(handle);
             PointerRouter.RegisterListView(handle, listView);
+            // ListView 非 InputElement：显式 Tab 停靠，供 Up/Down/Home/End/Enter 选中。
+            FocusManager.RegisterTabStop(listView, handle);
         } else if (typeName == "DataGrid") {
             // RFC 037 §4 · M-VZ4：grid 镜像携带列元数据 + 行区几何 + 选中态；
             // 行镜像（DataGridRow 子元素）由通用递归 + 下方 DataGridRow 分支物化。
@@ -192,14 +313,19 @@ internal class PlatformTreeSync {
             PointerRouter.RegisterDataGrid(handle, dataGrid);
         } else if (typeName == "DataGridRow") {
             // 行镜像：ItemIndex（命中测试）+ C{i} 单元格（wgpu 渲染）；
+            // 单元格单一来源是父 DataGrid.GetCell（行上不缓存 List）。
             // Layout* 由尾部 FrameworkElement 通用同步写入。
             DataGridRow dataGridRow = (DataGridRow)arcRoot;
             WindowHost.ElementSetNumber(handle, "ItemIndex", (double)dataGridRow.RowIndex);
-            int cellIdx = 0;
-            int cellCount = dataGridRow.Cells.Count;
-            while (cellIdx < cellCount) {
-                WindowHost.ElementSetString(handle, "C" + cellIdx, dataGridRow.Cells[cellIdx]);
-                cellIdx++;
+            if (dataGridRow.Parent is DataGrid) {
+                DataGrid parentGrid = (DataGrid)dataGridRow.Parent;
+                int cellIdx = 0;
+                int cellCount = parentGrid.ColumnCount;
+                while (cellIdx < cellCount) {
+                    WindowHost.ElementSetString(
+                        handle, "C" + cellIdx, parentGrid.GetCell(dataGridRow.RowIndex, cellIdx));
+                    cellIdx++;
+                }
             }
         } else if (typeName == "ComboBox") {
             // ComboBox<T> 泛型派生自非泛型 ComboBoxBase——选中态与字体面经非泛型
@@ -210,8 +336,8 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetNumber(handle, "FontSize", combo.FontSize);
             WindowHost.ElementSetString(handle, "FontFamily", combo.FontFamily);
             WindowHost.ElementSetString(handle, "FontWeight", combo.FontWeight);
-            WindowHost.ElementSetString(handle, "Background", combo.Background);
-            WindowHost.ElementSetString(handle, "Foreground", combo.Foreground);
+            SyncOwnBrush(handle, "Background", combo, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, combo);
             int comboEnabled = combo.IsEnabled ? 1 : 0;
             WindowHost.ElementSetBool(handle, "IsEnabled", comboEnabled);
             combo.BindPlatformMirror(handle);
@@ -225,14 +351,27 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetString(handle, "Stretch", UIEnumConverter.StretchText(image.Stretch));
             WindowHost.ElementSetNumber(handle, "Width", image.Width);
             WindowHost.ElementSetNumber(handle, "Height", image.Height);
-            WindowHost.ElementSetString(handle, "Background", image.Background);
+            SyncOwnBrush(handle, "Background", image, Control.BackgroundProperty);
             image.BindPlatformMirror(handle);
         } else if (typeName == "VideoSurface") {
             // RFC 037 references/texture-surface：TextureId 写镜像 handle，wgpu 渲染据此 DrawTexture。
             VideoSurface vs = (VideoSurface)arcRoot;
             WindowHost.ElementSetNumber(handle, "TextureId", (double)vs.TextureId);
             WindowHost.ElementSetString(handle, "Stretch", UIEnumConverter.StretchText(vs.Stretch));
-            WindowHost.ElementSetString(handle, "Background", vs.Background);
+            SyncOwnBrush(handle, "Background", vs, Control.BackgroundProperty);
+        } else if (typeName == "CodeEditor") {
+            // RFC 037 §4 M-CE1：经 IFrameDrawListProvider 登记（Core 不引用 Edit 包）。
+            // 字体/背景走 Control 公共面；行文本由 RenderTree ExecuteDrawList 上屏。
+            Control editor = (Control)arcRoot;
+            WindowHost.ElementSetNumber(handle, "FontSize", editor.FontSize);
+            WindowHost.ElementSetString(handle, "FontFamily", editor.FontFamily);
+            WindowHost.ElementSetString(handle, "FontWeight", editor.FontWeight);
+            SyncOwnBrush(handle, "Background", editor, Control.BackgroundProperty);
+            SyncAmbientForeground(handle, editor);
+            if (arcRoot is IFrameDrawListProvider) {
+                IFrameDrawListProvider provider = (IFrameDrawListProvider)arcRoot;
+                provider.BindDrawListMirror(handle);
+            }
         }
 
         FrameworkElement fe = (FrameworkElement)arcRoot;
@@ -252,12 +391,47 @@ internal class PlatformTreeSync {
             FocusManager.RegisterTabStop((Control)arcRoot, handle);
         }
 
-        for (int i = 0; i < arcRoot.Children.Count; i++) {
-            Element child = arcRoot.Children[i];
-            long childHandle = BuildFromArc(child);
-            WindowHost.ElementAddChild(handle, childHandle);
+        long nextChromeHost = chromeHostHandle;
+        if (arcRoot is Control) {
+            Control ctl = (Control)arcRoot;
+            if (ctl.Template != null) {
+                nextChromeHost = handle;
+            }
+        }
+
+        if (arcRoot.Children != null) {
+            for (int i = 0; i < arcRoot.Children.Count; i++) {
+                Element child = arcRoot.Children[i];
+                long childHandle = PlatformTreeSync.BuildFromArcCore(child, nextChromeHost);
+                WindowHost.ElementAddChild(handle, childHandle);
+                PlatformTreeSync.StampChromePart(child, childHandle, nextChromeHost);
+            }
         }
         return handle;
+    }
+
+    /// <summary>模板部件镜像：ChromeHostHandle + ChromeRole（Surface/Glyph/Content）。</summary>
+    static void StampChromePart(Element child, long childHandle, long chromeHost) {
+        if (chromeHost == 0 || child == null || childHandle == 0) {
+            return;
+        }
+        string name = child.Name;
+        if (name == null || name.Length == 0) {
+            return;
+        }
+        string role = "";
+        if (name == DefaultControlTemplates.PartChrome) {
+            role = "Surface";
+        } else if (name == DefaultControlTemplates.PartGlyph) {
+            role = "Glyph";
+        } else if (name == DefaultControlTemplates.PartContent) {
+            role = "Content";
+        } else {
+            return;
+        }
+        WindowHost.ElementSetNumber(childHandle, "ChromeHostHandle", (double)chromeHost);
+        WindowHost.ElementSetString(childHandle, "ChromeRole", role);
+        WindowHost.ElementSetString(childHandle, "Name", name);
     }
 
     /// <summary>滚轮等运行时事件后：将 Arc 布局坐标/Offset 写回既有平台镜像（不重建树）。</summary>

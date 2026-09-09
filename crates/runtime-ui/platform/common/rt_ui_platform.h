@@ -27,9 +27,15 @@ void rt_ui_dispatch_input_focus(RtUiElement* elem);
 /* M-caret2：Input 点击定位 caret（local_dip_x 为命中元素局部 DIP 坐标）。 */
 void rt_ui_set_input_click_handler(void* fn, void* env);
 void rt_ui_dispatch_input_click_at(RtUiElement* elem, int32_t local_dip_x);
-void rt_ui_set_keyboard_handler(void* fn, void* env);
-void rt_ui_dispatch_keyboard(int32_t virtual_key, int32_t shift_down);
+void rt_ui_set_key_handler(void* fn, void* env);
+void rt_ui_dispatch_key(int32_t virtual_key, int32_t mods);
+void rt_ui_set_text_handler(void* fn, void* env);
+void rt_ui_dispatch_text(const char* utf8);
 void rt_window_invalidate(void* window);
+
+/* RFC 037 TextBox 剪贴板（Win32 CF_UNICODETEXT；非 Win32 stub）。 */
+char* rt_ui_clipboard_get_text(void);
+void rt_ui_clipboard_set_text(const char* utf8);
 
 /* RFC 037 D10.6 — 泛化指针路由（按控件类型注册，additive ABI）。
  *

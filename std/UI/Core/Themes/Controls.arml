@@ -1,14 +1,37 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Built-in implicit control styles (UI-P2, fonts removed 2026-08-17).
+<!-- Built-in control styles — 聚合入口（MergedDictionaries → Controls/*）。
+     运行时：BuiltInTheme.CreateLight/Dark → MergedDictionaries.Add(CreateControls())。
+     Styles.g.as ← arc-ui 自本文件 + Source 合并生成（UPDATE_BUILTIN_THEME=1）。
 
-     Fonts are ambient inherited DPs (RFC 037 §4 property value inheritance):
-     FontFamily/FontSize/FontWeight/Foreground flow down the Parent chain — set once
-     on Window/root for a tree-wide font; per-control setters are redundant and
-     forbidden here. Global font default has a single source: the Control DP defaults.
-     This file carries chrome-only setters (Padding etc., UI-P5); theme colors still
-     resolve via VSM → theme tokens so SwitchTheme works (no static color baking). -->
+     Style 键标准（RFC 037 §0.1.1）：作者只写短键 Primary/Small…；
+       查找 = 先 {TargetType}.{Short} 再全局 Short（Shared.arml）。
+     隐式默认尺寸 = Medium（各控件 BasedOn Medium；禁每控件复制 MinHeight）。
+
+     改样式去哪：
+       色值 hex          → Themes/Light.arml | Dark.arml
+       尺寸/圆角/字号    → Layout/ControlMetrics.as + BuiltInTheme.FillNonColor
+       全局短键复用      → Themes/Controls/Shared.arml（Small/Medium/Large 成套 + Primary…）
+       控件专属 chrome   → Themes/Controls/{Control}.arml（BasedOn Medium；默认 Template 见 DefaultControlTemplates）
+       默认 ControlTemplate → Styling/DefaultControlTemplates.as（AttachDefaultTemplates；PART_*；已迁含 Slider/Progress/Combo）
+       交互态色          → Styling/VisualStateManager.as（经 PART ChromeHostHandle 上屏）
+       TextBlock         → 无隐式 chrome（字体为环境 DP）
+
+     Fonts are ambient inherited DPs (RFC 037 §4). -->
 <ResourceDictionary
     xmlns="http://schemas.arc.dev/winfx/2026"
     xmlns:x="http://schemas.arc.dev/xaml">
-    <Style TargetType="Window"/>
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="Controls/Shared.arml"/>
+        <ResourceDictionary Source="Controls/Window.arml"/>
+        <ResourceDictionary Source="Controls/Button.arml"/>
+        <ResourceDictionary Source="Controls/ToggleButton.arml"/>
+        <ResourceDictionary Source="Controls/CheckBox.arml"/>
+        <ResourceDictionary Source="Controls/RadioButton.arml"/>
+        <ResourceDictionary Source="Controls/TextBox.arml"/>
+        <ResourceDictionary Source="Controls/PasswordBox.arml"/>
+        <ResourceDictionary Source="Controls/Border.arml"/>
+        <ResourceDictionary Source="Controls/ComboBox.arml"/>
+        <ResourceDictionary Source="Controls/ProgressBar.arml"/>
+        <ResourceDictionary Source="Controls/Slider.arml"/>
+    </ResourceDictionary.MergedDictionaries>
 </ResourceDictionary>

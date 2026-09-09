@@ -21,6 +21,8 @@
 
 namespace Arc.UI.Components;
 
+using Arc.UI.Layout;
+
 /// <summary>
 /// 切换按钮基类——承载三态切换语义（IsChecked/IsThreeState）。
 /// Content/IsEnabled 等通用属性由 ContentControl/Control 继承。
@@ -79,8 +81,9 @@ public class ToggleButton : ContentControl {
 
     // ===== 指针交互（RFC 037 D10.6 · PointerRouter 分发入口）=====
 
-    /// <summary>PointerRouter 点击入口：翻转勾选态（两态；IsThreeState 三态后续 RFC）。</summary>
-    public void RaiseToggle() {
+    /// <summary>PointerRouter 点击入口：翻转勾选态（两态；IsThreeState 三态后续 RFC）。
+    /// RadioButton 覆写为「勾选且清同组」，禁止自取消。</summary>
+    public virtual void RaiseToggle() {
         this.IsChecked = !this.IsChecked;
     }
 
@@ -157,4 +160,29 @@ public class ToggleButton : ContentControl {
 
     /// <summary>进入不确定态事件处理器名（仅 IsThreeState=true 时触发）。</summary>
     public string Indeterminate;
+
+    protected override LayoutSize MeasureOverride(LayoutSize availableSize) {
+        if (this.HasTemplateVisual()) {
+            LayoutSize templated = this.MeasureTemplateVisual(availableSize);
+            double w = templated.Width;
+            double h = templated.Height;
+            if (h < ControlMetrics.ControlHeight) {
+                h = ControlMetrics.ControlHeight;
+            }
+            if (this.Width > 0.0) {
+                w = this.Width;
+            }
+            if (this.Height > 0.0) {
+                h = this.Height;
+            }
+            return LayoutHelper.ApplyMinMax(this, new LayoutSize(w, h));
+        }
+        return LayoutHelper.ApplyMinMax(this, LayoutHelper.ComputeConstraintSize(this, availableSize));
+    }
+
+    protected override void ArrangeOverride(LayoutSize finalSize) {
+        if (this.HasTemplateVisual()) {
+            this.ArrangeTemplateVisual(finalSize);
+        }
+    }
 }

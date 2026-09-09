@@ -377,9 +377,6 @@ public partial class WgpuRender {
             double quadY = Math.Floor(baselineY * _dpiScale + yoff + 0.5);
             double quadW = gw;
             double quadH = gh;
-            if (quadX < 8.0 && y > 60.0 && y < 220.0) {
-                Console.WriteLine("[QUAD-DIAG] cp=" + cp + " penX=" + penX + " xoff=" + xoff + " quadX=" + quadX + " quadW=" + quadW);
-            }
             if (quadW < 0.5) { quadW = 0.5; }
             if (quadH < 0.5) { quadH = 0.5; }
 
@@ -410,6 +407,13 @@ public partial class WgpuRender {
     /// </summary>
     /// <returns>0 成功；-1 未初始化或未开始 RenderPass；-2 含不支持命令。</returns>
     public int ExecuteDrawList(DrawList list) {
+        return this.ExecuteDrawList(list, 0.0, 0.0);
+    }
+
+    /// <summary>
+    /// 批绘 DrawList IR，并对所有图元坐标加布局原点偏移（CodeEditor 等局部坐标贡献方）。
+    /// </summary>
+    public int ExecuteDrawList(DrawList list, double originX, double originY) {
         if (!_initialized || _pass == null || list == null) {
             return -1;
         }
@@ -420,20 +424,21 @@ public partial class WgpuRender {
             {
                 case DrawCommand.FillRect(r):
                 {
-                    this.DrawRect(r.X, r.Y, r.Width, r.Height, Color.Parse(r.FillColor));
+                    this.DrawRect(r.X + originX, r.Y + originY, r.Width, r.Height, Color.Parse(r.FillColor));
                 }
                 case DrawCommand.DrawLine(l):
                 {
-                    this.DrawLine(l.X1, l.Y1, l.X2, l.Y2, Color.Parse(l.Color), l.Thickness);
+                    this.DrawLine(l.X1 + originX, l.Y1 + originY, l.X2 + originX, l.Y2 + originY,
+                                 Color.Parse(l.Color), l.Thickness);
                 }
                 case DrawCommand.DrawText(t):
                 {
-                    this.DrawText(t.Text, t.X, t.Y, t.FontSize,
+                    this.DrawText(t.Text, t.X + originX, t.Y + originY, t.FontSize,
                                  Color.Parse(t.Background), Color.Parse(t.Foreground));
                 }
                 case DrawCommand.DrawTexture(t):
                 {
-                    this.DrawTexture(t.TextureId, t.X, t.Y, t.Width, t.Height,
+                    this.DrawTexture(t.TextureId, t.X + originX, t.Y + originY, t.Width, t.Height,
                                      t.SrcU0, t.SrcV0, t.SrcU1, t.SrcV1, t.Alpha);
                 }
                 default:

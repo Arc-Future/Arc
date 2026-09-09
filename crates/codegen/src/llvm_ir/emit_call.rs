@@ -2589,7 +2589,7 @@ impl<'a> FnEmitter<'a> {
                 ));
                 Some(("void".into(), String::new()))
             }
-            "WindowHost.SetKeyboardHandler" => {
+            "WindowHost.SetKeyHandler" => {
                 let (_, closure_ptr) = self.emit_operand_as_closure(
                     &args.first().cloned().unwrap_or(MirOperand::ConstInt(0)),
                 );
@@ -2606,7 +2606,28 @@ impl<'a> FnEmitter<'a> {
                 let env_ptr = self.fresh_temp();
                 self.emit(&format!("{env_ptr} = load ptr, ptr {env_field}"));
                 self.emit(&format!(
-                    "call void @rt_ui_set_keyboard_handler(ptr {fn_ptr}, ptr {env_ptr})"
+                    "call void @rt_ui_set_key_handler(ptr {fn_ptr}, ptr {env_ptr})"
+                ));
+                Some(("void".into(), String::new()))
+            }
+            "WindowHost.SetTextHandler" => {
+                let (_, closure_ptr) = self.emit_operand_as_closure(
+                    &args.first().cloned().unwrap_or(MirOperand::ConstInt(0)),
+                );
+                let fn_field = self.fresh_temp();
+                self.emit(&format!(
+                    "{fn_field} = getelementptr %arc_closure, ptr {closure_ptr}, i32 0, i32 0"
+                ));
+                let fn_ptr = self.fresh_temp();
+                self.emit(&format!("{fn_ptr} = load ptr, ptr {fn_field}"));
+                let env_field = self.fresh_temp();
+                self.emit(&format!(
+                    "{env_field} = getelementptr %arc_closure, ptr {closure_ptr}, i32 0, i32 1"
+                ));
+                let env_ptr = self.fresh_temp();
+                self.emit(&format!("{env_ptr} = load ptr, ptr {env_field}"));
+                self.emit(&format!(
+                    "call void @rt_ui_set_text_handler(ptr {fn_ptr}, ptr {env_ptr})"
                 ));
                 Some(("void".into(), String::new()))
             }
@@ -2684,6 +2705,39 @@ impl<'a> FnEmitter<'a> {
                     .emit_handle_as_ptr(&args.first().cloned().unwrap_or(MirOperand::ConstInt(0)));
                 self.emit(&format!("call void @rt_ui_ime_set_focus(ptr {h_val})"));
                 let _ = h_ty;
+                Some(("void".into(), String::new()))
+            }
+            "WindowHost.ClipboardGetText" => {
+                let raw = self.fresh_temp();
+                self.emit(&format!("{raw} = call ptr @rt_ui_clipboard_get_text()"));
+                let (_, empty) = self.emit_operand(&MirOperand::ConstString(String::new()));
+                let is_null = self.fresh_temp();
+                self.emit(&format!("{is_null} = icmp eq ptr {raw}, null"));
+                let null_label = self.fresh_label();
+                let keep_label = self.fresh_label();
+                let merge_label = self.fresh_label();
+                self.emit(&format!(
+                    "br i1 {is_null}, label %{null_label}, label %{keep_label}"
+                ));
+                self.emit(&format!("{null_label}:"));
+                self.emit(&format!("br label %{merge_label}"));
+                self.emit(&format!("{keep_label}:"));
+                self.emit(&format!("br label %{merge_label}"));
+                self.emit(&format!("{merge_label}:"));
+                let result = self.fresh_temp();
+                self.emit(&format!(
+                    "{result} = phi ptr [ {empty}, %{null_label} ], [ {raw}, %{keep_label} ]"
+                ));
+                Some(("ptr".into(), result))
+            }
+            "WindowHost.ClipboardSetText" => {
+                let (_, text) = self.emit_operand(
+                    &args
+                        .first()
+                        .cloned()
+                        .unwrap_or(MirOperand::ConstString(String::new())),
+                );
+                self.emit(&format!("call void @rt_ui_clipboard_set_text(ptr {text})"));
                 Some(("void".into(), String::new()))
             }
             "WindowHost.ImeSetCandidateRect" => {

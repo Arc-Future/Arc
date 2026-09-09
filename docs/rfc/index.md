@@ -88,4 +88,4 @@
 
 ---
 
-[返回全书目录](../SUMMARY.md) · [白皮书](../white-paper/index.md) · [用户手册](../user-guide/index.md)
+[返回全书目录](../SUMMARY.md) · [开发者手册](../arc/INDEX.md)

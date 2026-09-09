@@ -23,16 +23,25 @@
 //   - 显示物化：复用基类 ItemContainerGenerator（DisplayName → Text）
 //
 // 诚实边界：下拉「折叠/展开」经 Popup 轨实现（chrome 点击 → RouteChromeClick →
-// Popup{ListView}：几何取 chrome 镜像绝对坐标（FrameworkElement.LayoutX/Y 契约：
+// Popup{ScrollView{ListView}}：几何取 chrome 镜像绝对坐标（FrameworkElement.LayoutX/Y 契约：
 // 相对窗口根），选项点击经 ListView 选中回调联动 SelectIndex 并关闭；同窗口静态
-// 互斥至多一个展开）。v1 下拉底色固定白（主题化另排）；选项超出窗口底部被渲染
-// 裁剪（滚动/向上翻转定位另排）；蒙层模态语义（点击外部关闭）由 Popup 承担。
+// 互斥至多一个展开）。展开定位经 Popup.ComputeInWindowPlacement 窗口内翻（优先
+// chrome 正下方，溢出翻上方，两侧不足钳高）；钳高后 ScrollView 外壳承载溢出滚动。
+// 下拉底色 / 前景走活动主题 Surface + 环境 Foreground（未设则 Text.Primary）；蒙层轻关闭
+// （IsLightDismissEnabled=true：点外部 / Esc）由 Popup 承担；Open(owner) 显式
+// 宿主（下拉不在逻辑树，禁仅靠 Parent 上溯）。
+// ComboBox&lt;T&gt;：SetOptions 内须全名限定基类 DP（Selector.SelectedIndexProperty /
+// ComboBoxBase.SelectedTextProperty），否则 mono 生成伪静态 __static_ComboBox_T_*
+// → arc-prune-001。
 
 namespace Arc.UI.Components;
 
 using Arc.ComponentModel;
 using Arc.UI;
+using Arc.UI.Components.Layout;
 using Arc.UI.Components.Primitives;
+using Arc.UI.Layout;
+using Arc.UI.Styling;
 
 /// <summary>
 /// ComboBox 非泛型基座（内部）。承载下拉弹层轨与选中显示名（SelectedText DP，
@@ -42,6 +51,8 @@ using Arc.UI.Components.Primitives;
 internal class ComboBoxBase : Selector {
     /// <summary>展开态弹层（首次 chrome 点击构建，复用至销毁）。</summary>
     protected Popup _dropDown;
+    /// <summary>钳高视口外壳（Popup.Child；滚轮/竖条经 ScrollRouter）。</summary>
+    protected ScrollView _dropDownScroll;
     /// <summary>弹层内选项列表（选中联动 + 关闭触发源）。</summary>
     protected ListView _dropDownList;
     /// <summary>当前展开下拉的实例（互斥槽：同窗口至多一个展开；兼作静态回调路由锚点）。</summary>
@@ -71,7 +82,7 @@ internal class ComboBoxBase : Selector {
         }
     }
 
-    // ===== 下拉轨（Popup{ListView}，见文件头诚实边界）=====
+    // ===== 下拉轨（Popup{ScrollView{ListView}}，见文件头诚实边界）=====
     //
     // 回调一律静态方法组 + _activeCombo 路由（互斥槽即「当前展开实例」锚点）：
     // 实例方法组 env 经 ByRef 捕获悬垂 → UB（ItemsControl.ObservableCollection
@@ -87,17 +98,28 @@ internal class ComboBoxBase : Selector {
     }
 
     /// <summary>
-    /// 下拉联动选中入口（选项行点击回调）：泛型派生覆写为 SelectIndex（校验 +
-    /// 选中面同步 + SelectionChanged）；基座默认 no-op。
+    /// 下拉联动选中入口（选项行点击回调）：走 SelectIndex（校验 + SelectedText
+    /// 同步 + SelectionChanged）。泛型派生可覆写通知载荷，不必旁路本入口。
     /// </summary>
     protected virtual void ApplySelectedIndex(int index) {
+        this.SelectIndex(index);
+    }
+
+    /// <summary>选中写点：基类 SelectedIndex + SelectedText（自 View.DisplayAt）。</summary>
+    protected override void ApplySelectedIndexCore(int index) {
+        base.ApplySelectedIndexCore(index);
+        string display = "";
+        ItemSourceView view = this.View;
+        if (index >= 0 && view != null) {
+            display = view.DisplayAt(index);
+        }
+        this.SetValue<string>(SelectedTextProperty, display);
     }
 
     /// <summary>
-    /// 展开/刷新下拉：互斥关闭其他实例 → 生存期构建 Popup{ListView} → 按 chrome
-    /// 镜像几何定位（chrome 正下方、等宽）→ 呈现属性与选项源重注入（下拉不在本
-    /// 控件逻辑树内，FontSize 等环境属性继承断链须显式同步；每次展开重注入当前
-    /// 数据源视图（选项行经视图投影物化，SetOptions 换源后所见即所绑）→ Open。
+    /// 展开/刷新下拉：互斥关闭其他实例 → 生存期构建 Popup{ScrollView{ListView}} → 按 chrome
+    /// 镜像几何 + 窗口内翻定位（chrome 正下方优先、溢出翻上方、两侧不足钳高）→
+    /// ScrollView 视口=fittedH、ListView 内容高=preferredH → 呈现属性与选项源重注入 → Open。
     /// </summary>
     void OpenDropDown() {
         ItemSourceView view = this.View;
@@ -123,19 +145,102 @@ internal class ComboBoxBase : Selector {
             dropW = InputMetrics.MinWidth;
         }
         double rowH = this.EstimateRowMetrics().Height;
-        _dropDownList.Background = "#FFFFFFFF";
-        _dropDownList.Foreground = this.Foreground;
+        double preferredH = rowH * (double)count;
+        double winW = 0.0;
+        double winH = 0.0;
+        this.ResolveOwnerWindowSize(ref winW, ref winH);
+        double placeX = chromeX;
+        double placeY = chromeY + chromeH;
+        double fittedH = preferredH;
+        Popup.ComputeInWindowPlacement(
+            chromeX, chromeY + chromeH, chromeY,
+            dropW, preferredH, winW, winH,
+            ref placeX, ref placeY, ref fittedH);
+        // 下拉不在逻辑子树：环境属性不自动继承；显式注入主题 Surface + 前景。
+        string surface = "#00000000";
+        if (Application.Current != null) {
+            string resolved = Application.Current.ResolveColor(BuiltInTheme.Surface);
+            if (resolved != null && resolved.Length > 0) {
+                surface = resolved;
+            }
+        }
+        _dropDownList.Background = surface;
+        if (this.HasAmbientValue(Control.ForegroundProperty.Id)) {
+            _dropDownList.Foreground = this.Foreground;
+        } else if (Application.Current != null) {
+            string textPrimary = Application.Current.ResolveColor(BuiltInTheme.TextPrimary);
+            if (textPrimary != null && textPrimary.Length > 0) {
+                _dropDownList.Foreground = textPrimary;
+            } else {
+                _dropDownList.Foreground = this.Foreground;
+            }
+        } else {
+            _dropDownList.Foreground = this.Foreground;
+        }
         _dropDownList.FontSize = this.FontSize;
         _dropDownList.ItemHeight = rowH;
         _dropDownList.Width = dropW;
-        _dropDownList.Height = rowH * (double)count;
+        // 内容取全高；视口钳在 ScrollView（溢出可滚）。
+        _dropDownList.Height = preferredH;
         _dropDownList.ItemsSource = view;
-        _dropDown.PlacementX = chromeX;
-        _dropDown.PlacementY = chromeY + chromeH;
-        _dropDown.Open();
+        _dropDownScroll.Background = surface;
+        _dropDownScroll.Width = dropW;
+        _dropDownScroll.Height = fittedH;
+        _dropDownScroll.VerticalOffset = 0.0;
+        _dropDown.PlacementX = placeX;
+        _dropDown.PlacementY = placeY;
+        _dropDown.IsLightDismissEnabled = true;
+        Window? ownerWin = this.ResolveOwnerWindow();
+        _dropDown.Open(ownerWin);
         if (_dropDown.IsOpen) {
             _activeCombo = this;
         }
+    }
+
+    /// <summary>
+    /// 解析宿主窗口（上溯逻辑树 → Application.MainWindow），供内翻定位与 Popup.Open。
+    /// </summary>
+    Window? ResolveOwnerWindow() {
+        Window? owner = null;
+        Element? node = this.Parent;
+        while (node != null && owner == null) {
+            if (node is Window) {
+                owner = (Window)node;
+            } else {
+                node = node?.Parent;
+            }
+        }
+        if (owner == null && Application.Current != null) {
+            owner = Application.Current.MainWindow;
+        }
+        return owner;
+    }
+
+    /// <summary>
+    /// 解析宿主窗口客户区尺寸（失败时与 Popup.Open 同款默认值），供内翻定位消费。
+    /// </summary>
+    void ResolveOwnerWindowSize(ref double winW, ref double winH) {
+        Window? owner = this.ResolveOwnerWindow();
+        double w = 0.0;
+        double h = 0.0;
+        if (owner != null) {
+            w = owner.Width;
+            h = owner.Height;
+            if (w <= 0.0 && owner.DesiredSize.Width > 0.0) {
+                w = owner.DesiredSize.Width;
+            }
+            if (h <= 0.0 && owner.DesiredSize.Height > 0.0) {
+                h = owner.DesiredSize.Height;
+            }
+        }
+        if (w <= 0.0) {
+            w = 720.0;
+        }
+        if (h <= 0.0) {
+            h = 480.0;
+        }
+        winW = w;
+        winH = h;
     }
 
     /// <summary>折叠下拉（蒙层点击关闭与 chrome 再点共用；幂等）。</summary>
@@ -145,15 +250,22 @@ internal class ComboBoxBase : Selector {
         }
     }
 
-    /// <summary>生存期一次组装：两回调均静态方法组（无 env 无悬垂，见区块注释）。</summary>
+    /// <summary>生存期一次组装：ScrollView 钳高外壳 + ListView；回调静态方法组。</summary>
     void BuildDropDown() {
         _dropDown = new Popup();
+        _dropDownScroll = new ScrollView();
+        _dropDownScroll.TypeName = "ScrollView";
+        _dropDownScroll.VerticalScrollBarVisibility = ScrollBarVisibility.Auto;
+        _dropDownScroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
         _dropDownList = new ListView();
         Action<string> selectedHandler = ComboBoxBase.OnDropDownItemSelectedStatic;
         _dropDownList.OnSelectionChanged(selectedHandler);
         Action<bool> closedHandler = ComboBoxBase.OnDropDownClosedStatic;
         _dropDown.OnClosed(closedHandler);
-        _dropDown.Child = _dropDownList;
+        // Children 供 PlatformTreeSync 建树；Content 供 Measure/Arrange 解析。
+        _dropDownScroll.Content = _dropDownList;
+        _dropDownScroll.AddChild(_dropDownList);
+        _dropDown.Child = _dropDownScroll;
     }
 
     /// <summary>选项行点击静态路由：经互斥槽锚点处理（路由时该实例必为展开者）。</summary>
@@ -204,13 +316,36 @@ internal class ComboBoxBase : Selector {
     /// <summary>
     /// 折叠态单行测量：选项列表属展开 Popup 轨，不参与主布局测量（基类报告
     /// 全部选项堆叠总高，与折叠 chrome 语义冲突——单行高由文本度量 + 最小值兜底）。
+    /// 有默认 Template 时测量 PART_Chrome 并保底 MinWidth/MinHeight。
     /// </summary>
     protected override LayoutSize MeasureOverride(LayoutSize availableSize) {
+        if (this.HasTemplateVisual()) {
+            LayoutSize templated = this.MeasureTemplateVisual(availableSize);
+            LayoutSize row = this.EstimateRowMetrics();
+            double tw = templated.Width;
+            double th = templated.Height;
+            if (tw < row.Width) {
+                tw = row.Width;
+            }
+            if (th < row.Height) {
+                th = row.Height;
+            }
+            if (this.Width > 0.0) {
+                tw = this.Width;
+            }
+            if (this.Height > 0.0) {
+                th = this.Height;
+            }
+            return new LayoutSize(tw, th);
+        }
         return this.EstimateRowMetrics();
     }
 
-    /// <summary>折叠态不排布选项宿主（同测量语义：选项列表属展开 Popup 轨）。</summary>
+    /// <summary>折叠态：有模板则排布 PART；无模板不排布选项宿主（Popup 另轨）。</summary>
     protected override void ArrangeOverride(LayoutSize finalSize) {
+        if (this.HasTemplateVisual()) {
+            this.ArrangeTemplateVisual(finalSize);
+        }
     }
 }
 
@@ -236,8 +371,8 @@ public class ComboBox<T> : ComboBoxBase {
     /// <param name="options">枚举选项集合；null 清空。</param>
     public void SetOptions(EnumOptions<T> options) {
         _options = options;
-        this.SetValue<int>(SelectedIndexProperty, -1);
-        this.SetValue<string>(SelectedTextProperty, "");
+        this.SetValue<int>(Selector.SelectedIndexProperty, -1);
+        this.SetValue<string>(ComboBoxBase.SelectedTextProperty, "");
         if (options == null) {
             this.ItemsSource = null;
             return;
@@ -269,19 +404,14 @@ public class ComboBox<T> : ComboBoxBase {
         return this.OptionCount;
     }
 
-    /// <summary>选中写点：基类 SelectedIndex DP 之外附加 SelectedText 显示名同步。</summary>
+    /// <summary>选中写点：基座已同步 SelectedText（View.DisplayAt）；派生无附加写点。</summary>
     protected override void ApplySelectedIndexCore(int index) {
         base.ApplySelectedIndexCore(index);
-        string display = "";
-        if (index >= 0) {
-            display = _options.Get(index).DisplayName;
-        }
-        this.SetValue<string>(SelectedTextProperty, display);
     }
 
-    /// <summary>下拉联动选中：转 SelectIndex（校验 + 选中面同步 + SelectionChanged）。</summary>
+    /// <summary>下拉联动选中：基座 ApplySelectedIndex → SelectIndex。</summary>
     protected override void ApplySelectedIndex(int index) {
-        this.SelectIndex(index);
+        base.ApplySelectedIndex(index);
     }
 
     // ===== 选择变更通知（Signal 单引擎，与 ListView.OnSelectionChanged 同惯用法）=====

@@ -2,6 +2,9 @@
 
 namespace Arc.UI.Rendering;
 
+using Arc.UI;
+using Arc.UI.Styling;
+
 /// <summary>
 /// 帧内即时绘制上下文。Begin/End 之间编码命令至目标 DrawList；
 /// 不可跨帧 retain。
@@ -31,6 +34,17 @@ public class DrawContext {
         return _target;
     }
 
+    /// <summary>主题键 → hex；无应用时 Transparent 哨兵。</summary>
+    private static string ThemeHex(string key) {
+        if (Application.Current != null) {
+            string hex = Application.Current.ResolveColor(key);
+            if (hex != null && hex.Length > 0) {
+                return hex;
+            }
+        }
+        return "#00000000";
+    }
+
     /// <summary>填充矩形（M-draw1 必达）。</summary>
     public void FillRect(double x, double y, double width, double height, string fillColor) {
         if (!_recording || _target == null) {
@@ -42,7 +56,7 @@ public class DrawContext {
         payload.Width = width;
         payload.Height = height;
         if (fillColor == null) {
-            payload.FillColor = "#FF000000";
+            payload.FillColor = DrawContext.ThemeHex(BuiltInTheme.TextPrimary);
         } else {
             payload.FillColor = fillColor;
         }
@@ -61,7 +75,7 @@ public class DrawContext {
         payload.X2 = x2;
         payload.Y2 = y2;
         if (color == null) {
-            payload.Color = "#FF000000";
+            payload.Color = DrawContext.ThemeHex(BuiltInTheme.TextPrimary);
         } else {
             payload.Color = color;
         }
@@ -87,12 +101,12 @@ public class DrawContext {
         }
         payload.FontSize = fontSize;
         if (foreground == null) {
-            payload.Foreground = "#FF000000";
+            payload.Foreground = DrawContext.ThemeHex(BuiltInTheme.TextPrimary);
         } else {
             payload.Foreground = foreground;
         }
         if (background == null) {
-            payload.Background = "#FFF4C2";
+            payload.Background = DrawContext.ThemeHex(BuiltInTheme.TextHighlight);
         } else {
             payload.Background = background;
         }

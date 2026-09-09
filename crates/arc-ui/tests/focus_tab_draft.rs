@@ -20,9 +20,9 @@ fn focus_manager_draft_source_present() {
     assert!(content.contains("RouteKey"));
 }
 
-/// RFC 037 §8（M-focus2 契约化修订）：单一键盘通道 ABI 为
+/// RFC 037 §8（M-focus2 / IN-R2）：单一键盘通道 ABI 为
 /// `rt_ui_dispatch_key`/`rt_ui_dispatch_text`（旧 Draft `rt_ui_set_keyboard_handler`
-/// 固定槽位设计已废弃）。
+/// 已收敛替换为 `rt_ui_set_key_handler` + text 通道）。
 #[test]
 fn focus_keyboard_appendix_present() {
     let path = workspace_root().join("docs/rfc/037-ui.md");
@@ -31,4 +31,18 @@ fn focus_keyboard_appendix_present() {
     assert!(content.contains("M-focus"));
     assert!(content.contains("rt_ui_dispatch_key"));
     assert!(content.contains("rt_ui_dispatch_text"));
+}
+
+#[test]
+fn keyboard_router_source_present() {
+    let path = workspace_root().join("std/UI/Core/Internal/KeyboardRouter.as");
+    assert!(
+        path.is_file(),
+        "missing KeyboardRouter.as at {}",
+        path.display()
+    );
+    let content = std::fs::read_to_string(&path).expect("read KeyboardRouter.as");
+    assert!(content.contains("namespace Arc.UI.Internal"));
+    assert!(content.contains("OnKey"));
+    assert!(content.contains("OnText"));
 }

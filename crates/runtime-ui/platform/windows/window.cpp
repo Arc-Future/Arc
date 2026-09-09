@@ -206,6 +206,7 @@ static LRESULT CALLBACK rt_window_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM
             WORD cur_id = 32512; /* IDC_ARROW */
             if (hit && hit->type_name) {
                 if (strcmp(hit->type_name, "TextBox") == 0 ||
+                    strcmp(hit->type_name, "PasswordBox") == 0 ||
                     strcmp(hit->type_name, "CodeEditor") == 0) {
                     cur_id = 32513; /* IDC_IBEAM */
                 } else if (strcmp(hit->type_name, "Button") == 0) {
@@ -384,15 +385,6 @@ extern "C" double rt_window_dpi_scale(void) {
         if (get_for_window && g_rt_ui_active_win && g_rt_ui_active_win->hwnd) {
             UINT dpi = get_for_window(g_rt_ui_active_win->hwnd);
             if (dpi > 0) {
-                /* [DPI-DIAG] 临时诊断：多屏混合 DPI 下 surface/命中错位定位。 */
-                if (g_rt_ui_active_win && g_rt_ui_active_win->hwnd) {
-                    RECT wr; GetWindowRect(g_rt_ui_active_win->hwnd, &wr);
-                    RECT cr; GetClientRect(g_rt_ui_active_win->hwnd, &cr);
-                    fprintf(stderr, "[DPI-DIAG] wndDpi=%u sysScale=%.2f winRect=%ldx%ld client=%ldx%ld\n",
-                            dpi, rt_dpi_scale(),
-                            wr.right - wr.left, wr.bottom - wr.top,
-                            cr.right - cr.left, cr.bottom - cr.top);
-                }
                 return (double)dpi / 96.0;
             }
         }
@@ -470,10 +462,8 @@ int32_t rt_event_poll(void* window) {
             win->should_close = 1;
             return RT_EVENT_CLOSE;
         }
-        if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE) {
-            win->should_close = 1;
-            return RT_EVENT_KEY;
-        }
+        /* Esc 不再无条件退窗：经 keyboard → KeyboardRouter（Popup 轻关闭优先，
+         * 无弹层再 Close 主窗）。见 std Popup / KeyboardRouter 契约。 */
         if (msg.message == WM_KEYDOWN && win->hwnd &&
             rt_win32_keyboard_handle_keydown(win->hwnd, msg.wParam)) {
             return RT_EVENT_KEY;

@@ -23,7 +23,7 @@
 | Rendering/ | IRender + wgpu/（WgpuRender 唯一后端 · 经 `wgpu-native.ani` 契约直连 wgpu-native）+ DrawList 契约（DrawContext / DrawList / DrawCommand / payload，M-draw1 ✅；SceneGraph M-draw2+） |
 | Media/ | Brush / Brushes / Color / Elevation / FontManager（命名族字体注册） |
 | Styling/ | Style / Setter / ResourceDictionary / ThemeDictionary / VisualStateManager |
-| Themes/ | Light / Dark / Controls.arml——内置主题资源源（色值权威源，codegen 生成 Colors.g.as） |
+| Themes/ | Light / Dark / Controls.arml + Controls/{Button,ToggleButton,…}——色值权威 + 每控件隐式 Style；codegen → Colors.g.as / Styles.g.as；尺寸权威 ControlMetrics |
 | Adaptive/ | 自适应断点求值（Tier / Match / Token） |
 | Animation/ | Storyboard / SequentialChain（用户面；引擎在 Internal/MotionEngine） |
 | Editing/ | 文本编辑内核（TextBoxModel / PrefixWidthCache，服务 TextBox；CodeEditor 编辑内核 TextBuffer/LineIndex/EditorViewport 已迁 Arc.UI.Edit） |

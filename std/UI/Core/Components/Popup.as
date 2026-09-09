@@ -1,6 +1,6 @@
-// RFC 037 · Popup 弹出层体系（std 轨道首切片）。
+// RFC 037 · Popup 弹出层体系（std 轨道）。
 //
-// **定位**：模态浮层宿主——蒙层（全窗口半透明拦截层）+ Child 内容挂在已运行
+// **定位**：浮层宿主——蒙层（全窗口半透明拦截层）+ Child 内容挂在已运行
 // 窗口平台镜像树的末尾。rt_ui hit_test 对 children 逆序遍历（后添加优先命中），
 // 层根挂主树根 children 末尾即天然置顶：输入/渲染/同步三轨零 C 侧、零 codegen 改动。
 //
@@ -26,24 +26,22 @@
 //   3. 关闭语义：WindowHost 无移除子元素 ABI——Close 递归镜像树写
 //      LayoutX/LayoutY = -1e6 移出视口（渲染视口裁剪对完全出界子树整棵剔除，
 //      零渲染消耗）；重开经 SyncLayoutFromArc 按既有句柄恢复几何，不重建树。
-//   4. 蒙层回调注册挂 PointerRouter.Install（按 TypeName 全局注册，随控件回调
-//      同一 Show 会话重注册——ClearControlHandlers 每 Show 清空，一次性标志跨
-//      会话失效）；点击路由仍由 Popup 自持活跃表 _activePopups 按蒙层句柄匹配
-//      实例（不走控件槽表，蒙层语义为窗口级拦截而非控件注册）。
+//   4. 蒙层回调：PointerRouter.Install 按 TypeName "PopupBackdrop" 注册点击 →
+//      RouteBackdropClick；随 ClearControlHandlers 每 Show 重注册。点击路由由
+//      Popup 自持活跃表 _activePopups 按蒙层句柄匹配实例。
 //   5. C 侧 IsEnabled 未写即放行命中（rt_ui_pointer 仅在显式 false 时拒绝），
 //      蒙层不写 IsEnabled 即可接收点击。
+//   6. Owner：Open(Window) 显式宿主优先；Open() 上溯 Parent，再回退
+//      Application.MainWindow（ComboBox 等浮层不在逻辑树内，必须可无 Parent）。
+//   7. IsLightDismissEnabled：true（默认）= 蒙层点击 / Esc 关闭（ComboBox）；
+//      false = 点蒙层与 Esc 不关（MessageBox 等模态对话框前置挂钩）。
 //
-// **诚实边界**：v1 为模态语义（点击蒙层即关闭，下层控件被蒙层拦截）；点内容
-// 空白间隙会落到蒙层（内容子树非命中目标的区域穿透）。DPI 缩放下蒙层与窗口
-// 客户区的精确对齐、非模态（StaysOpen）与 Placement 目标定位增强另排。
-// 层根句柄随宿主窗口重建代数：宿主再次 Show 重建主树后旧镜像句柄全部悬空
-// （句柄号可被新树回收复用），经 RootEpoch 检测重走建树路径（成本与窗口自身
-// 重建同级）；重建时打开中的 Popup 成为僵尸（IsOpen 悬挂、句柄失效），Close
-// 跳过失效句柄写、路由跳过跨代匹配——下次 Close/重开自愈。
-// 首个消费方：ComboBox 展开态。
-//
-// 冲突处理：与 RFC 037 既有小节无冲突；Popup 形态以本实现 + production-surface
-// 增补为准。
+// **诚实边界（M1 签收）**：轻关闭轨 + Owner API + Esc（经 KeyboardRouter，
+// 平台不再无条件 Esc 退窗）已接。窗口内翻定位已接（ComputeInWindowPlacement）。
+// 钳高视口内 ScrollView 外壳（ComboBox 下拉已接）。多弹层 Z 序策略（同窗口多开叠放规则）、非模态
+// 无蒙层（StaysOpen 无 backdrop）另排。层根句柄随宿主窗口重建代数：经 RootEpoch
+// 检测重走建树；僵尸实例 Close 跳过失效句柄写。消费方：ComboBox（轻关闭）；
+// MessageBox M1（IsLightDismissEnabled=false + Esc 自管）。
 
 namespace Arc.UI.Components;
 
@@ -52,11 +50,12 @@ using Arc.ComponentModel;
 using Arc.UI;
 using Arc.UI.Internal;
 using Arc.UI.Layout;
+using Arc.UI.Styling;
 
 /// <summary>
-/// 模态弹出层宿主：蒙层 + Child 内容挂已运行窗口平台镜像树末尾，天然置顶。
-/// 用法：popup.Child = content → popup.PlacementX/PlacementY 定位 →
-/// popup.Open() / popup.Close()；点击蒙层自动 Close，经 Opened/Closed 信号感知。
+/// 浮层宿主：蒙层 + Child 内容挂已运行窗口平台镜像树末尾，天然置顶。
+/// 用法：popup.Child = content → PlacementX/Y → Open() / Open(owner) / Close()；
+/// 轻关闭（IsLightDismissEnabled）时蒙层点击与 Esc 自动 Close。
 /// </summary>
 public class Popup : FrameworkElement {
 
@@ -87,6 +86,93 @@ public class Popup : FrameworkElement {
     /// <summary>内容左上角的窗口内逻辑坐标 Y。</summary>
     public double PlacementY { get; set; }
 
+    /// <summary>
+    /// 是否允许轻关闭：蒙层点击与 Esc 关闭本层。默认 true（下拉类）；
+    /// MessageBox 等模态对话框应置 false（点蒙层不关；Esc 策略由对话框自管）。
+    /// </summary>
+    public bool IsLightDismissEnabled { get; set; }
+
+    /// <summary>
+    /// 窗口内翻定位：优先在 <paramref name="preferredY"/> 下方展开；垂直溢出时翻到
+    /// <paramref name="anchorTop"/> 上方；两侧皆不足时取空间较大侧并钳高。水平方向
+    /// 钳入窗口。消费方（ComboBox 等）在 Open 前调用，将结果写入 Placement* 与内容 Height。
+    /// </summary>
+    public static void ComputeInWindowPlacement(
+        double preferredX,
+        double preferredY,
+        double anchorTop,
+        double contentWidth,
+        double contentHeight,
+        double windowWidth,
+        double windowHeight,
+        ref double placementX,
+        ref double placementY,
+        ref double fittedHeight)
+    {
+        double winW = windowWidth;
+        double winH = windowHeight;
+        if (winW < 0.0) {
+            winW = 0.0;
+        }
+        if (winH < 0.0) {
+            winH = 0.0;
+        }
+        double w = contentWidth;
+        if (w < 0.0) {
+            w = 0.0;
+        }
+        double h = contentHeight;
+        if (h < 0.0) {
+            h = 0.0;
+        }
+
+        double x = preferredX;
+        if (x + w > winW) {
+            x = winW - w;
+        }
+        if (x < 0.0) {
+            x = 0.0;
+        }
+
+        double spaceBelow = winH - preferredY;
+        if (spaceBelow < 0.0) {
+            spaceBelow = 0.0;
+        }
+        double spaceAbove = anchorTop;
+        if (spaceAbove < 0.0) {
+            spaceAbove = 0.0;
+        }
+
+        double y;
+        double fitted = h;
+        if (h <= spaceBelow) {
+            y = preferredY;
+            fitted = h;
+        } else if (h <= spaceAbove) {
+            y = anchorTop - h;
+            fitted = h;
+        } else if (spaceBelow >= spaceAbove) {
+            y = preferredY;
+            fitted = spaceBelow;
+        } else {
+            fitted = spaceAbove;
+            y = anchorTop - fitted;
+        }
+        if (y < 0.0) {
+            y = 0.0;
+        }
+        if (y + fitted > winH) {
+            fitted = winH - y;
+        }
+        if (fitted < 0.0) {
+            fitted = 0.0;
+        }
+
+        placementX = x;
+        placementY = y;
+        fittedHeight = fitted;
+    }
+
     // ===== 状态与信号 =====
 
     /// <summary>当前是否展开（Open/Close 维护；外部经方法开关，不暴露 setter）。</summary>
@@ -105,12 +191,14 @@ public class Popup : FrameworkElement {
     private long _layerRootHandle;
     private long _backdropHandle;
     private int _builtEpoch;
+    private Window? _ownerWindow;
     private static List<Popup> _activePopups;
 
     /// <summary>构造并组装层根（TypeName 显式赋值契约见文件头）。</summary>
     public Popup() {
         this.Type = typeof(Popup);
         this.TypeName = "Popup";
+        this.IsLightDismissEnabled = true;
         this.Opened = new Signal<bool>(false);
         this.Closed = new Signal<bool>(false);
         _layerRoot = new Panel();
@@ -123,27 +211,43 @@ public class Popup : FrameworkElement {
     // ===== 开关入口 =====
 
     /// <summary>
-    /// 展开弹层：上溯逻辑树找宿主 Window（无宿主或未运行时静默 no-op——层根必须
-    /// 挂已运行窗口的平台根）。首次或宿主重建后（RootEpoch 前移、旧镜像句柄悬空）
-    /// 走 BuildFromArc 独立建树 + 挂主树末尾 + 补写蒙层背景；同会话重开按既有
-    /// 句柄 SyncLayoutFromArc 恢复几何，不重建树。
+    /// 展开弹层（宿主解析：Parent 上溯 → Application.MainWindow）。
+    /// 浮层常不在逻辑树内，宜改用 <see cref="Open(Window)"/> 显式 Owner。
     /// </summary>
     public void Open() {
+        this.Open(null);
+    }
+
+    /// <summary>
+    /// 展开弹层到指定宿主窗口。owner 为 null 时上溯 Parent，再回退 MainWindow。
+    /// 首次或宿主重建后（RootEpoch 前移）走 BuildFromArc；同会话重开 SyncLayout。
+    /// </summary>
+    public void Open(Window? owner) {
         if (this.IsOpen) {
             return;
         }
-        Window? ownerFound = FindOwnerWindow();
+        Window? ownerFound = owner;
+        if (ownerFound == null) {
+            ownerFound = FindOwnerWindow();
+        }
+        if (ownerFound == null && Application.Current != null) {
+            ownerFound = Application.Current.MainWindow;
+        }
         if (ownerFound == null) {
             return;
         }
-        Window owner = ownerFound;
-        double winW = owner.Width;
-        double winH = owner.Height;
-        if (winW <= 0.0 && owner.DesiredSize.Width > 0.0) {
-            winW = owner.DesiredSize.Width;
+        Window resolved = ownerFound;
+        if (resolved.PlatformRootHandle == 0) {
+            return;
         }
-        if (winH <= 0.0 && owner.DesiredSize.Height > 0.0) {
-            winH = owner.DesiredSize.Height;
+        _ownerWindow = resolved;
+        double winW = resolved.Width;
+        double winH = resolved.Height;
+        if (winW <= 0.0 && resolved.DesiredSize.Width > 0.0) {
+            winW = resolved.DesiredSize.Width;
+        }
+        if (winH <= 0.0 && resolved.DesiredSize.Height > 0.0) {
+            winH = resolved.DesiredSize.Height;
         }
         if (winW <= 0.0) {
             winW = 720.0;
@@ -156,9 +260,16 @@ public class Popup : FrameworkElement {
 
         if (_layerRootHandle == 0 || _builtEpoch != PlatformTreeSync.RootEpoch) {
             _layerRootHandle = PlatformTreeSync.BuildFromArc(_layerRoot);
-            WindowHost.ElementAddChild(owner.PlatformRootHandle, _layerRootHandle);
+            WindowHost.ElementAddChild(resolved.PlatformRootHandle, _layerRootHandle);
             _backdropHandle = WindowHost.ElementGetChild(_layerRootHandle, 0);
-            WindowHost.ElementSetString(_backdropHandle, "Background", "#80000000");
+            string overlay = "#00000000";
+            if (Application.Current != null) {
+                string resolved = Application.Current.ResolveColor(BuiltInTheme.Overlay);
+                if (resolved != null && resolved.Length > 0) {
+                    overlay = resolved;
+                }
+            }
+            WindowHost.ElementSetString(_backdropHandle, "Background", overlay);
             _builtEpoch = PlatformTreeSync.RootEpoch;
         } else {
             PlatformTreeSync.SyncLayoutFromArc(_layerRoot, _layerRootHandle);
@@ -174,9 +285,7 @@ public class Popup : FrameworkElement {
 
     /// <summary>
     /// 关闭弹层：递归镜像树移出视口（无移除 ABI 的诚实替代，见文件头契约 3），
-    /// 撤出活跃表。Arc 侧层根布局字段不动——重开由 SyncLayoutFromArc 重写。
-    /// 宿主重建后的僵尸实例跳过失效句柄写（句柄号可能已被新树回收复用）、仅复位
-    /// 状态——下次 Open 经 RootEpoch 检测重走建树路径（自愈，见文件头诚实边界）。
+    /// 撤出活跃表。宿主重建后的僵尸实例跳过失效句柄写。
     /// </summary>
     public void Close() {
         if (!this.IsOpen) {
@@ -224,8 +333,8 @@ public class Popup : FrameworkElement {
     // ===== 布局 =====
 
     /// <summary>
-    /// 手动布局层根子树：层根/蒙层铺满窗口，Child 按 Placement 定位、以期望
-    /// 尺寸摆放（可用空间截至窗口边缘）。Panel 无布局覆写，此处即布局权威。
+    /// 手动布局层根子树：层根/蒙层铺满窗口，Child 按 Placement 定位。
+    /// 水平/垂直钳入客户区（消费方宜先经 ComputeInWindowPlacement）。
     /// </summary>
     void LayoutPopupContent(double winW, double winH) {
         _layerRoot.Width = winW;
@@ -238,16 +347,35 @@ public class Popup : FrameworkElement {
         if (content != null) {
             double x = this.PlacementX;
             double y = this.PlacementY;
+            if (x < 0.0) {
+                x = 0.0;
+            }
+            if (y < 0.0) {
+                y = 0.0;
+            }
             LayoutSize available = new LayoutSize(winW - x, winH - y);
             LayoutHelper.MeasureChild(content, available);
-            LayoutHelper.ArrangeChild(_layerRoot, content, x, y,
-                content.DesiredSize.Width, content.DesiredSize.Height);
+            double w = content.DesiredSize.Width;
+            double h = content.DesiredSize.Height;
+            if (x + w > winW) {
+                x = winW - w;
+                if (x < 0.0) {
+                    x = 0.0;
+                }
+            }
+            if (y + h > winH) {
+                h = winH - y;
+                if (h < 0.0) {
+                    h = 0.0;
+                }
+            }
+            LayoutHelper.ArrangeChild(_layerRoot, content, x, y, w, h);
         }
     }
 
-    // ===== 蒙层回调路由 =====
+    // ===== 蒙层 / Esc 关闭路由 =====
 
-    /// <summary>C 侧蒙层点击入口：按蒙层句柄匹配活跃实例并关闭（不走 PointerRouter 槽表）。</summary>
+    /// <summary>C 侧蒙层点击入口：仅 IsLightDismissEnabled 时按句柄关闭匹配实例。</summary>
     internal static void RouteBackdropClick(long backdropHandle) {
         if (_activePopups == null) {
             return;
@@ -255,17 +383,51 @@ public class Popup : FrameworkElement {
         int i = 0;
         while (i < _activePopups.Count) {
             Popup popup = _activePopups[i];
-            if (popup._builtEpoch == PlatformTreeSync.RootEpoch && popup._backdropHandle == backdropHandle) {
-                popup.Close();
+            if (popup._builtEpoch == PlatformTreeSync.RootEpoch
+                && popup._backdropHandle == backdropHandle)
+            {
+                if (popup.IsLightDismissEnabled) {
+                    popup.Close();
+                }
                 return;
             }
             i++;
         }
     }
 
+    /// <summary>
+    /// Esc：关闭最顶层（活跃表末尾）且允许轻关闭的弹层。返回 true=已消费。
+    /// 多弹层完整 Z 序另排；本切片按 Open 顺序 LIFO 作最小可用。
+    /// </summary>
+    internal static bool TryDismissTopOnEscape() {
+        if (_activePopups == null || _activePopups.Count == 0) {
+            return false;
+        }
+        int i = _activePopups.Count - 1;
+        while (i >= 0) {
+            Popup popup = _activePopups[i];
+            if (popup.IsOpen && popup.IsLightDismissEnabled
+                && popup._builtEpoch == PlatformTreeSync.RootEpoch)
+            {
+                popup.Close();
+                return true;
+            }
+            i--;
+        }
+        return false;
+    }
+
+    /// <summary>是否存在打开中的弹层（平台 Esc 退窗前可先询；现由 KeyboardRouter 消费）。</summary>
+    internal static bool HasActivePopup() {
+        if (_activePopups == null) {
+            return false;
+        }
+        return _activePopups.Count > 0;
+    }
+
     // ===== 关闭语义：镜像树移出视口 =====
 
-    /// <summary>递归 C 侧镜像树，逐节点写 LayoutX/LayoutY 移出视口（渲染裁剪整棵剔除）。</summary>
+    /// <summary>递归 C 侧镜像树，逐节点写 LayoutX/LayoutY 移出视口。</summary>
     static void HideMirrorTree(long handle) {
         double offscreen = -1000000.0;
         WindowHost.ElementSetNumber(handle, "LayoutX", offscreen);
@@ -283,7 +445,7 @@ public class Popup : FrameworkElement {
 
     // ===== 宿主解析 =====
 
-    /// <summary>沿逻辑树 Parent 上溯找宿主 Window（is 检查 + 强转，对齐 PlatformTreeSync 先例）。</summary>
+    /// <summary>沿逻辑树 Parent 上溯找宿主 Window。</summary>
     Window? FindOwnerWindow() {
         Element? node = this.Parent;
         Window? owner = null;
@@ -293,6 +455,9 @@ public class Popup : FrameworkElement {
             } else {
                 node = node?.Parent;
             }
+        }
+        if (owner == null) {
+            owner = _ownerWindow;
         }
         return owner;
     }

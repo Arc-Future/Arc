@@ -19,15 +19,23 @@
 //   - SelectionPayload override：SelectionChanged 载荷 = 选中行首列文本
 //   - OnSelectionApplied override：重刷虚拟化窗口（选中行 Accent 高亮重渲）
 //
-// 编程模型（声明式 API）：
+// 编程模型（声明式 API · ItemsSource 唯一行入口）：
 //   DataGrid grid = new DataGrid();
 //   grid.AddColumn("名称", 160.0);
 //   grid.AddColumn("版本", 0.0);          // 0 = 自动均分剩余宽
-//   grid.AddRow("Arc", "1.0");
+//   List<List<string>> rows = ...;         // 每行 = 单元格列表
+//   grid.ItemsSource = rows;               // 多列；单列可用 List<string>
+//   // 可观察：ObservableCollection<List<string>>（多列）/
+//   // ObservableCollection<string>（单列）→ 集合变更增量改 _cells，勿全量重建
 //   grid.SelectIndex(0);                   // → SelectionChanged（载荷=选中行首列文本）
 //
+// 禁 AddRow(string…) 字符串重载双轨——行数据一律经 ItemsSource。
 // 虚拟化纪律（RFC 037 §4 · M-VZ4）：只物化可见窗口行（ItemViewport 算术），
 // 窗口外行回收进池复用（滚动零新建）；Extent = rowCount × stride 纯算术。
+//
+// Observable 订阅：多实例并发——每宿主登记稳定 route id，OnChanged 回调只按值
+// 捕获 int（BindingOperations 同款逃逸闭包纪律；禁捕获类引用）。静态
+// `_obsByRoute` 表按 id 回查宿主（ItemsControl/ItemSourceView 同款多槽）。
 //
 // 镜像契约：grid 镜像携带 ColumnCount/Header{i}/Width{i}/RowHeight/HeaderHeight/
 // SelectedIndex；行镜像（DataGridRow 子元素）携带 ItemIndex + C{i} 单元格串 +
@@ -54,6 +62,18 @@ public class DataGrid : MultiSelector {
     private ItemViewport _viewport;
     private double _lastViewportHeight;
 
+    /// <summary>多列可观察源活引用（null = 非动态轨）。</summary>
+    private ObservableCollection<List<string>> _obsNested;
+    /// <summary>单列可观察源活引用（null = 非动态轨）。</summary>
+    private ObservableCollection<string> _obsSingle;
+    private int _obsToken;
+
+    /// <summary>本实例在 <see cref="_obsHosts"/> 中的槽位（-1 = 未登记）。</summary>
+    private int _obsRouteSlot;
+
+    /// <summary>动态轨多宿主路由表（槽位 → DataGrid；退订置 null，槽不复用紧缩）。</summary>
+    private static List<DataGrid> _obsHosts;
+
     /// <summary>构造空表格（ownsItemsHost=false：自管视口，跳过基类项宿主装配）。</summary>
     public DataGrid() : base(false) {
         this.Type = typeof(DataGrid);
@@ -64,6 +84,10 @@ public class DataGrid : MultiSelector {
         _rowPool = new List<DataGridRow>();
         _viewport = new ItemViewport();
         _lastViewportHeight = ItemViewport.DefaultViewportHeight;
+        _obsNested = null;
+        _obsSingle = null;
+        _obsToken = -1;
+        _obsRouteSlot = -1;
     }
 
     // ===== 静态依赖属性元数据（RFC 037 D1 WPF 同构）=====
@@ -77,7 +101,7 @@ public class DataGrid : MultiSelector {
 
     /// <summary>HeaderHeight 属性元数据——表头高（px），默认 32。</summary>
     public static DependencyProperty<double> HeaderHeightProperty =
-        RegisterProperty<double>(nameof(HeaderHeight), typeof(DataGrid), 32.0);
+        RegisterProperty<double>(nameof(HeaderHeight), typeof(DataGrid), ControlMetrics.ControlHeight);
 
     /// <summary>VerticalOffset 属性元数据——行区垂直滚动偏移（px），默认 0。</summary>
     public static DependencyProperty<double> VerticalOffsetProperty =
@@ -144,7 +168,7 @@ public class DataGrid : MultiSelector {
         return _columns[index].Width;
     }
 
-    /// <summary>新增一列并返回列元数据。AddRow 前须至少一列（报错 &gt; 静默）。</summary>
+    /// <summary>新增一列并返回列元数据。写入 ItemsSource 前须至少一列（报错 &gt; 静默）。</summary>
     /// <param name="header">列头文本。</param>
     /// <param name="width">列宽（px）；0 = 自动均分剩余宽度。</param>
     public DataGridColumn AddColumn(string header, double width) {
@@ -154,26 +178,356 @@ public class DataGrid : MultiSelector {
         return column;
     }
 
-    // ===== 行模型（行主序扁平单元格；AddRow 按列数补齐空串）=====
+    // ===== 行模型（ItemsSource 唯一入口；行主序扁平单元格）=====
 
-    /// <summary>追加一行（单列数据；不足列数以空串补齐）。</summary>
-    public void AddRow(string cell0) {
-        this.AppendCells(cell0, "", "", "");
+    /// <summary>
+    /// 自管视口：ItemsSource 物化为多列单元格表。
+    /// 支持 <c>List&lt;List&lt;string&gt;&gt;</c> / <c>ObservableCollection&lt;List&lt;string&gt;&gt;</c>
+    /// （多列）与 <c>List&lt;string&gt;</c> / <c>ObservableCollection&lt;string&gt;</c>（单列）；
+    /// 可观察源首绑全量快照，其后 <c>CollectionChanged</c> 增量改行；null / 未知类型清空。
+    /// 不走基类项宿主管线。
+    /// </summary>
+    protected override void MaterializeFromItemsSource() {
+        this.ReleaseObservableSource();
+        object src = this.ItemsSource;
+        if (src == null) {
+            this.ResetRowModel();
+            return;
+        }
+        if (src is ObservableCollection<List<string>>) {
+            this.BindObservableNested((ObservableCollection<List<string>>)src);
+            return;
+        }
+        if (src is ObservableCollection<string>) {
+            this.BindObservableSingle((ObservableCollection<string>)src);
+            return;
+        }
+        if (src is List<List<string>>) {
+            this.LoadFromNestedRows((List<List<string>>)src);
+            return;
+        }
+        if (src is List<string>) {
+            this.LoadFromSingleColumn((List<string>)src);
+            return;
+        }
+        this.ResetRowModel();
     }
 
-    /// <summary>追加一行（两列数据；不足列数以空串补齐）。</summary>
-    public void AddRow(string cell0, string cell1) {
-        this.AppendCells(cell0, cell1, "", "");
+    void ReleaseObservableSource() {
+        if (_obsNested != null) {
+            _obsNested.Unsubscribe(_obsToken);
+            _obsNested = null;
+        }
+        if (_obsSingle != null) {
+            _obsSingle.Unsubscribe(_obsToken);
+            _obsSingle = null;
+        }
+        _obsToken = -1;
+        this.UnregisterObsRoute();
     }
 
-    /// <summary>追加一行（三列数据；不足列数以空串补齐）。</summary>
-    public void AddRow(string cell0, string cell1, string cell2) {
-        this.AppendCells(cell0, cell1, cell2, "");
+    /// <summary>登记多宿主路由槽（幂等）；退订前保持有效供逃逸回调回查。</summary>
+    void EnsureObsRoute() {
+        if (_obsRouteSlot >= 0) {
+            return;
+        }
+        if (_obsHosts == null) {
+            _obsHosts = new List<DataGrid>();
+        }
+        _obsRouteSlot = _obsHosts.Count;
+        _obsHosts.Add(this);
     }
 
-    /// <summary>追加一行（四列数据；不足列数以空串补齐）。</summary>
-    public void AddRow(string cell0, string cell1, string cell2, string cell3) {
-        this.AppendCells(cell0, cell1, cell2, cell3);
+    void UnregisterObsRoute() {
+        if (_obsRouteSlot < 0) {
+            return;
+        }
+        if (_obsHosts != null && _obsRouteSlot < _obsHosts.Count) {
+            _obsHosts[_obsRouteSlot] = null;
+        }
+        _obsRouteSlot = -1;
+    }
+
+    void BindObservableNested(ObservableCollection<List<string>> src) {
+        _obsNested = src;
+        this.EnsureObsRoute();
+        int routeSlot = _obsRouteSlot;
+        // 只按值捕获 routeSlot（int）；禁捕获 this / 集合引用（逃逸闭包 UB）。
+        // 形参类型由 OnChanged 目标委托推断——禁在 lambda 上写嵌套泛型（>> 词法）。
+        _obsToken = src.OnChanged((args) => {
+            DataGrid.DispatchNestedChange(routeSlot, args);
+        });
+        this.LoadFromNestedRowsSnapshot(src);
+    }
+
+    void BindObservableSingle(ObservableCollection<string> src) {
+        _obsSingle = src;
+        this.EnsureObsRoute();
+        int routeSlot = _obsRouteSlot;
+        _obsToken = src.OnChanged((args) => {
+            DataGrid.DispatchSingleChange(routeSlot, args);
+        });
+        this.LoadFromSingleColumnSnapshot(src);
+    }
+
+    private static void DispatchNestedChange(int routeSlot, CollectionChangedEventArgs<List<string>> args) {
+        if (_obsHosts == null || routeSlot < 0 || routeSlot >= _obsHosts.Count) {
+            return;
+        }
+        DataGrid host = _obsHosts[routeSlot];
+        if (host == null) {
+            return;
+        }
+        host.ApplyNestedCollectionChange(args);
+    }
+
+    private static void DispatchSingleChange(int routeSlot, CollectionChangedEventArgs<string> args) {
+        if (_obsHosts == null || routeSlot < 0 || routeSlot >= _obsHosts.Count) {
+            return;
+        }
+        DataGrid host = _obsHosts[routeSlot];
+        if (host == null) {
+            return;
+        }
+        host.ApplySingleCollectionChange(args);
+    }
+
+    /// <summary>多列可观察：按动作增量改扁平单元格，再 RefreshWindow（禁全量 Clear+重灌）。</summary>
+    void ApplyNestedCollectionChange(CollectionChangedEventArgs<List<string>> args) {
+        int cols = _columns.Count;
+        if (cols == 0) {
+            return;
+        }
+        CollectionChangeAction action = args.Action;
+        if (action == CollectionChangeAction.Add || action == CollectionChangeAction.Insert) {
+            this.InsertRowCellsAt(args.Index, args.NewItem, cols);
+            _rowCount = _rowCount + 1;
+            this.ClampSelectionAfterMutation();
+            this.RefreshWindow();
+            return;
+        }
+        if (action == CollectionChangeAction.Remove) {
+            this.RemoveRowCellsAt(args.Index, cols);
+            _rowCount = _rowCount - 1;
+            this.ClampSelectionAfterMutation();
+            this.RefreshWindow();
+            return;
+        }
+        if (action == CollectionChangeAction.Update) {
+            this.ReplaceRowCellsAt(args.Index, args.NewItem, cols);
+            this.RefreshWindow();
+            return;
+        }
+        if (action == CollectionChangeAction.Move) {
+            List<string> moved = this.ExtractRowCellsAt(args.OldIndex, cols);
+            this.RemoveRowCellsAt(args.OldIndex, cols);
+            this.InsertRowCellsBlockAt(args.Index, moved);
+            this.ClampSelectionAfterMutation();
+            this.RefreshWindow();
+            return;
+        }
+        if (action == CollectionChangeAction.Clear) {
+            _cells.Clear();
+            _rowCount = 0;
+            this.SelectIndex(-1);
+            this.RefreshWindow();
+        }
+    }
+
+    /// <summary>单列可观察：与多列同构，行载荷为单 string。</summary>
+    void ApplySingleCollectionChange(CollectionChangedEventArgs<string> args) {
+        int cols = _columns.Count;
+        if (cols == 0) {
+            return;
+        }
+        CollectionChangeAction action = args.Action;
+        if (action == CollectionChangeAction.Add || action == CollectionChangeAction.Insert) {
+            List<string> row = new List<string>();
+            string added = args.NewItem;
+            if (added == null) {
+                added = "";
+            }
+            row.Add(added);
+            this.InsertRowCellsAt(args.Index, row, cols);
+            _rowCount = _rowCount + 1;
+            this.ClampSelectionAfterMutation();
+            this.RefreshWindow();
+            return;
+        }
+        if (action == CollectionChangeAction.Remove) {
+            this.RemoveRowCellsAt(args.Index, cols);
+            _rowCount = _rowCount - 1;
+            this.ClampSelectionAfterMutation();
+            this.RefreshWindow();
+            return;
+        }
+        if (action == CollectionChangeAction.Update) {
+            List<string> row = new List<string>();
+            string updated = args.NewItem;
+            if (updated == null) {
+                updated = "";
+            }
+            row.Add(updated);
+            this.ReplaceRowCellsAt(args.Index, row, cols);
+            this.RefreshWindow();
+            return;
+        }
+        if (action == CollectionChangeAction.Move) {
+            List<string> moved = this.ExtractRowCellsAt(args.OldIndex, cols);
+            this.RemoveRowCellsAt(args.OldIndex, cols);
+            this.InsertRowCellsBlockAt(args.Index, moved);
+            this.ClampSelectionAfterMutation();
+            this.RefreshWindow();
+            return;
+        }
+        if (action == CollectionChangeAction.Clear) {
+            _cells.Clear();
+            _rowCount = 0;
+            this.SelectIndex(-1);
+            this.RefreshWindow();
+        }
+    }
+
+    void ClampSelectionAfterMutation() {
+        int sel = this.SelectedIndex;
+        if (sel < 0) {
+            return;
+        }
+        if (_rowCount == 0) {
+            this.SelectIndex(-1);
+            return;
+        }
+        if (sel >= _rowCount) {
+            this.SelectIndex(_rowCount - 1);
+        }
+    }
+
+    void InsertRowCellsAt(int rowIndex, List<string> row, int cols) {
+        if (rowIndex < 0) {
+            rowIndex = 0;
+        }
+        if (rowIndex > _rowCount) {
+            rowIndex = _rowCount;
+        }
+        int insertAt = rowIndex * cols;
+        int c = 0;
+        while (c < cols) {
+            string cell = "";
+            if (row != null && c < row.Count && row[c] != null) {
+                cell = row[c];
+            }
+            _cells.Insert(insertAt + c, cell);
+            c++;
+        }
+    }
+
+    void InsertRowCellsBlockAt(int rowIndex, List<string> block) {
+        int cols = _columns.Count;
+        if (block == null || cols == 0) {
+            return;
+        }
+        if (rowIndex < 0) {
+            rowIndex = 0;
+        }
+        if (rowIndex > _rowCount) {
+            rowIndex = _rowCount;
+        }
+        int insertAt = rowIndex * cols;
+        int i = 0;
+        int n = block.Count;
+        while (i < n) {
+            _cells.Insert(insertAt + i, block[i]);
+            i++;
+        }
+    }
+
+    void RemoveRowCellsAt(int rowIndex, int cols) {
+        if (rowIndex < 0 || rowIndex >= _rowCount || cols <= 0) {
+            return;
+        }
+        int start = rowIndex * cols;
+        int c = 0;
+        while (c < cols) {
+            _cells.RemoveAt(start);
+            c++;
+        }
+    }
+
+    void ReplaceRowCellsAt(int rowIndex, List<string> row, int cols) {
+        if (rowIndex < 0 || rowIndex >= _rowCount || cols <= 0) {
+            return;
+        }
+        int baseIdx = rowIndex * cols;
+        int c = 0;
+        while (c < cols) {
+            string cell = "";
+            if (row != null && c < row.Count && row[c] != null) {
+                cell = row[c];
+            }
+            _cells[baseIdx + c] = cell;
+            c++;
+        }
+    }
+
+    List<string> ExtractRowCellsAt(int rowIndex, int cols) {
+        List<string> block = new List<string>();
+        if (rowIndex < 0 || rowIndex >= _rowCount || cols <= 0) {
+            return block;
+        }
+        int baseIdx = rowIndex * cols;
+        int c = 0;
+        while (c < cols) {
+            block.Add(_cells[baseIdx + c]);
+            c++;
+        }
+        return block;
+    }
+
+    void LoadFromNestedRowsSnapshot(ObservableCollection<List<string>> rows) {
+        int cols = _columns.Count;
+        if (cols == 0) {
+            throw new InvalidOperationException("DataGrid.ItemsSource: AddColumn first (no columns)");
+        }
+        _cells.Clear();
+        _rowCount = 0;
+        if (rows == null) {
+            this.SelectIndex(-1);
+            this.RefreshWindow();
+            return;
+        }
+        int r = 0;
+        while (r < rows.Count) {
+            this.AppendRowCells(rows[r], cols);
+            _rowCount = _rowCount + 1;
+            r++;
+        }
+        this.SelectIndex(-1);
+        this.RefreshWindow();
+    }
+
+    void LoadFromSingleColumnSnapshot(ObservableCollection<string> values) {
+        int cols = _columns.Count;
+        if (cols == 0) {
+            throw new InvalidOperationException("DataGrid.ItemsSource: AddColumn first (no columns)");
+        }
+        _cells.Clear();
+        _rowCount = 0;
+        if (values == null) {
+            this.SelectIndex(-1);
+            this.RefreshWindow();
+            return;
+        }
+        int i = 0;
+        while (i < values.Count) {
+            List<string> row = new List<string>();
+            string v = values[i];
+            row.Add(v != null ? v : "");
+            this.AppendRowCells(row, cols);
+            _rowCount = _rowCount + 1;
+            i++;
+        }
+        this.SelectIndex(-1);
+        this.RefreshWindow();
     }
 
     /// <summary>读取单元格文本（越界返回空串）。</summary>
@@ -190,37 +544,75 @@ public class DataGrid : MultiSelector {
     /// <summary>清空全部行（列保留）。SelectIndex(-1) 经 OnSelectionApplied 重刷窗口
     /// （回收全部行 + 镜像行折叠 + SelectedIndex 高亮复位）。</summary>
     public void ClearRows() {
+        this.ResetRowModel();
+    }
+
+    void ResetRowModel() {
+        this.ReleaseObservableSource();
         _cells.Clear();
         _rowCount = 0;
         this.SelectIndex(-1);
+        this.RefreshWindow();
     }
 
-    void AppendCells(string cell0, string cell1, string cell2, string cell3) {
+    void LoadFromNestedRows(List<List<string>> rows) {
         int cols = _columns.Count;
         if (cols == 0) {
-            throw new InvalidOperationException("DataGrid.AddRow: AddColumn first (no columns)");
+            throw new InvalidOperationException("DataGrid.ItemsSource: AddColumn first (no columns)");
         }
-        _cells.Add(cell0);
-        if (cols > 1) {
-            _cells.Add(cell1);
+        _cells.Clear();
+        _rowCount = 0;
+        if (rows == null) {
+            this.SelectIndex(-1);
+            this.RefreshWindow();
+            return;
         }
-        if (cols > 2) {
-            _cells.Add(cell2);
+        int r = 0;
+        while (r < rows.Count) {
+            List<string> row = rows[r];
+            this.AppendRowCells(row, cols);
+            _rowCount = _rowCount + 1;
+            r++;
         }
-        if (cols > 3) {
-            _cells.Add(cell3);
-        }
-        // 列数超过 4：剩余列补空串（保持行主序扁平 stride = 列数）
-        int pad = cols - 4;
-        if (pad > 0) {
-            int i = 0;
-            while (i < pad) {
-                _cells.Add("");
-                i++;
-            }
-        }
-        _rowCount = _rowCount + 1;
+        this.SelectIndex(-1);
         this.RefreshWindow();
+    }
+
+    void LoadFromSingleColumn(List<string> values) {
+        int cols = _columns.Count;
+        if (cols == 0) {
+            throw new InvalidOperationException("DataGrid.ItemsSource: AddColumn first (no columns)");
+        }
+        _cells.Clear();
+        _rowCount = 0;
+        if (values == null) {
+            this.SelectIndex(-1);
+            this.RefreshWindow();
+            return;
+        }
+        int i = 0;
+        while (i < values.Count) {
+            List<string> row = new List<string>();
+            row.Add(values[i]);
+            this.AppendRowCells(row, cols);
+            _rowCount = _rowCount + 1;
+            i++;
+        }
+        this.SelectIndex(-1);
+        this.RefreshWindow();
+    }
+
+    /// <summary>按列数写入一行：缺列补空串，超列截断。</summary>
+    void AppendRowCells(List<string> row, int cols) {
+        int c = 0;
+        while (c < cols) {
+            string cell = "";
+            if (row != null && c < row.Count && row[c] != null) {
+                cell = row[c];
+            }
+            _cells.Add(cell);
+            c++;
+        }
     }
 
     // ===== 虚拟化窗口（RFC 037 §4 · M-VZ4：只物化可见行，池化复用）=====
@@ -252,6 +644,7 @@ public class DataGrid : MultiSelector {
         this.SyncMirrorRows();
     }
 
+
     void UpdateViewportWindow(double viewportHeight) {
         double stride = this.ResolveRowStride();
         _viewport.Update(this.VerticalOffset, viewportHeight, _rowCount, stride, 0.0, 0.0);
@@ -267,18 +660,21 @@ public class DataGrid : MultiSelector {
             this.RecycleAllRows();
             return;
         }
-        // 回收收集：只读扫描（get_Item on this + 记录到局部列表）
         List<DataGridRow> recycle = new List<DataGridRow>();
         int count = this.Children.Count;
         int i = 0;
         while (i < count) {
-            DataGridRow row = (DataGridRow)this.Children[i];
+            Element raw = this.Children[i];
+            if (!(raw is DataGridRow)) {
+                i++;
+                continue;
+            }
+            DataGridRow row = (DataGridRow)raw;
             if (row.RowIndex < first || row.RowIndex > last) {
                 recycle.Add(row);
             }
             i++;
         }
-        // 统一移除（mutator on this，无同层 get_Item 配对）
         int r = 0;
         int recycleCount = recycle.Count;
         while (r < recycleCount) {
@@ -289,7 +685,6 @@ public class DataGrid : MultiSelector {
             _rowPool.Add(row);
             r++;
         }
-        // 区间内取池补位 + 重绑
         int idx = first;
         while (idx <= last) {
             DataGridRow row = this.FindRowByIndex(idx);
@@ -297,8 +692,9 @@ public class DataGrid : MultiSelector {
                 row = this.TakePooledRow();
                 row.RowIndex = idx;
                 this.AddChild(row);
+            } else {
+                row.RowIndex = idx;
             }
-            this.BindRowCells(row, idx);
             idx++;
         }
     }
@@ -347,15 +743,6 @@ public class DataGrid : MultiSelector {
         return null;
     }
 
-    void BindRowCells(DataGridRow row, int index) {
-        int cols = _columns.Count;
-        row.Cells.Clear();
-        int c = 0;
-        while (c < cols) {
-            row.Cells.Add(this.GetCell(index, c));
-            c++;
-        }
-    }
 
     double ResolveRowStride() {
         double h = this.RowHeight;
@@ -367,9 +754,9 @@ public class DataGrid : MultiSelector {
             LayoutHelper.MinTextPaddingX, LayoutHelper.MinTextPaddingY,
             this.FontFamily, this.FontWeight);
         if (est.Height > 0.0) {
-            return est.Height + 8.0;
+            return est.Height + ControlMetrics.SpacingSM;
         }
-        return 32.0;
+        return ControlMetrics.ControlHeight;
     }
 
     // ===== 选择语义差异钩子（SelectIndex 流程入口 / SyncMirrorSelection 镜像同步 /
@@ -439,7 +826,6 @@ public class DataGrid : MultiSelector {
             mirrorRows = mirrorRows + 1;
         }
         double stride = this.ResolveRowStride();
-        double headerH = this.HeaderHeight;
         double w = this.RenderWidth > 0.0 ? this.RenderWidth : 320.0;
         int i = 0;
         while (i < mirrorRows) {
@@ -450,16 +836,16 @@ public class DataGrid : MultiSelector {
             }
             if (i < arcRows) {
                 DataGridRow row = (DataGridRow)this.Children[i];
-                double y = headerH + (double)row.RowIndex * stride - this.VerticalOffset;
+                // 与 ArrangeChild 一致：写绝对 LayoutX/Y（相对窗口根）；禁相对客户区覆盖。
                 WindowHost.ElementSetNumber(rowHandle, "ItemIndex", (double)row.RowIndex);
-                WindowHost.ElementSetNumber(rowHandle, "LayoutX", 0.0);
-                WindowHost.ElementSetNumber(rowHandle, "LayoutY", y);
+                WindowHost.ElementSetNumber(rowHandle, "LayoutX", row.LayoutX);
+                WindowHost.ElementSetNumber(rowHandle, "LayoutY", row.LayoutY);
                 WindowHost.ElementSetNumber(rowHandle, "LayoutWidth", w);
                 WindowHost.ElementSetNumber(rowHandle, "LayoutHeight", stride);
                 int c = 0;
-                int cols = row.Cells.Count;
+                int cols = _columns.Count;
                 while (c < cols) {
-                    WindowHost.ElementSetString(rowHandle, "C" + c, row.Cells[c]);
+                    WindowHost.ElementSetString(rowHandle, "C" + c, this.GetCell(row.RowIndex, c));
                     c++;
                 }
             } else {

@@ -34,6 +34,9 @@ public class InputElement : Control {
     /// <summary>焦点状态（单一写点 SetFocused；渲染经平台镜像 IsFocused）。</summary>
     protected bool _isFocused;
 
+    /// <summary>是否应显示焦点环（键盘模态；与 FocusManager.IsFocusVisible 同步）。</summary>
+    protected bool _isFocusVisible;
+
     /// <summary>构造元素：绑定类型身份并开启输入默认（可聚焦 + Tab 停靠）。</summary>
     public InputElement() {
         this.Type = typeof(InputElement);
@@ -46,26 +49,41 @@ public class InputElement : Control {
         get { return _isFocused; }
     }
 
+    /// <summary>是否显示焦点环（只读；键盘导航后为 true，指针聚焦为 false）。</summary>
+    public bool IsFocusVisible {
+        get { return _isFocusVisible; }
+    }
+
     /// <summary>平台镜像登记（PlatformTreeSync 统一调用；幂等）。派生扩展路由注册。</summary>
     public virtual void BindPlatformMirror(long handle) {
         _mirrorHandle = handle;
     }
 
     /// <summary>
-    /// 焦点状态单一写点（FocusManager 专通道；幂等——同值不触发镜像/重绘）。
+    /// 焦点状态单一写点（FocusManager 专通道；幂等——同值且环可见性未变不触发镜像/重绘）。
     /// </summary>
     internal void SetFocused(bool focused) {
+        bool wantVisible = false;
+        if (focused) {
+            if (FocusManager.IsFocusVisible()) {
+                wantVisible = true;
+            }
+        }
         if (_isFocused == focused) {
-            return;
+            if (_isFocusVisible == wantVisible) {
+                return;
+            }
         }
         _isFocused = focused;
+        _isFocusVisible = wantVisible;
         this.OnFocusedChanged(focused);
     }
 
-    /// <summary>焦点视觉同步（基类：镜像 IsFocused + 标脏；派生扩展）。</summary>
+    /// <summary>焦点视觉同步（基类：镜像 IsFocused/IsFocusVisible + 标脏；派生扩展）。</summary>
     protected virtual void OnFocusedChanged(bool focused) {
         if (_mirrorHandle != 0) {
             WindowHost.ElementSetBool(_mirrorHandle, "IsFocused", focused ? 1 : 0);
+            WindowHost.ElementSetBool(_mirrorHandle, "IsFocusVisible", _isFocusVisible ? 1 : 0);
         }
         FramePump.Invalidate();
     }

@@ -211,6 +211,26 @@ public class TextBox : InputElement {
     }
 
     /// <summary>
+    /// 命中/选区几何用文本（与绘制同源）。PasswordBox 覆写为掩码串，
+    /// 使 PrefixWidthCache 与镜像 Text 一致。
+    /// </summary>
+    internal virtual string GeometryText() {
+        string cur = _model.Text;
+        if (cur == null) {
+            return "";
+        }
+        return cur;
+    }
+
+    /// <summary>
+    /// 是否允许将选区明文写入系统剪贴板（Copy/Cut）。
+    /// PasswordBox 覆写为 false——禁明文出剪贴板；Paste 仍允许。
+    /// </summary>
+    internal virtual bool AllowsClipboardCopy() {
+        return true;
+    }
+
+    /// <summary>
     /// 内核状态 → DP 槽/事件/镜像的单向同步（Model → TextBox DP →
     /// mirror → 渲染）。forceNotify 强制触发 TextChanged（程序化 Text
     /// 赋值保持无条件通知语义）；内核编辑路径按实际变化触发。
@@ -269,26 +289,15 @@ public class TextBox : InputElement {
     }
 
     /// <summary>
-    /// 键盘消费（override）：光标/编辑键经 ImeBridge native 通道已分发
-    /// TextBoxController，此处声明消费——阻止 FocusManager 将方向键误判为
-    /// 焦点导航（双路由根治，InputElement.OnKeyDown 契约）。
+    /// 键盘消费（override）：IN-R2 后编辑键由 KeyboardRouter → HandleKey
+    /// 先行消费；本 override 保留为非 Router 路径的兜底（返回 false）。
     /// </summary>
     internal override bool OnKeyDown(int virtualKey, int shiftDown) {
-        if (virtualKey == FocusManager.VirtualKeyLeft()
-            || virtualKey == FocusManager.VirtualKeyUp()
-            || virtualKey == FocusManager.VirtualKeyRight()
-            || virtualKey == FocusManager.VirtualKeyDown()
-            || virtualKey == FocusManager.VirtualKeyHome()
-            || virtualKey == FocusManager.VirtualKeyEnd()
-            || virtualKey == FocusManager.VirtualKeyBackspace()
-            || virtualKey == FocusManager.VirtualKeyDelete()) {
-            return true;
-        }
         return false;
     }
 
     /// <summary>刷新平台 mirror（Text/composition/caret/focus/selection）。</summary>
-    public void SyncMirrorText() {
+    public virtual void SyncMirrorText() {
         if (_mirrorHandle == 0) {
             return;
         }
@@ -307,8 +316,9 @@ public class TextBox : InputElement {
         WindowHost.ElementSetNumber(_mirrorHandle, "SelectionLength", (double)this.SelectionLength);
         int focused = _isFocused ? 1 : 0;
         WindowHost.ElementSetBool(_mirrorHandle, "IsFocused", focused);
-        // 按需渲染契约：Text/composition/caret/focus/selection 均为视觉状态，
-        // 镜像更新后必须标脏——否则空闲帧 WaitEvents(-1) 阻塞，键入永不重绘。
+        // 文本/焦点/选区镜像为纯绘脏；禁 InvalidateLayout——否则 caret 闪与键入叠成整树
+        // Relayout（PART_Chrome 几何抖动，表现为 caret/placeholder/焦点回归）。
+        // 文案改度量走 Text 属性 SetValue → 布局脏；空闲 caret 翻转经 PumpCaretIdle。
         FramePump.Invalidate();
     }
 
@@ -325,7 +335,7 @@ public class TextBox : InputElement {
         // Caret-anchored DIP; Win32 IMM multiplies dpi_scale to physical client pixels.
         double caretAdv = InputMetrics.PenOriginX;
         if (TextMeasuring.IsAvailable()) {
-            string before = this.CaretPrefix();
+            string before = this.CaretPrefixGeometry();
             LayoutSize sz = TextMeasuring.Current.MeasureText(
                 before, fontSize, 0.0, 0.0, this.FontFamily, this.FontWeight);
             caretAdv = InputMetrics.PenOriginX + sz.Width;
@@ -370,8 +380,25 @@ public class TextBox : InputElement {
         return before;
     }
 
-    string BuildDisplayString() {
-        string cur = this.Text;
+    /// <summary>IME 候选窗锚定前缀——与 GeometryText 同掩码语义。</summary>
+    string CaretPrefixGeometry() {
+        string geo = this.GeometryText();
+        if (geo == null) {
+            geo = "";
+        }
+        int idx = _model.Caret;
+        if (idx < 0) {
+            idx = 0;
+        }
+        if (idx > geo.Length) {
+            idx = geo.Length;
+        }
+        return geo.Substring(0, idx);
+    }
+
+    /// <summary>Measure / 显示估算串（可含 composition；PasswordBox 仅掩码）。</summary>
+    protected virtual string BuildDisplayString() {
+        string cur = this.GeometryText();
         if (cur == null) {
             cur = "";
         }
@@ -390,6 +417,24 @@ public class TextBox : InputElement {
     }
 
     protected override LayoutSize MeasureOverride(LayoutSize availableSize) {
+        if (this.HasTemplateVisual()) {
+            LayoutSize templated = this.MeasureTemplateVisual(availableSize);
+            double tw = templated.Width;
+            double th = templated.Height;
+            if (tw < InputMetrics.MinWidth) {
+                tw = InputMetrics.MinWidth;
+            }
+            if (th < InputMetrics.MinHeight) {
+                th = InputMetrics.MinHeight;
+            }
+            if (this.Width > 0.0) {
+                tw = this.Width;
+            }
+            if (this.Height > 0.0) {
+                th = this.Height;
+            }
+            return LayoutHelper.ApplyMinMax(this, new LayoutSize(tw, th));
+        }
         double fontSize = this.FontSize;
         if (fontSize <= 0.0) {
             fontSize = InputMetrics.FontSizeFallback;
@@ -416,5 +461,11 @@ public class TextBox : InputElement {
             h = this.Height;
         }
         return new LayoutSize(w, h);
+    }
+
+    protected override void ArrangeOverride(LayoutSize finalSize) {
+        if (this.HasTemplateVisual()) {
+            this.ArrangeTemplateVisual(finalSize);
+        }
     }
 }

@@ -9,8 +9,9 @@
 // 槽位复用：DestroyTexture 置空不紧凑（对齐 _offscreenTargets 先例，避免
 // Dictionary.Keys 遍历的编译器缺陷）。
 //
-// 与帧命令流水线协作：DrawTexture 记录 textureId 到 _cmdTexture，FlushFrameCommands
-// 重放时按 textureId 查注册表绑对应 bind group（pipeline 3 = image）。
+// 与帧命令流水线协作：DrawTexture 仅向 _cmdTexture 追加 textureId（稠密）；
+// FlushFrameCommands 用独立 texIdx 消费后查注册表绑 bind group（pipeline 3）。
+// 禁止用全命令下标索引 _cmdTexture（滚动露出 Image 后会 list OOB）。
 namespace Arc.UI.Rendering.Wgpu;
 
 using Arc.Collections;

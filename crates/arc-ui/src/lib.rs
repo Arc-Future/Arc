@@ -19,15 +19,21 @@ mod lexer;
 mod parser;
 mod projection;
 mod projection_arc;
+mod style_key;
 mod typeck;
 mod verify;
+
+pub use style_key::{
+    codegen_style_key_tokens, lookup_candidates, miss_diagnostic, resolve_style_key, CodegenStyleRef,
+};
 
 pub use adaptive::{check_adaptive, check_codebehind_pollution, AdaptiveCheck};
 pub use adaptive_lit::ValueType;
 pub use ast::*;
 pub use builtin_theme_gen::{
-    generate_colors_g_as, load_theme_colors, write_colors_g_as, COLORS_G_AS_REL, CONTROLS_ARML_REL,
-    DARK_ARML_REL, LIGHT_ARML_REL,
+    generate_colors_g_as, generate_styles_g_as, load_controls_styles, load_theme_colors,
+    write_colors_g_as, write_styles_g_as, COLORS_G_AS_REL, CONTROLS_ARML_REL, CONTROLS_DIR_REL,
+    CONTROL_STYLE_SOURCES, DARK_ARML_REL, LIGHT_ARML_REL, STYLES_G_AS_REL,
 };
 pub use codegen::{generate, generate_project, CodegenOptions, GeneratedFile, ProjectOutput};
 pub use error::{ArmlError, ArmlResult};

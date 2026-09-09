@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ToggleButton：BasedOn Medium；默认 Template = DefaultControlTemplates.ToggleButton
+     （PART_Chrome + PART_Content）。Template 由 AttachDefaultTemplates 挂载。 -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+    <Style TargetType="ToggleButton" BasedOn="{StaticResource Medium}">
+    </Style>
+</ResourceDictionary>

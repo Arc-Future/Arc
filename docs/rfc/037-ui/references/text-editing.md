@@ -71,8 +71,8 @@ ArmlDemo「点击 Input 无 caret、键入无内容」经全链路源码推演�
 | 组 | 操作 | 语义 |
 |----|------|------|
 | 编辑 | `Insert(chunk)` | 有选区先整体替换再插入（选区消费收敛为一点） |
-| | `DeleteBackward` / `DeleteForward` | 有选区整体删除；否则按 caret 方向删一字符 |
-| 移动 | `MoveCaret(granularity, extend)` | granularity ∈ `Char`/`Word`/`Home`/`End`（多行追加 `Line`）；`extend` 对应 Shift 扩选。取代 8 个 `MoveCaretXxx`/`ExtendSelectionXxx` 散方法 |
+| | `DeleteBackward` / `DeleteForward` | 有选区整体删除；否则按 caret 方向删一 **Unicode 码点**（UTF-8 整码元；禁按单字节切 CJK，否则回退乱码） |
+| 移动 | `MoveCaret(granularity, extend)` | granularity ∈ `Char`/`Word`/`Home`/`End`（多行追加 `Line`）；`Char` 按 UTF-8 码点边界步进；`extend` 对应 Shift 扩选 |
 | 选区 | `SelectAll` / `ClearSelection` / `SetSelection(anchor, active)` | 归一化并同步 caret |
 | 撤销 | `Undo` / `Redo` | 快照式；连续 `Insert` 合并一个单元；IME commit 独立单元 |
 | 程序化 | `SetText(text)` | 绕过撤销合并，独立快照 |
@@ -94,16 +94,24 @@ ArmlDemo「点击 Input 无 caret、键入无内容」经全链路源码推演�
 |----|------|------|
 | `TextBoxModel` | `std/UI/Core/Editing/`（internal） | §3 全部编辑语义 + 撤销 + 选区不变量 |
 | `TextBox` | `std/UI/Core/Components/TextBox.as`（public） | DP 壳：`Text`/`Placeholder`/`IsReadOnly`/`MaxLength`；事件 `TextChanged`/`SelectionChanged`；`MeasureOverride` 走 `TextMeasuring`；持有内核实例并转发 |
-| `TextBoxController` | `std/UI/Core/Input/`（internal） | `KeyboardRouter` 键命令 → 内核操作映射（方向键+Ctrl/Shift、Home/End、Delete/Backspace、Ctrl+A/Z/Y、可打印字符）；指针（click 定位 / drag 拖选 / 双击词选 / 三击行选）经 `rt_ui_dispatch_input_activated` 单通道；IME 事件桥接内核组字操作 |
+| `TextBoxController` | `std/UI/Core/Internal/`（internal） | `KeyboardRouter` 键命令 → 内核操作映射（方向键+Ctrl/Shift、Home/End、Delete/Backspace、Ctrl+A/Z/Y/C/V/X、可打印字符）；剪贴板经 `WindowHost.ClipboardGetText`/`ClipboardSetText`（`rt_ui_clipboard_*`）；指针（click 定位 / drag 拖选 / **双击词选**）经 `rt_ui_dispatch_input_click_at`（`ImeBridge` 双击时序判定 → `SelectWordAt`，空白为界 · UTF-8 码点）；IME 事件桥接内核组字操作 |
 | 渲染 | `WgpuRender.RenderTree` | 复用现有文本管线；选区高亮、caret 闪烁（`FramePump.CaretBlinkOn`）、组字下划线；命中测试用**前缀宽度缓存**（按 `version` 失效），替代逐前缀 `MeasureText` O(n) 重测 |
 | 几何 | `InputMetrics` 单点 | 文本原点内边距、caret 宽高等常量，命中端与渲染端同源引用（D9 消除） |
 
-## 5. 非目标（本契约边界）
+## 5. 剪贴板（已接）与仍非目标
+
+**已接（Ctrl+C/V/X）**：`rt_ui_clipboard_get_text` / `rt_ui_clipboard_set_text`（Win32 `CF_UNICODETEXT`；非 Win32 stub）；`TextBoxController.HandleCopy/Cut/Paste`；单行 Paste 剥离 CR/LF。**PasswordBox**：`AllowsClipboardCopy()=false` → 禁 Copy/Cut 明文出剪贴板；允许 Paste 入 Password。
+
+**已接（双击词选）**：`ImeBridge.RouteInputClick` 同句柄 500ms / 4 DIP 双击判定 → `TextBoxModel.SelectWordAt`（空白分词 · UTF-8 码点边界）。**三击行选**后置（单行契约下与全选近似）。
+
+**仍非目标（本契约边界）**：
 
 - 多行编辑 UI（`AcceptsReturn` DP 与 `Line` 粒度契约预留，布局/滚动实现后续）；
-- 剪贴板（Ctrl+C/V/X）与覆盖模式；
-- `PasswordChar` 口令遮蔽、SpellCheck/ICT 自动更正；
+- 覆盖模式（Insert 键）；
+- SpellCheck/ICT 自动更正；
 - CodeEditor 迁移至 TextBoxModel（`TextBuffer`/`LineIndex` 独立体系，视后续成熟度决定是否收敛）。
+
+> `PasswordChar` 口令遮蔽已由 `PasswordBox` 控件面承接（非本篇内核职责）。
 
 ---
 

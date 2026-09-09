@@ -26,6 +26,8 @@ fn registry_builtin_contains_core_components() {
         "Button",
         "Image",
         "TextBox",
+        "PasswordBox",
+        "Border",
         "CheckBox",
         "Slider",
         "CodeEditor",
@@ -34,6 +36,9 @@ fn registry_builtin_contains_core_components() {
         "ItemsControl",
         "ListView",
         "VisualHost",
+        "TabControl",
+        "TabItem",
+        "DataGrid",
     ] {
         assert!(reg.contains(name), "expected builtin component `{name}`");
     }

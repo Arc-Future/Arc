@@ -18,11 +18,9 @@
 // object 管道（Count/ItemAt/DisplayAt）与变更表面，不再感知源类型——
 // 模板路径收数据项本体（WPF DataContext 同构），默认路径收显示投影。
 //
-// 视图变更表面订阅（诚实标注）：用**静态方法组**注册（bare fn ptr，无捕获
-// 闭包）——编译器对逃逸闭包的 ByRef 捕获存外层栈槽地址，闭包跨函数逃逸后槽位
-// 悬垂 → UB（lambda 订阅实测偶发不触发/AV，2026-08-05）。静态方法组无 env 无
-// 悬垂，路由经 `_activeViewHost`；**单活跃实例**约束（多实例并发订阅依赖编译器
-// 逃逸闭包修复，属依赖项；与原 ObservableCollection 直订机制约束等价，非退化）。
+// 视图变更表面订阅：多实例并发——每宿主登记稳定 route id，OnChanged 回调只按值
+// 捕获 route 槽 int（禁捕获 this；逃逸闭包 UB 惯例同 DataGrid / BindingOperations）；
+// `_viewHosts` 表按 id 回查宿主。
 
 namespace Arc.UI.Components;
 
@@ -37,6 +35,12 @@ public class ItemsControl : Control {
     private VirtualizingStackPanel _itemsHost;
     private ItemSourceView _view;
     private int _viewToken;
+
+    /// <summary>本实例在 <see cref="_viewHosts"/> 中的槽位（-1 = 未登记）。</summary>
+    private int _viewRouteSlot;
+
+    /// <summary>视图变更多宿主路由表：OnChanged 回调按 route id 回查宿主。</summary>
+    private static List<ItemsControl> _viewHosts;
 
     public ItemContainerGenerator ItemContainerGenerator;
 
@@ -56,6 +60,8 @@ public class ItemsControl : Control {
         this.AddChild(_itemsHost);
         ItemContainerGenerator = new ItemContainerGenerator(_itemsHost);
         _itemsHost.Generator = ItemContainerGenerator;
+        _viewToken = -1;
+        _viewRouteSlot = -1;
     }
 
     /// <summary>自管视口派生（DataGrid）入口：ownsItemsHost=false 跳过基类项宿主装配，
@@ -64,6 +70,8 @@ public class ItemsControl : Control {
     protected ItemsControl(bool ownsItemsHost) {
         this.Type = typeof(ItemsControl);
         this.TypeName = "ItemsControl";
+        _viewToken = -1;
+        _viewRouteSlot = -1;
         if (!ownsItemsHost) {
             return;
         }
@@ -80,9 +88,6 @@ public class ItemsControl : Control {
 
     public static DependencyProperty<object> ItemTemplateProperty =
         RegisterProperty<object>(nameof(ItemTemplate), typeof(ItemsControl), null);
-
-    public static DependencyProperty<object> ItemsPanelProperty =
-        RegisterProperty<object>(nameof(ItemsPanel), typeof(ItemsControl), null);
 
     public static DependencyProperty<double> VerticalOffsetProperty =
         RegisterProperty<double>(nameof(VerticalOffset), typeof(ItemsControl), 0.0);
@@ -110,8 +115,9 @@ public class ItemsControl : Control {
     }
 
     /// <summary>按 object ItemsSource 的运行时类型判别并物化为数据源视图；null 与
-    /// 未知类型统一走清空路径（WPF ItemsSource = null 语义，行为可预期）。</summary>
-    private void MaterializeFromItemsSource() {
+    /// 未知类型统一走清空路径（WPF ItemsSource = null 语义，行为可预期）。
+    /// DataGrid 等自管视口派生可覆写以消费多列行源。</summary>
+    protected virtual void MaterializeFromItemsSource() {
         object src = this.GetValue<object>(ItemsSourceProperty);
         if (src == null) {
             this.ClearItems();
@@ -135,13 +141,13 @@ public class ItemsControl : Control {
     private void SetView(ItemSourceView view) {
         this.ReleaseView();
         _view = view;
-        // 方法组委托在函数作用域声明（MIR 块级 Let 走 AST 原样、丢 typeck 脱糖：
-        // 块内 `Action<...> h = ItemsControl.X;` 会触发 lower_expr 未解析 ident panic，
-        // 2026-08-05 实测；函数顶层走 TypedStmt 带脱糖后 lambda）。
-        Action<CollectionChangedEventArgs<object>> handler = ItemsControl.OnViewChangedStatic;
         if (view != null) {
-            _activeViewHost = this;
-            _viewToken = view.OnChanged(handler);
+            this.EnsureViewRoute();
+            int routeSlot = _viewRouteSlot;
+            // 只按值捕获 routeSlot（int）；禁捕获 this（逃逸闭包 UB）。
+            _viewToken = view.OnChanged((args) => {
+                ItemsControl.DispatchViewChange(routeSlot, args);
+            });
         }
         if (_itemsHost == null) {
             return;
@@ -156,7 +162,7 @@ public class ItemsControl : Control {
     }
 
     /// <summary>释放当前视图：退订视图变更表面、解除视图与动态源的绑定
-    /// （视图 Detach 退订源通道并清路由槽，防换绑后悬垂派发）、清静态路由槽。</summary>
+    /// （视图 Detach 退订源通道并清路由槽，防换绑后悬垂派发）、清宿主路由槽。</summary>
     private void ReleaseView() {
         if (_view != null) {
             _view.Unsubscribe(_viewToken);
@@ -164,20 +170,40 @@ public class ItemsControl : Control {
             _view = null;
         }
         _viewToken = -1;
-        if (_activeViewHost == this) {
-            _activeViewHost = null;
-        }
+        this.UnregisterViewRoute();
     }
 
-    private static ItemsControl _activeViewHost;
-
-    /// <summary>视图变更表面静态路由（bare fn ptr，无捕获）：定位当前活跃
-    /// ItemsControl 实例派发（单活跃实例约束，见文件头）。</summary>
-    private static void OnViewChangedStatic(CollectionChangedEventArgs<object> args) {
-        ItemsControl host = _activeViewHost;
-        if (host != null) {
-            host.OnViewChanged(args);
+    /// <summary>登记多宿主路由槽（幂等）；退订前保持有效供逃逸回调回查。</summary>
+    void EnsureViewRoute() {
+        if (_viewRouteSlot >= 0) {
+            return;
         }
+        if (_viewHosts == null) {
+            _viewHosts = new List<ItemsControl>();
+        }
+        _viewRouteSlot = _viewHosts.Count;
+        _viewHosts.Add(this);
+    }
+
+    void UnregisterViewRoute() {
+        if (_viewRouteSlot < 0) {
+            return;
+        }
+        if (_viewHosts != null && _viewRouteSlot < _viewHosts.Count) {
+            _viewHosts[_viewRouteSlot] = null;
+        }
+        _viewRouteSlot = -1;
+    }
+
+    private static void DispatchViewChange(int routeSlot, CollectionChangedEventArgs<object> args) {
+        if (_viewHosts == null || routeSlot < 0 || routeSlot >= _viewHosts.Count) {
+            return;
+        }
+        ItemsControl host = _viewHosts[routeSlot];
+        if (host == null) {
+            return;
+        }
+        host.OnViewChanged(args);
     }
 
     private void OnViewChanged(CollectionChangedEventArgs<object> args) {
@@ -206,11 +232,6 @@ public class ItemsControl : Control {
             this.ItemContainerGenerator.SetTemplate(template);
             this.RefreshItems();
         }
-    }
-
-    public object ItemsPanel {
-        get { return this.GetValue<object>(ItemsPanelProperty); }
-        set { this.SetValue<object>(ItemsPanelProperty, value); }
     }
 
     /// <summary>垂直滚动偏移（px）；ScrollView 外壳同步此值以驱动视口窗口。</summary>
@@ -270,10 +291,19 @@ public class ItemsControl : Control {
 
     private TextBlock CreateDefaultsText() {
         TextBlock defaults = new TextBlock();
-        defaults.FontSize = this.FontSize;
-        defaults.FontFamily = this.FontFamily;
-        defaults.FontWeight = this.FontWeight;
-        defaults.Foreground = this.Foreground;
+        // 仅复制已有环境有效值；未设留给逻辑树继承 + 主题回落（禁烤 DP 默认挡 SwitchTheme）。
+        if (this.HasAmbientValue(Control.FontSizeProperty.Id)) {
+            defaults.FontSize = this.FontSize;
+        }
+        if (this.HasAmbientValue(Control.FontFamilyProperty.Id)) {
+            defaults.FontFamily = this.FontFamily;
+        }
+        if (this.HasAmbientValue(Control.FontWeightProperty.Id)) {
+            defaults.FontWeight = this.FontWeight;
+        }
+        if (this.HasAmbientValue(Control.ForegroundProperty.Id)) {
+            defaults.Foreground = this.Foreground;
+        }
         return defaults;
     }
 
@@ -291,7 +321,10 @@ public class ItemsControl : Control {
 
     protected override void ArrangeOverride(LayoutSize finalSize) {
         if (_itemsHost != null) {
-            _itemsHost.Arrange(finalSize);
+            // 必须 ArrangeChild：写入相对父级的绝对 LayoutX/Y。直接 Arrange 会留下
+            // 宿主原点 (0,0)，行项叠到窗口根 → ListView 视觉重叠。
+            LayoutHelper.ArrangeChild(
+                this, _itemsHost, 0.0, 0.0, finalSize.Width, finalSize.Height);
         }
     }
 }

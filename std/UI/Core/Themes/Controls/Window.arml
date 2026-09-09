@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Window 隐式 Style（chrome only；字体禁入）。
+     静态：Background ← Color.Background（页底；切主题经重应用刷新）。 -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+    <Style TargetType="Window">
+        <Setter Property="Background" Value="{StaticResource Color.Background}"/>
+    </Style>
+</ResourceDictionary>

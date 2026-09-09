@@ -54,7 +54,7 @@ arc inspect examples/CompilerSmoke/Program.as --format json --emit hello.arcgr
 
 ### 4. JSON 诊断
 
-诊断输出支持 `--message-format json`：parse / typeck / borrowck 诊断序列化为结构化 JSON，与 LSP `publishDiagnostics` 同源（见 [033](033-lsp.md)）。AI 工具链据此解析错误、定位 span、生成修复建议。结构化诊断口径见 [user-guide 14 结构化诊断](../user-guide/14-structured-diagnostics.md)「机器可读输出」。
+诊断输出支持 `--message-format json`：parse / typeck / borrowck 诊断序列化为结构化 JSON，与 LSP `publishDiagnostics` 同源（见 [033](033-lsp.md)）。AI 工具链据此解析错误、定位 span、生成修复建议。结构化诊断口径见手册 [结构化诊断](../arc/12-advanced/diagnostics.md)「机器可读输出」。
 
 ### 5. 渐进式披露（L0–L4）
 

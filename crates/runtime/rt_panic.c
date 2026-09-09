@@ -27,6 +27,9 @@ typedef struct ArcStackFrame {
 
 /* Forward declaration: rt_backtrace is defined later in this file */
 int32_t rt_backtrace(ArcStackFrame* frames, int32_t max_frames);
+#if defined(_WIN32)
+static void arc_dbg_resolve(uint64_t addr, char* out, size_t outsz);
+#endif
 
 /* .arcdbg 符号化 API（rt_debug.c，RFC 017 M2 / D5.2） */
 extern int32_t rt_debug_lookup(uint64_t addr, const char** symbol, const char** file,
@@ -106,6 +109,20 @@ void rt_panic_at(const char* msg, const char* file, int32_t line, int32_t col) {
     } else {
         fprintf(stderr, "Arc panic: %s\n", msg ? msg : "unknown");
     }
+#if defined(_WIN32)
+    /* 人类可读栈：模块+偏移（无 .arcdbg 时仍可定位 DLL/EXE 帧）。 */
+    {
+        void* addrs[32];
+        int32_t n = (int32_t)RtlCaptureStackBackTrace(0, 32, addrs, NULL);
+        fprintf(stderr, "panic stack (%d frames):\n", (int)n);
+        for (int32_t i = 0; i < n; i++) {
+            char resolved[256];
+            arc_dbg_resolve((uint64_t)(uintptr_t)addrs[i], resolved, sizeof resolved);
+            fprintf(stderr, "  #%d %s\n", (int)i, resolved);
+        }
+        fflush(stderr);
+    }
+#endif
     exit(1);
 }
 

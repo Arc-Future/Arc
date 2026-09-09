@@ -4,7 +4,7 @@
 
 ## 背景
 
-Arc 测试（QIF）无任何覆盖率设施——代码树 `coverage / covprof / gcov / lcov / cobertura` 零命中。std 量产需要覆盖门禁：断言「被测代码被真实执行」，而非仅「测试通过」。本子项定义覆盖率能力，补全 QIF 质量闭环缺失的一环。
+Arc 测试（QIF）覆盖率能力设计见下文。**实现状态（诚实）**：`arc test --coverage` CLI 钩子已存在并在调用时明确报错退出；codegen/clang 插桩与 `llvm-profdata`/`llvm-cov` 汇总管线**尚未贯通**（见 plan QIF-5）。在落地验收 A1–A8 之前不得宣称 lcov 可用。
 
 覆盖率是**编译/运行层能力**（codegen 插桩 + 运行时计数回写），与 QIF（测试发现/执行）正交：QIF 负责「跑哪些测试」，覆盖率负责「跑完之后哪些行被触及」。`arc test --coverage` 是两者的串联点。
 

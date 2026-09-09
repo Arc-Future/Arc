@@ -35,6 +35,7 @@ namespace Arc.UI;
 
 using Arc.Collections;
 using Arc.UI.Components;
+using Arc.UI.Internal;
 
 /// <summary>绑定操作入口，连接 BindingExpression 与依赖属性。</summary>
 public class BindingOperations {
@@ -136,6 +137,8 @@ public class BindingOperations {
     public static void SyncText(TextBlock target, long platformHandle, string value) {
         target.Text = value;
         WindowHost.ElementSetString(platformHandle, "Text", value);
+        // Text 变更可能改 DesiredSize → 布局脏；纯 Invalidate 会跳过 Relayout 导致截断错位。
+        FramePump.InvalidateLayout();
     }
 
     /// <summary>

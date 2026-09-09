@@ -23,6 +23,8 @@ using Arc.UI.Layout;
 
 /// <summary>
 /// 按钮控件——Signal 驱动的点击交互。
+/// 变体作者面 = <c>Style="{StaticResource Primary, Small}"</c>（短键；查找先控件作用域再全局 Shared）。
+/// 禁 Class/Appearance/<c>*.Size.SM</c>；chrome 由已应用 Style 键驱动。
 /// </summary>
 public class Button : ContentControl {
     // ===== 静态依赖属性元数据（RFC 037 D1 WPF 同构）=====
@@ -47,7 +49,7 @@ public class Button : ContentControl {
     public static DependencyProperty<bool> IsMouseOverProperty =
         RegisterProperty<bool>(nameof(IsMouseOver), typeof(Button), false);
 
-    /// <summary>IsPressed 属性元数据——指针按下（平台同步），默认 false。</summary>
+    /// <summary>IsPressed DP metadata (pointer pressed).</summary>
     public static DependencyProperty<bool> IsPressedProperty =
         RegisterProperty<bool>(nameof(IsPressed), typeof(Button), false);
 
@@ -77,12 +79,12 @@ public class Button : ContentControl {
         set { this.SetValue<bool>(IsCancelProperty, value); }
     }
 
-    /// <summary>指针是否悬停于按钮上（Win32 软件路径同步）。</summary>
+    /// <summary>指针是否悬停于按钮上（PointerRouter / 平台镜像同步）。</summary>
     public bool IsMouseOver {
         get { return this.GetValue<bool>(IsMouseOverProperty); }
     }
 
-    /// <summary>指针是否处于按下态（Win32 软件路径同步）。</summary>
+    /// <summary>指针是否处于按下态（PointerRouter / 平台镜像同步）。</summary>
     public bool IsPressed {
         get { return this.GetValue<bool>(IsPressedProperty); }
     }
@@ -125,6 +127,9 @@ public class Button : ContentControl {
 
     /// <summary>触发点击——由平台层（WindowHost / native event loop）调用。</summary>
     public void RaiseClick() {
+        if (!this.IsEnabled) {
+            return;
+        }
         if (Clicked != null) {
             Clicked.Set(true);
         }
@@ -137,22 +142,51 @@ public class Button : ContentControl {
     }
 
     protected override LayoutSize MeasureOverride(LayoutSize availableSize) {
+        if (this.HasTemplateVisual()) {
+            LayoutSize templated = this.MeasureTemplateVisual(availableSize);
+            double w = templated.Width;
+            double h = templated.Height;
+            if (this.Width > 0.0) {
+                w = this.Width;
+            }
+            if (this.Height > 0.0) {
+                h = this.Height;
+            }
+            return LayoutHelper.ApplyMinMax(this, new LayoutSize(w, h));
+        }
+        double padX = LayoutHelper.ButtonPaddingX;
+        double padY = LayoutHelper.ButtonPaddingY;
+        Thickness pad = Thickness.Parse(this.Padding).Sanitized();
+        double padSumX = pad.Left + pad.Right;
+        double padSumY = pad.Top + pad.Bottom;
+        if (padSumX > 0.0) {
+            padX = padSumX;
+        }
+        if (padSumY > 0.0 || (this.Padding != null && this.Padding != "0,0,0,0")) {
+            padY = padSumY;
+        }
         LayoutSize est = LayoutHelper.EstimateTextSize(
             ContentHelper.TextOrEmpty(this.Content), this.FontSize,
-            LayoutHelper.ButtonPaddingX, LayoutHelper.ButtonPaddingY,
+            padX, padY,
             this.FontFamily, this.FontWeight);
-        double w = est.Width;
-        double h = est.Height;
+        double bw = est.Width;
+        double bh = est.Height;
         double availW = availableSize.Width;
-        if (availW > 0.0 && w > availW) {
-            w = availW;
+        if (availW > 0.0 && bw > availW) {
+            bw = availW;
         }
         if (this.Width > 0.0) {
-            w = this.Width;
+            bw = this.Width;
         }
         if (this.Height > 0.0) {
-            h = this.Height;
+            bh = this.Height;
         }
-        return new LayoutSize(w, h);
+        return LayoutHelper.ApplyMinMax(this, new LayoutSize(bw, bh));
+    }
+
+    protected override void ArrangeOverride(LayoutSize finalSize) {
+        if (this.HasTemplateVisual()) {
+            this.ArrangeTemplateVisual(finalSize);
+        }
     }
 }

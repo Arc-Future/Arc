@@ -5,8 +5,8 @@ using Arc.QIF;
 
 /// <summary>
 /// Assert.Throws / DoesNotThrow 稳定面全覆盖。
-/// 含 Throws (不限定)、Throws(errorCode)、DoesNotThrow。
-/// Throws<T> 泛型方法在 Arc 运行时通过 Assert 内部 errorCode 匹配实现。
+/// 含 Throws(不限定)、Throws(errorCode)、DoesNotThrow。
+/// 泛型 Throws&lt;T&gt; 延后（MIR）；类型身份用 Assert.IsException / IsType(typeof, typeof)。
 /// </summary>
 [Trait("category", "unit")]
 public class AssertThrowsTests

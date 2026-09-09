@@ -443,9 +443,9 @@ enum Commands {
         /// 对标 `dotnet test --logger <LOGGER>`。
         #[arg(long, value_name = "LOGGER")]
         logger: Option<String>,
-        /// 并行执行测试（XUnit 默认行为）。
-        /// 对标 `xunit.runner.json parallelizeTestCollections`。
-        /// 实验性：需 Arc codegen 支持 lambda delegate → 函数指针转换。
+        /// 并行执行测试（对标 xUnit `parallelizeTestCollections`）。
+        /// 默认串行（RFC 032 确定性优先）；开启后集合间并行、集合内串行。
+        /// 含 async Fact/Theory 的套件强制串行（Parallel.For 无法 await）。
         #[arg(long)]
         parallel: bool,
         /// 并行执行的最大并发度（1..N；0 = 不限）。覆盖 arc.toml [qif].max_parallel。
@@ -455,6 +455,15 @@ enum Commands {
         /// 默认单测试超时毫秒（0 = 不限制）。覆盖 arc.toml [qif].default_timeout。
         #[arg(long, value_name = "MS")]
         timeout: Option<i32>,
+        /// Assert.Skip（运行时 QIF_SKIP）计 Skipped 时非零退出。
+        /// 覆盖 arc.toml `[qif].fail_on_skip`（默认 false）。
+        /// 属性 `[Fact(Skip)]` 始终硬失败，不经此开关（RFC 032 §6）。
+        #[arg(long)]
+        fail_on_skip: bool,
+        /// 启用覆盖率插桩并汇总 lcov（QIF-5 / RFC 015 coverage）。
+        /// 当前未落地：给出明确错误，禁止假绿。
+        #[arg(long)]
+        coverage: bool,
         /// RFC 005 里程碑④：编译期字段环 warning 策略——`warn`（默认，打印
         /// `arc-cycle-001` 不阻断编译）| `off`（静默）。覆盖 arc.toml
         /// `[compiler] field_cycle_policy`。**无 `error` 档**。
@@ -1037,9 +1046,21 @@ fn run(cli: Cli) -> Result<(), String> {
             parallel,
             max_parallel,
             timeout,
+            fail_on_skip,
+            coverage,
             field_cycle_policy,
             ..
         } => {
+            if coverage {
+                return Err(
+                    "arc test --coverage is not yet implemented (QIF-5). \
+                     Design: docs/rfc/015-llvm-backend/references/coverage.md \
+                     (LLVM source-based → .profraw → llvm-cov lcov). \
+                     Remaining blockers: clang coverage flag plumbing through \
+                     codegen + llvm-profdata/llvm-cov toolchain bundle."
+                        .into(),
+                );
+            }
             let file = project.unwrap_or(file);
             let release = config_str == "Release";
             // 解决方案 = workspace 聚合：入口为 workspace 根（`arc.toml` 含
@@ -1066,6 +1087,7 @@ fn run(cli: Cli) -> Result<(), String> {
                     parallel,
                     max_parallel,
                     timeout,
+                    fail_on_skip,
                     field_cycle_policy,
                 );
             }
@@ -1097,6 +1119,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 parallel,
                 max_parallel,
                 timeout,
+                fail_on_skip,
                 &compile_options,
             )
         }
@@ -1227,6 +1250,7 @@ fn run_test(
     parallel: bool,
     max_parallel: Option<i32>,
     timeout: Option<i32>,
+    fail_on_skip: bool,
     compile_options: &arc::CompileOptions,
 ) -> Result<(), String> {
     let manifest = arc::manifest::require_arc_manifest(&file)?;
@@ -1260,6 +1284,8 @@ fn run_test(
         -1
     };
     let default_timeout_ms = timeout.unwrap_or(qif_section.default_timeout);
+    // FailOnSkip：CLI `--fail-on-skip` 或 `[qif].fail_on_skip`（默认 false）。
+    let effective_fail_on_skip = fail_on_skip || qif_section.fail_on_skip;
 
     // RFC 032 §7：QIF 产物根目录（`.arcqif` + `report.json`）。相对值以项目根为基准；
     // 持久化开启时先建目录（Arc host 的 `File.WriteAllText` 不负责建立父目录）。
@@ -1286,6 +1312,7 @@ fn run_test(
         output_dir: artifact_dir.display().to_string(),
         emit_json_report: qif_section.emit_json_report,
         persist_results: qif_section.persist_results,
+        fail_on_skip: effective_fail_on_skip,
     };
 
     // 2. 确定 obj_dir 和 output 路径（统一项目模型，对标 MSBuild）
@@ -1364,6 +1391,10 @@ fn run_test(
                     qif_opts.default_timeout_ms.to_string(),
                 ),
                 ("qif.parallel".to_string(), qif_opts.parallel.to_string()),
+                (
+                    "qif.fail_on_skip".to_string(),
+                    qif_opts.fail_on_skip.to_string(),
+                ),
             ];
             let inputs = arc::FingerprintInputs {
                 entry: &project_root,
@@ -1456,6 +1487,7 @@ fn run_test_workspace(
     parallel: bool,
     max_parallel: Option<i32>,
     timeout: Option<i32>,
+    fail_on_skip: bool,
     field_cycle_policy: Option<String>,
 ) -> Result<(), String> {
     // 入口命中成员项目 → 只测该成员及其 ProjectReference 闭包中的测试成员
@@ -1501,6 +1533,7 @@ fn run_test_workspace(
             parallel,
             max_parallel,
             timeout,
+            fail_on_skip,
             &compile_options,
         ) {
             Ok(()) => ran += 1,
@@ -2198,6 +2231,8 @@ fn discover_framework_sources(project_root: &Path) -> Vec<PathBuf> {
         "UI/Core/Layout/ITextMetrics.as",
         "UI/Core/Layout/TextMeasuring.as",
         "UI/Core/Layout/LayoutHelper.as",
+        "UI/Core/Layout/ControlMetrics.as",
+        "UI/Core/Layout/InputMetrics.as",
         "UI/Core/Components/Text.as",
         "UI/Core/Components/Button.as",
         "UI/Core/Components/Layout/StackPanel.as",
@@ -2213,6 +2248,7 @@ fn discover_framework_sources(project_root: &Path) -> Vec<PathBuf> {
         "UI/Core/Internal/ScrollRouter.as",
         "UI/Core/Internal/InputFocusRouter.as",
         "UI/Core/Internal/FocusManager.as",
+        "UI/Core/Internal/KeyboardRouter.as",
         "UI/Core/Internal/UIDispatcher.as",
         "UI/Core/Internal/FramePump.as",
         // EditorInputRouter：仅 CodeEditor 示例链（RFC 037 §4）
@@ -2221,6 +2257,7 @@ fn discover_framework_sources(project_root: &Path) -> Vec<PathBuf> {
         "UI/Core/Styling/ResourceDictionary.as",
         "UI/Core/Styling/BuiltInTheme.as", // 内置 Light/Dark 主题键常量 + 几何/motion + 薄工厂
         "UI/Core/Styling/BuiltInTheme.Colors.g.as", // UI-P2：Themes/*.arml 生成的色值填充
+        "UI/Core/Styling/BuiltInTheme.Styles.g.as", // UI-P2：Themes/Controls.arml 生成的隐式 Style
         "UI/Core/Styling/ThemeDictionary.as",
         "UI/Core/Styling/StyleManager.as",
         "UI/Core/Styling/VisualStateManager.as", // 状态→ControlVisual 视觉配方（颜色/几何/深度）

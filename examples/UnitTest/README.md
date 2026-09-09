@@ -28,25 +28,31 @@ Arc 语言与核心 std 的 **QIF 单元测试**套件。对标 `dotnet test` �
 | `Arc/Diagnostics` | `Arc.Diagnostics.*`（Stopwatch、Process、管道） | `Arc.Diagnostics` |
 | `Arc/Types` | `Arc.Types.*`（Lazy、Random、Guid、DateTime、Version） | `Arc.Types` |
 | `Arc/ComponentModel` | `Arc.ComponentModel.*`（Bindable、Command） | `Arc.ComponentModel` |
-| `QIF/` | QIF 框架自测：Assert 稳定面、Theory、Lifecycle、Parallel | `Arc.QIF` |
+| `QIF/` | QIF 框架自测：Assert 稳定面、Theory、Lifecycle、Parallel、Identity | `UnitTest.QIF`（被测 API 在 `Arc.QIF`） |
 | `AI/` | AI 子库契约测试（Agent/Host/Session） | `Arc.Agent.*` |
+| `Chord/` | Chord 领域契约 | `UnitTest.Chord` 等 |
+
+> **QIF-11 分治诚实边界**：上表为目标布局；物理目录仍以 `Core/` / `Arc/` / `QIF/` / `AI/` / `Chord/` 为主，大搬家延后。新语料优先落入目标子路径/namespace；禁止用 Skip 粉饰缺口。
 
 ## QIF 生产级能力
 
-本套件使用 QIF v1 生产级测试框架，对标 XUnit：
+本套件使用 QIF L1 生产级测试框架，对标 XUnit **功能完整子集**：
 
 | 能力 | CLI | 说明 |
 |------|-----|------|
-| **全量执行** | `arc test examples/UnitTest` | 默认所有测试 |
-| **批量选择** | `arc test examples/UnitTest --namespace Arc.Collections` | 按命名空间前缀选择 |
+| **全量执行** | `arc test examples/UnitTest` | 默认串行 |
+| **批量选择** | `arc test examples/UnitTest --namespace UnitTest.QIF` | 按命名空间前缀选择 |
 | **Kind 过滤** | `arc test examples/UnitTest --kind Theory` | 仅跑 Theory 参数化用例 |
-| **XUnit 表达式** | `arc test ... --filter "FullyQualifiedName~ListTests"` | 类名/方法名 contains |
-| **AND 组合** | `arc test ... --filter "Trait~category=unit&ClassName~List"` | 多条件与 |
+| **XUnit 表达式** | `arc test ... --filter "FullyQualifiedName~AssertTests"` | 类名/方法名 contains |
+| **AND 组合** | `arc test ... --filter "Trait~category=unit&ClassName~Assert"` | 多条件与 |
 | **OR/NOT** | `arc test ... --filter "Fact\|Theory&!Trait~skip"` | 或/非组合 |
 | **列出** | `arc test ... --list-tests` / `--list-format json` | 稳定字典序输出 |
-| **并行** | `arc test ... --parallel --max-parallel 8` | 真实并行（Lock 保护） |
+| **并行** | `arc test ... --parallel --max-parallel 8` | xUnit 子集：集间并行、集内串行；async 强制串行 |
+| **超时** | `arc test ... --timeout 5000`；`[Fact(Timeout=N)]` | 套件默认 + 单测覆盖 |
+| **FailOnSkip** | `arc test ... --fail-on-skip` | Assert.Skip → 非零；属性 Fact-Skip 始终硬失败 |
 | **报告** | `arc test ... --logger json` / `junit` | CI 友好格式 |
 | **零构建** | `arc test ... --no-build` | 跳过编译直接跑二进制 |
+| **覆盖率** | `arc test ... --coverage` | **未落地**（CLI 诚实报错） |
 
 ## 运行
 

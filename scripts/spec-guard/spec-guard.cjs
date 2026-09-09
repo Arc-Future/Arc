@@ -839,7 +839,7 @@ function layoutScan() {
     for (let i = 0; i < needFiles.length; i++) {
       if (!have[needFiles[i]]) out.push({ id: 'lay-docs-core', rule: '文档结构', severity: SEV_WARNING, category: CAT_LAYOUT, file: 'docs/' + needFiles[i], line: 0, message: 'docs/ 必备文档缺失（' + needFiles[i] + '；arc-docs 结构）' })
     }
-    const needDirs = ['rfc', 'user-guide', 'domain', 'white-paper']
+    const needDirs = ['rfc', 'arc']
     for (let i = 0; i < needDirs.length; i++) {
       if (!have[needDirs[i]]) out.push({ id: 'lay-docs-dir', rule: '文档结构', severity: SEV_WARNING, category: CAT_LAYOUT, file: 'docs/' + needDirs[i], line: 0, message: 'docs/ 必备目录缺失（' + needDirs[i] + '；arc-docs 结构）' })
     }

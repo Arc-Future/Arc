@@ -124,6 +124,17 @@ internal class TextBoxModel {
         }
     }
 
+    /// <summary>当前选区明文（无选区 → ""）。</summary>
+    public string SelectedText {
+        get {
+            int len = this.SelectionLength;
+            if (len <= 0) {
+                return "";
+            }
+            return _text.Substring(this.SelectionStart, len);
+        }
+    }
+
     /// <summary>最大长度（0 = 不限）。</summary>
     public int MaxLength {
         get { return _maxLength; }
@@ -156,7 +167,7 @@ internal class TextBoxModel {
         _version = _version + 1;
     }
 
-    /// <summary>Backspace：有选区整体删除；否则删 caret 前一字符。</summary>
+    /// <summary>Backspace：有选区整体删除；否则删 caret 前一 Unicode 码点（UTF-8 整码元）。</summary>
     public void DeleteBackward() {
         if (_isReadOnly) {
             return;
@@ -172,14 +183,16 @@ internal class TextBoxModel {
         if (_caret <= 0) {
             return;
         }
+        int start = this.CodepointStartBefore(_caret);
+        int len = _caret - start;
         this.PushUndoSnapshot(false);
-        this.ReplaceRange(_caret - 1, 1, "");
-        _caret = _caret - 1;
+        this.ReplaceRange(start, len, "");
+        _caret = start;
         _anchor = _caret;
         _version = _version + 1;
     }
 
-    /// <summary>Delete：有选区整体删除；否则删 caret 后一字符。</summary>
+    /// <summary>Delete：有选区整体删除；否则删 caret 后一 Unicode 码点（UTF-8 整码元）。</summary>
     public void DeleteForward() {
         if (_isReadOnly) {
             return;
@@ -195,22 +208,28 @@ internal class TextBoxModel {
         if (_caret >= _text.Length) {
             return;
         }
+        int len = this.CodepointByteLengthAt(_caret);
+        if (len <= 0) {
+            return;
+        }
         this.PushUndoSnapshot(false);
-        this.ReplaceRange(_caret, 1, "");
+        this.ReplaceRange(_caret, len, "");
         _version = _version + 1;
     }
 
     /// <summary>
     /// 移动光标（= 选区活动端）。extend 对应 Shift 扩选（保 anchor）；
     /// 无 extend 时光标落点同时成为新 anchor（选区清空）。
+    /// Char 粒度按 UTF-8 码点边界步进（禁按单字节切 CJK）。
     /// </summary>
     public void MoveCaret(MoveDirection direction, MoveGranularity granularity, bool extend) {
         int target = _caret;
         if (granularity == MoveGranularity.Char) {
             if (direction == MoveDirection.Backward) {
-                target = _caret - 1;
+                target = this.CodepointStartBefore(_caret);
             } else {
-                target = _caret + 1;
+                int step = this.CodepointByteLengthAt(_caret);
+                target = _caret + step;
             }
         } else if (granularity == MoveGranularity.Word) {
             if (direction == MoveDirection.Backward) {
@@ -241,6 +260,36 @@ internal class TextBoxModel {
         _anchor = 0;
         _caret = _text.Length;
         _version = _version + 1;
+    }
+
+    /// <summary>
+    /// 双击词选：以空白（空格/制表）为界的 UTF-8 码点词；落点在词内则扩至该词，
+    /// 落在空白上则扩至左侧邻词（若有），否则收敛为点。
+    /// </summary>
+    public void SelectWordAt(int index) {
+        int i = this.Clamp(index);
+        if (i > 0 && i < _text.Length) {
+            int b = (int)_text[i];
+            if (b >= 0x80 && b < 0xC0) {
+                i = this.CodepointStartBefore(i);
+            }
+        }
+        if (i < _text.Length && !this.IsBlankAt(i)) {
+            int start = i;
+            while (start > 0 && !this.IsBlankAt(this.CodepointStartBefore(start))) {
+                start = this.CodepointStartBefore(start);
+            }
+            int end = this.WordBoundaryForward(start);
+            this.SetSelection(start, end);
+            return;
+        }
+        if (i > 0 && !this.IsBlankAt(this.CodepointStartBefore(i))) {
+            int start = this.WordBoundaryBackward(i);
+            int end = this.WordBoundaryForward(start);
+            this.SetSelection(start, end);
+            return;
+        }
+        this.SetCaret(i);
     }
 
     /// <summary>清空选区（anchor = caret，不动光标）。</summary>
@@ -331,10 +380,27 @@ internal class TextBoxModel {
     }
 
     string ApplyMaxLength(string next) {
-        if (_maxLength > 0 && next.Length > _maxLength) {
-            return next.Substring(0, _maxLength);
+        if (_maxLength <= 0 || next.Length <= _maxLength) {
+            return next;
         }
-        return next;
+        // MaxLength 按 UTF-8 字节上限截断，且必须落在码点边界（禁半截 CJK）。
+        int cut = 0;
+        while (cut < next.Length) {
+            int n = 1;
+            int b0 = (int)next[cut];
+            if (b0 >= 0xC0 && b0 < 0xE0 && cut + 1 < next.Length) {
+                n = 2;
+            } else if (b0 >= 0xE0 && b0 < 0xF0 && cut + 2 < next.Length) {
+                n = 3;
+            } else if (b0 >= 0xF0 && b0 < 0xF8 && cut + 3 < next.Length) {
+                n = 4;
+            }
+            if (cut + n > _maxLength) {
+                break;
+            }
+            cut = cut + n;
+        }
+        return next.Substring(0, cut);
     }
 
     int Clamp(int index) {
@@ -377,32 +443,102 @@ internal class TextBoxModel {
         return true;
     }
 
-    // ===== 内部：词边界（空白为界；连续非空白段视为一词）=====
+    // ===== 内部：UTF-8 码点边界（Arc string = UTF-8 字节序列；禁按单字节切 CJK）=====
+
+    /// <summary>位于 index 处码点的 UTF-8 字节数（1–4；非法序列回退 1）。</summary>
+    int CodepointByteLengthAt(int index) {
+        if (index < 0 || index >= _text.Length) {
+            return 0;
+        }
+        int b0 = (int)_text[index];
+        if (b0 < 0x80) {
+            return 1;
+        }
+        if (b0 < 0xC0) {
+            return 1;
+        }
+        if (b0 < 0xE0) {
+            if (index + 1 >= _text.Length) {
+                return 1;
+            }
+            int b1 = (int)_text[index + 1];
+            if (b1 < 0x80 || b1 >= 0xC0) {
+                return 1;
+            }
+            return 2;
+        }
+        if (b0 < 0xF0) {
+            if (index + 2 >= _text.Length) {
+                return 1;
+            }
+            int b1 = (int)_text[index + 1];
+            int b2 = (int)_text[index + 2];
+            if (b1 < 0x80 || b1 >= 0xC0 || b2 < 0x80 || b2 >= 0xC0) {
+                return 1;
+            }
+            return 3;
+        }
+        if (b0 < 0xF8) {
+            if (index + 3 >= _text.Length) {
+                return 1;
+            }
+            int b1 = (int)_text[index + 1];
+            int b2 = (int)_text[index + 2];
+            int b3 = (int)_text[index + 3];
+            if (b1 < 0x80 || b1 >= 0xC0 || b2 < 0x80 || b2 >= 0xC0 || b3 < 0x80 || b3 >= 0xC0) {
+                return 1;
+            }
+            return 4;
+        }
+        return 1;
+    }
+
+    /// <summary>caret 之前一个码点的起始字节偏移（caret=0 时返回 0）。</summary>
+    int CodepointStartBefore(int caret) {
+        if (caret <= 0) {
+            return 0;
+        }
+        int i = caret - 1;
+        // 跳过 UTF-8 连续字节（10xxxxxx），落在前导字节。
+        while (i > 0) {
+            int b = (int)_text[i];
+            if (b < 0x80 || b >= 0xC0) {
+                break;
+            }
+            i = i - 1;
+        }
+        return i;
+    }
+
+    // ===== 内部：词边界（空白为界；连续非空白段视为一词；步进按码点）=====
 
     bool IsBlankAt(int index) {
-        string ch = _text.Substring(index, 1);
-        return ch == " " || ch == "\t";
+        if (index < 0 || index >= _text.Length) {
+            return false;
+        }
+        int b = (int)_text[index];
+        return b == 32 || b == 9;
     }
 
     int WordBoundaryForward(int start) {
         int n = _text.Length;
         int i = start;
         while (i < n && this.IsBlankAt(i)) {
-            i = i + 1;
+            i = i + this.CodepointByteLengthAt(i);
         }
         while (i < n && !this.IsBlankAt(i)) {
-            i = i + 1;
+            i = i + this.CodepointByteLengthAt(i);
         }
         return i;
     }
 
     int WordBoundaryBackward(int start) {
         int i = start;
-        while (i > 0 && this.IsBlankAt(i - 1)) {
-            i = i - 1;
+        while (i > 0 && this.IsBlankAt(this.CodepointStartBefore(i))) {
+            i = this.CodepointStartBefore(i);
         }
-        while (i > 0 && !this.IsBlankAt(i - 1)) {
-            i = i - 1;
+        while (i > 0 && !this.IsBlankAt(this.CodepointStartBefore(i))) {
+            i = this.CodepointStartBefore(i);
         }
         return i;
     }

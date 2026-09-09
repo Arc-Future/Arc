@@ -1,32 +1,70 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Built-in Light theme color tokens (UI-P2). Single source of truth for hex values.
-     Keys must match BuiltInTheme const strings exactly. Geometry/motion stay in AS. -->
+<!-- Built-in Light theme — Ant Design 6.x defaultAlgorithm map tokens.
+     Authority: https://ant.design/docs/react/customize-theme (Seed/Map Token tables).
+     Keys must match BuiltInTheme const strings. Geometry/motion stay in AS.
+     Honest: token alignment only — not a pixel-level antd DOM/CSS clone.
+     Naming: Color.{Role|Category.Part}[+.Hover|.Pressed|.Disabled] — see builtin-theme-resources. -->
 <ResourceDictionary
     xmlns="http://schemas.arc.dev/winfx/2026"
     xmlns:x="http://schemas.arc.dev/xaml">
-    <Color x:Key="Color.Background" Value="#FFFAFAFA"/>
+    <!-- colorBgLayout -->
+    <Color x:Key="Color.Background" Value="#FFF5F5F5"/>
+    <!-- colorBgContainer -->
     <Color x:Key="Color.Surface" Value="#FFFFFFFF"/>
-    <Color x:Key="Color.Border" Value="#FFE6E6EC"/>
-    <Color x:Key="Color.Text.Primary" Value="#FF1A1A1A"/>
-    <Color x:Key="Color.Text.Secondary" Value="#FF8A8A93"/>
-    <Color x:Key="Color.Primary" Value="#FF4F46E5"/>
-    <Color x:Key="Color.Primary.Hover" Value="#FF6366F1"/>
-    <Color x:Key="Color.Primary.Pressed" Value="#FF4338CA"/>
-    <Color x:Key="Color.Focus.Ring" Value="#734F46E5"/>
-    <Color x:Key="Color.Disabled.Fill" Value="#FFF3F3F6"/>
-    <Color x:Key="Color.Disabled.Text" Value="#FFB8B8C0"/>
+    <!-- colorBorder -->
+    <Color x:Key="Color.Border" Value="#FFD9D9D9"/>
+    <!-- colorBorderDisabled (Ant Design 6 Map Token；Light 与 colorBorder 同值) -->
+    <Color x:Key="Color.Border.Disabled" Value="#FFD9D9D9"/>
+    <!-- colorText rgba(0,0,0,0.88) -->
+    <Color x:Key="Color.Text.Primary" Value="#E0000000"/>
+    <!-- colorTextSecondary rgba(0,0,0,0.65) -->
+    <Color x:Key="Color.Text.Secondary" Value="#A6000000"/>
+    <!-- colorPrimary -->
+    <Color x:Key="Color.Primary" Value="#FF1677FF"/>
+    <!-- colorPrimaryHover -->
+    <Color x:Key="Color.Primary.Hover" Value="#FF4096FF"/>
+    <!-- colorPrimaryActive -->
+    <Color x:Key="Color.Primary.Pressed" Value="#FF0958D9"/>
+    <!-- colorPrimary @ 40% (focus ring) -->
+    <Color x:Key="Color.Focus.Ring" Value="#661677FF"/>
+    <!-- colorBgContainerDisabled ≈ rgba(0,0,0,0.04) solid -->
+    <Color x:Key="Color.Disabled.Fill" Value="#FFF5F5F5"/>
+    <!-- colorTextDisabled ≈ rgba(0,0,0,0.25) solid neutral -->
+    <Color x:Key="Color.Disabled.Text" Value="#FFBFBFBF"/>
+    <!-- colorTextLightSolid -->
     <Color x:Key="Color.Text.OnAccent" Value="#FFFFFFFF"/>
     <Color x:Key="Color.Transparent" Value="#00000000"/>
-    <Color x:Key="Color.Surface.Hover" Value="#FFF4F4FF"/>
-    <Color x:Key="Color.Surface.Stripe" Value="#FFF7F7FA"/>
-    <Color x:Key="Color.Slider.Track" Value="#FFE0E0E6"/>
-    <Color x:Key="Color.Scroll.Track" Value="#FFF0F0F0"/>
-    <Color x:Key="Color.Scroll.Thumb" Value="#FF8A8A93"/>
-    <Color x:Key="Color.Scroll.Thumb.Hover" Value="#FF6E6E7A"/>
-    <Color x:Key="Color.Scroll.Thumb.Active" Value="#FF4A4A55"/>
-    <Color x:Key="Color.Placeholder" Value="#FFB0B0BA"/>
-    <Color x:Key="Color.Overlay" Value="#661A1A1A"/>
-    <Color x:Key="Color.Negative" Value="#FFEF4444"/>
-    <Color x:Key="Color.Accent.Gradient.A" Value="#FF4F46E5"/>
-    <Color x:Key="Color.Accent.Gradient.B" Value="#FF7C3AED"/>
+    <!-- colorPrimaryBg (weak selection / surface hover tint) -->
+    <Color x:Key="Color.Surface.Hover" Value="#FFE6F4FF"/>
+    <!-- colorFillQuaternary solid ≈ #fafafa -->
+    <Color x:Key="Color.Surface.Stripe" Value="#FFFAFAFA"/>
+    <!-- colorFillSecondary solid ≈ #f0f0f0 (Slider track) -->
+    <Color x:Key="Color.Slider.Track" Value="#FFF0F0F0"/>
+    <!-- colorFillTertiary solid ≈ #f5f5f5 -->
+    <Color x:Key="Color.Scroll.Track" Value="#FFF5F5F5"/>
+    <!-- neutral scroll thumb (Ant fill hierarchy) -->
+    <Color x:Key="Color.Scroll.Thumb" Value="#FFBFBFBF"/>
+    <Color x:Key="Color.Scroll.Thumb.Hover" Value="#FF8C8C8C"/>
+    <Color x:Key="Color.Scroll.Thumb.Pressed" Value="#FF595959"/>
+    <!-- colorTextPlaceholder ≈ rgba(0,0,0,0.25) solid -->
+    <Color x:Key="Color.Text.Placeholder" Value="#FFBFBFBF"/>
+    <!-- colorBgMask rgba(0,0,0,0.45) -->
+    <Color x:Key="Color.Overlay" Value="#73000000"/>
+    <!-- colorError → Danger（与 Style 短键 Danger 成套） -->
+    <Color x:Key="Color.Danger" Value="#FFFF4D4F"/>
+    <!-- colorErrorHover -->
+    <Color x:Key="Color.Danger.Hover" Value="#FFFF7875"/>
+    <!-- colorErrorActive -->
+    <Color x:Key="Color.Danger.Pressed" Value="#FFD9363E"/>
+    <!-- colorSuccess -->
+    <Color x:Key="Color.Success" Value="#FF52C41A"/>
+    <!-- colorWarning -->
+    <Color x:Key="Color.Warning" Value="#FFFAAD14"/>
+    <!-- colorPrimary @ 25% (TextBox/PasswordBox selection fill) -->
+    <Color x:Key="Color.Text.Selection" Value="#401677FF"/>
+    <!-- Image decode-fail / empty-source chrome -->
+    <Color x:Key="Color.Image.Fill" Value="#FFD0D0D0"/>
+    <Color x:Key="Color.Image.Border" Value="#FF606060"/>
+    <!-- DrawText highlight backdrop (editor/selection highlight) -->
+    <Color x:Key="Color.Text.Highlight" Value="#FFF4C2"/>
 </ResourceDictionary>

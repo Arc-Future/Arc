@@ -1,17 +1,14 @@
 // RFC 037 §8 修订（text-editing.md §4）：TextBoxController——键命令/指针/IME
 // 事件 → TextBoxModel 内核操作的唯一映射层。
 //
-// 编辑语义唯一真相在内核（D6 消除）：本类只做事件翻译——ImeBridge 的平台
-// Kind（C 层机械转换，不做编辑判断）翻译为内核操作调用，调用后统一经
+// 编辑语义唯一真相在内核（D6 消除）：本类只做事件翻译——KeyboardRouter
+// OnKey/OnText 与 ImeBridge 组字通道翻译为内核操作，调用后统一经
 // TextBox.SyncFromModel 同步 DP/事件/镜像。组字期路由判断（§3.4：Backspace
 // 交 IME）在本层——内核不感知平台。
 //
-// 归属：std/UI/Internal/（internal 机制；text-editing.md §4 原文
-// std/UI/Input/ 随目录归并 Internal/ 同步）。
-//
-// 将来 IN-R2（KeyboardRouter 单一键盘通道，rt_ui_dispatch_key/text）落地后，
-// 本类增加 HandleKey(vk, ctrl, shift) 完整映射（Ctrl+A/Z/Y/C/V、Ctrl+方向
-// 词粒度），C 层编辑键分支随之删除。
+// IN-R2：HandleKey(vk, mods) 承接编辑键（含 Ctrl+A/Z/Y/C/V/X、方向/Home/End/
+// Delete）；平台层禁做修饰键分支与 IsReadOnly 门控。
+// 剪贴板：TextBox Copy/Cut/Paste；PasswordBox 仅 Paste（禁明文出剪贴板）。
 
 namespace Arc.UI.Internal;
 
@@ -23,7 +20,135 @@ using Arc.UI.Layout;
 /// TextBox 事件控制器：平台事件 → 内核操作映射（编辑语义不落地本层）。
 /// </summary>
 internal static class TextBoxController {
-    /// <summary>ASCII 可打印字符直输（WM_CHAR → RT_UI_IME_ASCII_CHAR）。</summary>
+    static int VirtualKeyA() {
+        return 65;
+    }
+
+    static int VirtualKeyC() {
+        return 67;
+    }
+
+    static int VirtualKeyV() {
+        return 86;
+    }
+
+    static int VirtualKeyX() {
+        return 88;
+    }
+
+    static int VirtualKeyZ() {
+        return 90;
+    }
+
+    static int VirtualKeyY() {
+        return 89;
+    }
+
+    /// <summary>
+    /// 键命令映射（KeyboardRouter）：消费则 true（阻止焦点导航）；
+    /// Tab/Enter/Space 返回 false 交 FocusManager。
+    /// </summary>
+    public static bool HandleKey(TextBox box, int virtualKey, int mods) {
+        if (box == null) {
+            return false;
+        }
+        if (virtualKey == FocusManager.VirtualKeyTab()
+            || virtualKey == FocusManager.VirtualKeyReturn()) {
+            return false;
+        }
+        // Space：TextBox 插入空格并消费（禁误入 Button 式 Activate）；
+        // 非 TextBox 焦点由 RouteKey Activate 处理。
+        if (virtualKey == FocusManager.VirtualKeySpace()) {
+            TextBoxController.HandleAscii(box, " ");
+            return true;
+        }
+        bool shift = (mods & KeyboardRouter.ModShift()) != 0;
+        bool ctrl = (mods & KeyboardRouter.ModCtrl()) != 0;
+        TextBoxModel model = box.Model();
+        if (model.Composition != "") {
+            // 组字期编辑键交 IME（平台已 gate；此处仍声明消费防导航抢键）。
+            if (virtualKey == FocusManager.VirtualKeyLeft()
+                || virtualKey == FocusManager.VirtualKeyRight()
+                || virtualKey == FocusManager.VirtualKeyUp()
+                || virtualKey == FocusManager.VirtualKeyDown()
+                || virtualKey == FocusManager.VirtualKeyHome()
+                || virtualKey == FocusManager.VirtualKeyEnd()
+                || virtualKey == FocusManager.VirtualKeyBackspace()
+                || virtualKey == FocusManager.VirtualKeyDelete()) {
+                return true;
+            }
+        }
+        if (ctrl && virtualKey == VirtualKeyA()) {
+            TextBoxController.HandleSelectAll(box);
+            return true;
+        }
+        if (ctrl && virtualKey == VirtualKeyC()) {
+            TextBoxController.HandleCopy(box);
+            return true;
+        }
+        if (ctrl && virtualKey == VirtualKeyX()) {
+            TextBoxController.HandleCut(box);
+            return true;
+        }
+        if (ctrl && virtualKey == VirtualKeyV()) {
+            TextBoxController.HandlePaste(box);
+            return true;
+        }
+        if (ctrl && virtualKey == VirtualKeyZ()) {
+            if (model.Undo()) {
+                box.SyncFromModel(false);
+            }
+            return true;
+        }
+        if (ctrl && virtualKey == VirtualKeyY()) {
+            if (model.Redo()) {
+                box.SyncFromModel(false);
+            }
+            return true;
+        }
+        if (virtualKey == FocusManager.VirtualKeyLeft()) {
+            MoveGranularity gran = MoveGranularity.Char;
+            if (ctrl) {
+                gran = MoveGranularity.Word;
+            }
+            model.MoveCaret(MoveDirection.Backward, gran, shift);
+            box.SyncFromModel(false);
+            return true;
+        }
+        if (virtualKey == FocusManager.VirtualKeyRight()) {
+            MoveGranularity gran = MoveGranularity.Char;
+            if (ctrl) {
+                gran = MoveGranularity.Word;
+            }
+            model.MoveCaret(MoveDirection.Forward, gran, shift);
+            box.SyncFromModel(false);
+            return true;
+        }
+        if (virtualKey == FocusManager.VirtualKeyHome()) {
+            TextBoxController.HandleHome(box, shift);
+            return true;
+        }
+        if (virtualKey == FocusManager.VirtualKeyEnd()) {
+            TextBoxController.HandleEnd(box, shift);
+            return true;
+        }
+        if (virtualKey == FocusManager.VirtualKeyBackspace()) {
+            TextBoxController.HandleBackspace(box);
+            return true;
+        }
+        if (virtualKey == FocusManager.VirtualKeyDelete()) {
+            TextBoxController.HandleDelete(box);
+            return true;
+        }
+        // 单行 TextBox：上下键消费但不移动（禁误入焦点导航）。
+        if (virtualKey == FocusManager.VirtualKeyUp()
+            || virtualKey == FocusManager.VirtualKeyDown()) {
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>可打印字符直输（WM_CHAR → rt_ui_dispatch_text）。</summary>
     public static void HandleAscii(TextBox box, string ch) {
         if (box == null || ch == null || ch == "") {
             return;
@@ -36,6 +161,71 @@ internal static class TextBoxController {
         }
         model.Insert(ch);
         box.SyncFromModel(false);
+    }
+
+    /// <summary>Ctrl+C：有选区且允许导出时写剪贴板；PasswordBox 空操作。</summary>
+    public static void HandleCopy(TextBox box) {
+        if (box == null || !box.AllowsClipboardCopy()) {
+            return;
+        }
+        TextBoxModel model = box.Model();
+        if (model.SelectionLength <= 0) {
+            return;
+        }
+        WindowHost.ClipboardSetText(model.SelectedText);
+    }
+
+    /// <summary>Ctrl+X：Copy + 删选区；PasswordBox 禁导出故整命令空操作。</summary>
+    public static void HandleCut(TextBox box) {
+        if (box == null || !box.AllowsClipboardCopy()) {
+            return;
+        }
+        TextBoxModel model = box.Model();
+        if (model.SelectionLength <= 0 || model.IsReadOnly) {
+            return;
+        }
+        WindowHost.ClipboardSetText(model.SelectedText);
+        model.DeleteForward();
+        box.SyncFromModel(false);
+    }
+
+    /// <summary>Ctrl+V：剪贴板文本插入（单行剥离 CR/LF）；PasswordBox 允许。</summary>
+    public static void HandlePaste(TextBox box) {
+        if (box == null) {
+            return;
+        }
+        TextBoxModel model = box.Model();
+        if (model.IsReadOnly) {
+            return;
+        }
+        string raw = WindowHost.ClipboardGetText();
+        string chunk = TextBoxController.SanitizePaste(raw);
+        if (chunk == null || chunk == "") {
+            return;
+        }
+        if (model.Composition != "") {
+            model.CancelComposition();
+        }
+        model.Insert(chunk);
+        box.SyncFromModel(false);
+    }
+
+    /// <summary>单行粘贴：去掉 CR/LF，避免多行内容撑破单行契约。</summary>
+    static string SanitizePaste(string raw) {
+        if (raw == null || raw == "") {
+            return "";
+        }
+        string result = "";
+        int i = 0;
+        int n = raw.Length;
+        while (i < n) {
+            string ch = raw.Substring(i, 1);
+            if (ch != "\r" && ch != "\n") {
+                result = result + ch;
+            }
+            i = i + 1;
+        }
+        return result;
     }
 
     /// <summary>Backspace：组字期交 IME（C 层更新 composition，内核不动）。</summary>
@@ -136,9 +326,47 @@ internal static class TextBoxController {
             fontSize = InputMetrics.FontSizeFallback;
         }
         PrefixWidthCache cache = box.PrefixCache();
-        cache.Ensure(model.Text, model.Version, fontSize, box.FontFamily, box.FontWeight);
+        cache.Ensure(box.GeometryText(), model.Version, fontSize, box.FontFamily, box.FontWeight);
         int idx = cache.NearestIndexTo(localDipX - InputMetrics.PenOriginX);
         model.SetCaret(idx);
+        box.SyncFromModel(false);
+    }
+
+    /// <summary>
+    /// 双击词选：命中 DIP → 码点索引 → <see cref="TextBoxModel.SelectWordAt"/>。
+    /// </summary>
+    public static void HandleDoubleClick(TextBox box, double localDipX) {
+        if (box == null) {
+            return;
+        }
+        TextBoxModel model = box.Model();
+        double fontSize = box.FontSize;
+        if (fontSize <= 0.0) {
+            fontSize = InputMetrics.FontSizeFallback;
+        }
+        PrefixWidthCache cache = box.PrefixCache();
+        cache.Ensure(box.GeometryText(), model.Version, fontSize, box.FontFamily, box.FontWeight);
+        int idx = cache.NearestIndexTo(localDipX - InputMetrics.PenOriginX);
+        model.SelectWordAt(idx);
+        box.SyncFromModel(false);
+    }
+
+    /// <summary>
+    /// 拖拽扩展选区：保持点击时的 Anchor，活动端跟局部 DIP 横坐标。
+    /// </summary>
+    public static void HandleDrag(TextBox box, double localDipX) {
+        if (box == null) {
+            return;
+        }
+        TextBoxModel model = box.Model();
+        double fontSize = box.FontSize;
+        if (fontSize <= 0.0) {
+            fontSize = InputMetrics.FontSizeFallback;
+        }
+        PrefixWidthCache cache = box.PrefixCache();
+        cache.Ensure(box.GeometryText(), model.Version, fontSize, box.FontFamily, box.FontWeight);
+        int idx = cache.NearestIndexTo(localDipX - InputMetrics.PenOriginX);
+        model.SetSelection(model.Anchor, idx);
         box.SyncFromModel(false);
     }
 }

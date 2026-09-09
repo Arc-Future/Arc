@@ -981,7 +981,10 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     out.push_str("declare void @rt_ui_clear_control_handlers()\n");
     out.push_str("declare void @rt_ui_set_input_focus_handler(ptr, ptr)\n");
     out.push_str("declare void @rt_ui_set_input_click_handler(ptr, ptr)\n");
-    out.push_str("declare void @rt_ui_set_keyboard_handler(ptr, ptr)\n");
+    out.push_str("declare void @rt_ui_set_key_handler(ptr, ptr)\n");
+    out.push_str("declare void @rt_ui_set_text_handler(ptr, ptr)\n");
+    out.push_str("declare ptr @rt_ui_clipboard_get_text()\n");
+    out.push_str("declare void @rt_ui_clipboard_set_text(ptr)\n");
     out.push_str("declare void @rt_window_invalidate(ptr)\n");
     out.push_str("declare void @rt_ui_ime_install_arc_handler()\n");
     out.push_str("declare void @rt_ui_ime_set_focus(ptr)\n");

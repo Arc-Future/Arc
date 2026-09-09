@@ -105,6 +105,7 @@ impl ComponentRegistry {
                 .with_property("CommandParameter", PropType::Object)
                 .with_property("IsDefault", PropType::Bool)
                 .with_property("IsCancel", PropType::Bool),
+                // Appearance 已删：变体靠 Style 短键 / AppliedStyleKeys → VSM（RFC 037 §3）
         );
         reg.register(
             ComponentInfo::new("Image")
@@ -119,6 +120,24 @@ impl ComponentRegistry {
                 .with_property("Placeholder", PropType::String)
                 .with_property("IsReadOnly", PropType::Bool)
                 .with_property("MaxLength", PropType::Int),
+        );
+        reg.register(
+            ComponentInfo::new("PasswordBox")
+                .with_control_props()
+                .with_property("Password", PropType::String)
+                .with_property("PasswordChar", PropType::String)
+                .with_property("Placeholder", PropType::String)
+                .with_property("IsReadOnly", PropType::Bool)
+                .with_property("MaxLength", PropType::Int),
+        );
+        reg.register(
+            ComponentInfo::new("Border")
+                .with_control_props()
+                .with_property("BorderBrush", PropType::String)
+                .with_property("BorderThickness", PropType::Thickness)
+                .with_property("CornerRadius", PropType::Double)
+                .with_property("Padding", PropType::Thickness)
+                .with_property("Child", PropType::Object),
         );
         reg.register(
             ComponentInfo::new("CodeEditor")
@@ -136,13 +155,48 @@ impl ComponentRegistry {
                 .with_property("Indeterminate", PropType::EventHandler),
         );
         reg.register(
+            ComponentInfo::new("RadioButton")
+                .with_content_control_props()
+                .with_property("IsChecked", PropType::Bool)
+                .with_property("GroupName", PropType::String)
+                .with_property("Checked", PropType::EventHandler)
+                .with_property("Unchecked", PropType::EventHandler),
+        );
+        reg.register(
+            ComponentInfo::new("ToggleButton")
+                .with_content_control_props()
+                .with_property("IsChecked", PropType::Bool)
+                .with_property("IsThreeState", PropType::Bool)
+                .with_property("Checked", PropType::EventHandler)
+                .with_property("Unchecked", PropType::EventHandler)
+                .with_property("Indeterminate", PropType::EventHandler),
+        );
+        reg.register(
             ComponentInfo::new("Slider")
                 .with_control_props()
                 .with_property("Minimum", PropType::Double)
                 .with_property("Maximum", PropType::Double)
-                .with_property("Value", PropType::Double),
+                .with_property("Value", PropType::Double)
+                .with_property("Step", PropType::Double),
+        );
+        reg.register(
+            ComponentInfo::new("ProgressBar")
+                .with_control_props()
+                .with_property("Minimum", PropType::Double)
+                .with_property("Maximum", PropType::Double)
+                .with_property("Value", PropType::Double)
+                .with_property("IsIndeterminate", PropType::Bool),
+        );
+        reg.register(
+            ComponentInfo::new("ComboBox")
+                .with_content_control_props()
+                .with_property("ItemsSource", PropType::Object)
+                .with_property("SelectedIndex", PropType::Int)
+                .with_property("SelectedItem", PropType::Object)
+                .with_property("SelectedText", PropType::String),
         );
         // 内容控件
+        // （原 Slider 注册已上移；下方 ContentPresenter 起保持不变）
         reg.register(
             ComponentInfo::new("ContentPresenter")
                 .with_framework_element_props()
@@ -154,7 +208,6 @@ impl ComponentRegistry {
                 .with_content_control_props()
                 .with_property("ItemsSource", PropType::Object)
                 .with_property("ItemTemplate", PropType::Object)
-                .with_property("ItemsPanel", PropType::Object)
                 .with_property("DisplayMemberPath", PropType::String),
         );
         reg.register(
@@ -162,7 +215,6 @@ impl ComponentRegistry {
                 .with_content_control_props()
                 .with_property("ItemsSource", PropType::Object)
                 .with_property("ItemTemplate", PropType::Object)
-                .with_property("ItemsPanel", PropType::Object)
                 .with_property("DisplayMemberPath", PropType::String)
                 .with_property("SelectedIndex", PropType::Int)
                 .with_property("SelectedItem", PropType::Object)
@@ -170,16 +222,28 @@ impl ComponentRegistry {
                 .with_property("SelectedValuePath", PropType::String)
                 .with_property("SelectionMode", PropType::String),
         );
-        // RFC 037 §4 · M-VZ4：行虚拟化表格（编程式 AddColumn/AddRow；ARML 属性面
+        // RFC 037 §4 · M-VZ4：行虚拟化表格（ItemsSource 行入口 + AddColumn；ARML 属性面
         // 暴露选中/几何 + SelectionChanged 事件名）
         reg.register(
             ComponentInfo::new("DataGrid")
                 .with_control_props()
+                .with_property("ItemsSource", PropType::Object)
                 .with_property("SelectedIndex", PropType::Int)
                 .with_property("RowHeight", PropType::Double)
                 .with_property("HeaderHeight", PropType::Double)
                 .with_property("VerticalOffset", PropType::Double)
                 .with_property("SelectionChanged", PropType::EventHandler),
+        );
+        // RFC 037 · TabControl 最小切片：页签互斥布局（页签栏由消费方 Button 驱动）
+        reg.register(
+            ComponentInfo::new("TabControl")
+                .with_panel_props()
+                .with_property("SelectedIndex", PropType::Int),
+        );
+        reg.register(
+            ComponentInfo::new("TabItem")
+                .with_panel_props()
+                .with_property("Header", PropType::String),
         );
         reg
     }

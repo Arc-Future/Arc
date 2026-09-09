@@ -4,8 +4,11 @@
 //   1. 隐式——无 Key 样式按 TargetType 命中元素类型名；
 //   2. 显式——arml `Style={StaticResource K1, K2}` 多资源绑定脱糖产物，
 //      依携带形态直达：窗口内键 codegen 定型为 Style 对象（多键为定型
-//      对象列表，零字符串查找）；App 域键持请求键字符串（逗号分隔组合
-//      表达式），应用期经解析链逐键查找后套用。x:Key 统一资源键，
+//      对象列表，零字符串查找）；App/主题域键持请求键字符串（逗号分隔），
+//      应用期经解析链逐键查找——短键回退：先 {TargetType}.{K} 再全局 K
+//      （见 StyleKeyResolver / RFC 037 §0.1.1）。
+//      已应用限定键写入 FrameworkElement.AppliedStyleKeys，供 RenderTree
+//      按 Style 键选 chrome（禁 Appearance DP）。x:Key 统一资源键，
 //      无独立样式类体系。
 //
 // 解析域链（BuildLookupChain）：临时包装字典按 [fallback, primary] 合并序
@@ -109,39 +112,83 @@ public class StyleManager {
     /// 优先级最高）。x:Key 统一资源键，无独立样式类体系。
     /// </summary>
     private void ApplyStylesToElement(Element element, List<Style> styles, ResourceDictionary chain) {
+        // 模板部件（PART_*）：观感由 ControlTemplate + VSM/ChromeHost 负责，
+        // 禁止隐式 Border 等 Style 覆写 TemplateBinding（如 Padding）。
+        if (element.Name != null && element.Name.Length >= 5) {
+            string n = element.Name;
+            if (n[0] == 'P' && n[1] == 'A' && n[2] == 'R' && n[3] == 'T' && n[4] == '_') {
+                return;
+            }
+        }
         foreach (var s in styles) {
             bool isEmptyKey = (s.Key == null || s.Key == "");
             if (isEmptyKey && s.Matches(element)) {
                 this.ApplyStyleChain(element, s, chain);
             }
         }
+        // 显式趟：收集已应用限定键 → AppliedStyleKeys（RenderTree chrome 配方源）
+        List<string> appliedKeys = new List<string>();
         object styleRef = this.ReadStyleReference(element);
         if (styleRef is Style) {
-            this.ApplyStyleChain(element, (Style)styleRef, chain);
+            Style one = (Style)styleRef;
+            this.ApplyStyleChain(element, one, chain);
+            this.RecordAppliedKey(appliedKeys, one);
         } else if (styleRef is List<Style>) {
             List<Style> resolved = (List<Style>)styleRef;
             for (int i = 0; i < resolved.Count; i++) {
                 this.ApplyStyleChain(element, resolved[i], chain);
+                this.RecordAppliedKey(appliedKeys, resolved[i]);
             }
         } else if (styleRef is string) {
             string[] keys = ((string)styleRef).Split(",");
+            string typeName = element.TypeName;
             for (int i = 0; i < keys.Length; i++) {
                 string key = keys[i].Trim();
                 if (key == "") {
                     continue;
                 }
-                Style explicitStyle = chain.LookupStyle(key);
+                List<string> tried = new List<string>();
+                Style explicitStyle = StyleKeyResolver.Lookup(chain, key, typeName, element, tried);
                 if (explicitStyle != null) {
                     this.ApplyStyleChain(element, explicitStyle, chain);
+                    this.RecordAppliedKey(appliedKeys, explicitStyle);
                 }
+                // 未命中：不抛（避免撕毁整树）；MissDiagnostic 可供工具链/日志消费
+                // （编译期门禁已覆盖内置短键可达性）。
             }
         }
+        this.WriteAppliedStyleKeys(element, appliedKeys);
+    }
+
+    /// <summary>记录带 x:Key 的显式 Style 限定键（隐式无 Key 不入）。</summary>
+    private void RecordAppliedKey(List<string> appliedKeys, Style style) {
+        if (style == null || style.Key == null || style.Key == "") {
+            return;
+        }
+        appliedKeys.Add(style.Key);
+    }
+
+    /// <summary>将已应用键写入 FrameworkElement.AppliedStyleKeys（逗号串）。</summary>
+    private void WriteAppliedStyleKeys(Element element, List<string> appliedKeys) {
+        if (!(element is FrameworkElement)) {
+            return;
+        }
+        string joined = "";
+        for (int i = 0; i < appliedKeys.Count; i++) {
+            if (i > 0) {
+                joined = joined + ",";
+            }
+            joined = joined + appliedKeys[i];
+        }
+        element.SetValue<string>(FrameworkElement.AppliedStyleKeysProperty, joined);
     }
 
     /// <summary>读取元素显式样式引用（定型对象 / 列表 / 请求键字符串）；非 FrameworkElement 返回 null。</summary>
     private object ReadStyleReference(Element element) {
         if (element is FrameworkElement) {
-            return ((FrameworkElement)element).Style;
+            // 经 GetValue 读 Style DP，避开 cast 后 `.Style` 属性路径被降为
+            // FieldGet(offset 16,int) → rt_arc_inc(i32) 的 LLVM 类型错误。
+            return element.GetValue<object>(FrameworkElement.StyleProperty);
         }
         return null;
     }

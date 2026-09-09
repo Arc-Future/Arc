@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Slider：BasedOn 隐式；默认 Template = DefaultControlTemplates.Slider
+     （PART_Chrome；轨/填充/thumb 经 PART Surface → VSM.Slider）。
+     MinHeight → Size.Slider.Height。Template 由 AttachDefaultTemplates 挂载。 -->
+<ResourceDictionary
+    xmlns="http://schemas.arc.dev/winfx/2026"
+    xmlns:x="http://schemas.arc.dev/xaml">
+    <Style TargetType="Slider">
+        <Setter Property="MinHeight" Value="{StaticResource Size.Slider.Height}"/>
+    </Style>
+</ResourceDictionary>

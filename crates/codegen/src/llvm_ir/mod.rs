@@ -1057,6 +1057,10 @@ fn platform_backend_sources(
                 work_dir.join("platform_windows_keyboard.o"),
             ));
             out.push((
+                plat.join("windows/clipboard_win32.c"),
+                work_dir.join("platform_windows_clipboard.o"),
+            ));
+            out.push((
                 plat.join("windows/rt_ui_scrollbar.cpp"),
                 work_dir.join("platform_windows_scrollbar.o"),
             ));
@@ -1078,6 +1082,10 @@ fn platform_backend_sources(
                 plat.join("common/rt_ui_scrollbar_stub.c"),
                 work_dir.join("platform_linux_scrollbar_stub.o"),
             ));
+            out.push((
+                plat.join("common/rt_ui_clipboard_stub.c"),
+                work_dir.join("platform_linux_clipboard_stub.o"),
+            ));
         }
         TargetOs::Macos => {
             out.push((
@@ -1092,6 +1100,10 @@ fn platform_backend_sources(
                 plat.join("common/rt_ui_scrollbar_stub.c"),
                 work_dir.join("platform_macos_scrollbar_stub.o"),
             ));
+            out.push((
+                plat.join("common/rt_ui_clipboard_stub.c"),
+                work_dir.join("platform_macos_clipboard_stub.o"),
+            ));
         }
         TargetOs::Ohos => {
             out.push((
@@ -1105,6 +1117,10 @@ fn platform_backend_sources(
             out.push((
                 plat.join("common/rt_ui_scrollbar_stub.c"),
                 work_dir.join("platform_ohos_scrollbar_stub.o"),
+            ));
+            out.push((
+                plat.join("common/rt_ui_clipboard_stub.c"),
+                work_dir.join("platform_ohos_clipboard_stub.o"),
             ));
         }
         TargetOs::WebAssembly | TargetOs::Wasi => {}

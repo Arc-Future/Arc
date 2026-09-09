@@ -15,12 +15,12 @@
 | 批处理 | CPU staging 连续缓冲 + 逐绘制 draw（动态 uniform 偏移重放） | `wgpu_batch_staging_create` / `wgpu_batch_rect_write` / `wgpu_batch_text_write` |
 | 顶点数据 | 无 vertex/index buffer，`vertex_index` 内联生成单位 quad | WGSL 内联 |
 | 重绘触发 | 事件驱动（`InvalidateRect` → `WM_PAINT`），按需渲染 | `platform/windows/*_win32.c` |
-| 字体光栅化 | 单一 32px 基底 CPU 光栅化 → atlas → shader 采样 | `rt_font.c` + `WgpuRender.Wgsl.as` |
+| 字体光栅化 | **per-size bucket 已落地**：`round(fontSize×dpi)` 分桶 1:1 光栅 + Linear 采样；度量与 DrawText 同源 | `wgpu_font_atlas_lookup_glyph(..., size_px)` + `WgpuRender.Draw.as` |
 | 色彩空间 | sRGB surface（`BGRA8UnormSrgb`）+ sRGB→linear 混合 | `WgpuRender.Draw.as::SrgbToLinear`（类型化 `Color` 消费） |
 | 采样器 | 字体 atlas 用 Linear 过滤 | `wgpu_sampler_create` 参数化 |
-| 剪裁 | **无 scissor**，靠 CPU 剔除 | 全库无 `set_scissor_rect` |
+| 剪裁 | ScrollView/DataGrid/`CodeEditor` 经 `PushClip`/`set_scissor_rect` | `WgpuRender.RenderTree` |
 
-**结论**：色彩链路（sRGB + linear 混合）已对齐业界正确水位；主要差距集中在**文本采样质量**（单一基底缩放光栅化）、**几何抗锯齿**（无 MSAA）、**提交效率**（逐绘制 drawcall）与**剪裁能力**。
+**结论**：色彩链路与**正文逐字号位图**（P0）已对齐业界正确水位；主要剩余差距集中在 **LCD 子像素（P0b）**、**几何抗锯齿（MSAA P1）**、**提交效率（Instancing P3）**。
 
 ## 2. 业界分层认知（关键）
 
@@ -37,12 +37,11 @@
 
 ## 3. 提升路径（按投入产出排序）
 
-### P0 — 双轨文本：正文回归逐字号位图，特效保留 SDF
+### P0 — 双轨文本：正文回归逐字号位图 ✅（已落地）
 
-- **正文轨**：废弃单一 32px 基底缩放采样，改为 **per-size bucket**——按 `round(fontSize × dpiScale)` 分桶（16/18/24px 等各自独立光栅化），atlas 键扩展为 `(font, codepoint, sizeBucket)`，quad 像素对齐。正文锐度**追平 Chromium**。
-- **特效轨**：SDF 保留，仅用于 >32px 标题、缩放动画等场景。
-- 中期升级：**MSDF**（RGB 三通道距离场取 median）替代单通道 SDF，保住尖角（msdfgen 算法可嵌入 C runtime）。
-- 关联：兑现 production-surface §2「atlas 文本采样与覆盖 AA 达到可读生产质感」。
+- **正文轨**：~~废弃单一 32px 基底缩放采样~~ → **per-size bucket**——按 `round(fontSize × dpiScale)` 分桶，atlas 键 `(font, codepoint, weight, sizeBucket)`，quad 像素对齐（`rt_wgpu_native.c` + `WgpuRender.Draw/Measure`）。
+- **特效轨**：>32px 标题仍可用同轨大字号桶（MSDF 中期升级另立）。
+- 关联：production-surface §2「atlas 文本采样与覆盖 AA 达到可读生产质感」正文面已闭合；GUI 手测签收随 ArmlDemo 推进。
 
 ### P0b — LCD 子像素渲染（超越业界的锐度杀手锏）
 
@@ -61,7 +60,7 @@
 
 ### P4 — Scissor 剪裁栈
 
-- `set_scissor_rect` 按绘制段设置，支持嵌套 ScrollView 正确剪裁；是后续 dirty-rect 局部重绘的前提。
+- `set_scissor_rect` 按绘制段设置，支持嵌套 ScrollView 正确剪裁；**空间脏矩形 Present 最小面已立**（`InvalidateRegion` + LoadOp_Load + 根 scissor；caret 区；控件级精确失效树后置）。
 
 ### P6 — Vello 式 compute 光栅化
 

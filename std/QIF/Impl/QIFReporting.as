@@ -10,11 +10,6 @@ using Arc.Threading;
 /// </summary>
 public static class QIFReporting {
 
-    // TEMP-TRACE (root-cause): crash-at-exit 定位用。写完即删。
-    private static void TraceW(string line) {
-        File.WriteAllText("d:/GitCode/RF/dlang/examples/UnitTest/obj/qif/trace.txt", line);
-    }
-
     private static string StatusLabel(QIFTestStatus s) {
         if (s == QIFTestStatus.Pass) { return "[PASS]"; }
         if (s == QIFTestStatus.Fail) { return "[FAIL]"; }
@@ -85,9 +80,7 @@ public static class QIFReporting {
     /// Pass 不读 Output（减少对可能已损字段指针的 str_equals）。
     /// </summary>
     private static void WriteOneResult(QIFRunner runner, int index) {
-        QIFReporting.TraceW("i=" + index.ToString() + " getresult\n");
         QIFResult result = runner.GetResult(index);
-        QIFReporting.TraceW("i=" + index.ToString() + " name=" + result.Name + "\n");
         Console.Write(QIFReporting.StatusLabel(result.Status));
         Console.Write(" ");
         Console.Write(result.Name);
@@ -130,11 +123,8 @@ public static class QIFReporting {
         // H1: 先 ShutdownDefaultPool（join 默认池 + join_live Thread），
         // 再 WriteResults——禁跳过逐条输出粉饰堆损伤。
         ThreadPoolScheduler.ShutdownDefaultPool();
-        QIFReporting.TraceW("after shutdown total=" + runner.Total.ToString() + "\n");
         QIFReporting.WriteResults(runner);
-        QIFReporting.TraceW("after results\n");
         QIFReporting.WriteSummary(runner.Total, runner.Passed, runner.Failed, runner.Skipped);
-        QIFReporting.TraceW("after summary\n");
     }
 
     /// <summary>构建 JSON 报告串（RFC 032 §7：console / `report.json` 单源）。</summary>

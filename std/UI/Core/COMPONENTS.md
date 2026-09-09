@@ -11,6 +11,12 @@
 >
 > **核对增补（2026-08-31）**：内置组件模板让位门禁全量对齐——`WgpuRender.RenderTree` chrome 分支（Button/CheckBox/TextBox/Slider）`templated` 跳过内置 chrome；`TreeDrawListBuilder` 设计时预览同构门禁（已挂子树跳过文本 chrome）；ComboBox 折叠态 chrome 分支落地（提前 `return` 跳过通用递归）并新增矩阵行。三层编写契约见 [production-surface §6](../../../docs/rfc/037-ui/references/production-surface.md)。
 >
+> **核对增补（2026-09-09 · Data/List/Input 三回归）**：① CodeEditor `ArrangeOverride` 须 `void`（误返 `LayoutSize` 与基类 ABI 不符 → 第 8 tab AV）；DataGrid `SyncMirrorRows` 写绝对 `LayoutX/Y`；② ItemsControl `ArrangeChild` 项宿主 + VSP `VerticalOffset` + ListView `PushClip`（行叠原点）；③ 模板态 TextBox/PasswordBox/ComboBox：**先 PART 子树再内容层并 `return`**（壳盖 caret/placeholder）；`SyncMirrorText` → `Invalidate` 非布局脏。
+
+> **核对增补（2026-09-09 · Placeholder 禁跟 caret 闪 + 聚焦即消）**：① 空+焦点时 placeholder 曾与 caret 共用 `RoleForeground` Motion 槽 → blink 亮/灭切换目标色致水印闪；占位色改 `ResolveThemeKey` 恒定。② **显示条件**：仅 `Text` 空且 **未聚焦** 时画水印；聚焦即消，只留 caret（有文案时亦消）。
+
+> **核对增补（2026-09-09 · chrome 模板化）**：① 默认 `ControlTemplate` = `DefaultControlTemplates` 挂隐式 Style Template Setter（Instantiate 多实例）；② 部件 `PART_Chrome` / `PART_Glyph` / `PART_Content`；③ PlatformTreeSync 写 `ChromeHostHandle`+`ChromeRole`；④ RenderTree 有模板子树跳过已迁宿主 chrome，PART 消费 VSM；TextBox/PasswordBox/ComboBox 壳在 PART_Chrome、文本/caret/chevron 仍宿主层；Slider/ProgressBar 轨填充在 PART Surface；⑤ 无模板宿主分支仅回退，**禁止**为已迁控件新增硬编码 chrome；⑥ **已迁**：Button/Toggle/Check/Radio/TextBox/PasswordBox/Slider/ProgressBar/ComboBox；**未迁**：TabControl（Panel + 内容子树，`templated` 门禁不适用）、DataGrid（`ApplyTo` 清子树毁行镜像；专属 `RenderDataGrid` 过大，诚实后置）。
+>
 > **核对增补（2026-08-31 · 选择分层）**：集合类选择语义按 WPF Selector 分层收敛——新建 `Primitives.Selector`（Control → ItemsControl → **Primitives.Selector**）承载单选语义，其上 `Primitives.MultiSelector` 承载多选（SelectionMode/SelectedItems/SelectItem）；ListView/ComboBoxBase（→ ComboBox&lt;T&gt;）派生 Selector，DataGrid 派生 MultiSelector，三份同构选择实现上提为虚钩子差异点，复用通用选中流程（`SelectIndex` 模板方法：校验 → 写点 → 镜像同步 → 附加同步 → 通知）。
 
 ## 公开面 vs 内部面
@@ -28,26 +34,33 @@
 | **Window** | ✅ Title/Left/Top/Content/W/H/Background | ✅ Background | ✅ 根背景 + 子树（`RenderElementTree` 根 `DrawRect` + 通用递归） | 🟡 Show/ShowAsync（帧泵）；Close 已接编程式关闭（codegen 传平台镜像句柄 → `rt_window_close`；真窗 GUI 手测待补） | ⛔ 不适用 |
 | **StackPanel** | ✅ Orientation/Spacing/Background/Margin | ✅ Orientation/Spacing/Background | ✅ 背景（`DrawBackground`）+ 子元素递归 | ⛔ 无用户交互语义 | ⛔ 固定少量子项例外 |
 | **TextBlock** | ✅ Text/FontSize/Foreground/Background/Font* | ✅ Text/FontSize/Background/Foreground/IsEnabled | ✅ `DrawText` 真实字形（动态 stb_truetype atlas，8x16 点阵 fallback；布局 Measure 与绘制同源 `ITextMetrics`） | ⛔ 字形/选区 M4+ | ⛔ 不适用 |
-| **Button** | ✅ Content/Background/Foreground/FontSize/IsEnabled/IsMouseOver/IsPressed/Command/CommandParameter/Click（string）+ **Clicked（Signal）** | ✅ Content/FontSize/Background/Foreground/IsEnabled + PointerRouter | ✅ 软阴影 + 圆角渐变/填充 + 描边 + 焦点外晕 + 文本（`DrawSurfaceShadow`/`DrawLinearGradient`/`DrawRoundedRect`/`DrawRoundedBorder`/`DrawText`；Hover/Pressed/Focus 态色经 VSM + MotionEngine） | 🟡 Click → code-behind（codegen `OnClick(_ => this.X())`）+ 指针 hit（Win32，≤8 槽）+ M-focus Tab/Enter/Space 激活（Win32 Draft） | ⛔ 不适用 |
+| **Button** | ✅ Content/Background/Foreground/FontSize/IsEnabled/IsMouseOver/IsPressed/Command/CommandParameter/Click（string）+ **Clicked（Signal）**；变体 = **`Style="{StaticResource Primary, Small}"`**（§0.1.1；**禁 Class/Appearance/`*.Size.SM`**）；**无 Appearance DP**；**默认 Template**（PART_Chrome+PART_Content） | ✅ Content/FontSize/Background/Foreground/IsEnabled/StyleKeys/PaddingX\|Y + PointerRouter | ✅ **模板优先**（PART VSM）；无模板宿主回退 | 🟡 Click + 指针 hit + M-focus | ⛔ 不适用 |
 | **Rectangle** | ✅ W/H/Fill/Stroke/StrokeThickness/RadiusX/Y | ✅ W/H/Fill/Stroke/StrokeThickness/RadiusX/Y | ✅ fill + stroke（`DrawRect` + `DrawRectBorder`；圆角走 `DrawRoundedRect`/`DrawRoundedBorder`） | ⛔ 无交互语义（Shape） | ⛔ 不适用 |
-| **ToggleButton** | ✅ IsChecked/IsThreeState/Content/IsEnabled + Checked/Unchecked/Indeterminate（ARML 事件名 string）+ **Toggled（Signal）** | ✅ IsChecked/Content/FontSize/Background/Foreground/IsEnabled + PointerRouter（Toggle 槽 · 点击路由） | ✅ 同 Button 分支 + IsChecked Accent 内框（`DrawRoundedRect`） | 🟡 Toggled 通道（`IsChecked` setter 触发，Signal<bool> + OnToggled）+ **点击切换已接**（PointerRouter 泛化 · `RaiseToggle` 分发）；⛔ 键盘切换未接；⛔ GUI 手测待补 | ⛔ 不适用 |
-| **CheckBox** | ✅ 继承 ToggleButton（语义占位类，无额外成员） | ✅ 同 ToggleButton（继承镜像 + Toggle 槽） | ✅ 勾选盒 + 描边 + Accent 内框 + 文本（`DrawRoundedRect`/`DrawRoundedBorder`/`DrawText`） | 🟡 点击切换已接（继承 `RaiseToggle`）；⛔ GUI 手测待补 | ⛔ 不适用 |
-| **TextBox** | ✅ Text/Placeholder/IsReadOnly/MaxLength/CaretIndex/CompositionText + **TextChanged（Signal）** | ✅ Text/CompositionText/Placeholder/CaretIndex/IsFocused/IsReadOnly/IsEnabled + ImeBridge/InputFocusRouter | ✅ 圆角填充 + 描边 + 焦点外晕 + 文本 + composition 下划线 + caret 竖线（`DrawRoundedRect`/`DrawRoundedBorder`/`DrawSurfaceShadow`/`DrawText`/`DrawRect`） | 🟡 TextChanged 通道（Text setter 触发）+ M-ime1 Win32 路径已接线（ASCII `WM_CHAR` 直输 + IME commit → Text；§8 中文手测 ☐）+ M-focus Tab 焦点框（Win32 Draft）；编辑内核 TextBoxModel（撤销/重做 + 选区管理 · 无头可测）+ TextBoxController 事件路由 | ⛔ 不适用 |
-| **Slider** | ✅ Value/Minimum/Maximum/Step/Background/Foreground + **ValueChanged（Signal）** | ✅ Value/Minimum/Maximum/Step/Background/Foreground/IsEnabled + PointerRouter（Slider 槽 · 拖拽路由） | ✅ track + fill + thumb（`DrawRoundedRect`，Track/Accent 主题色经 VSM）+ **模板让位**（templated 跳过内置 chrome） | 🟡 ValueChanged 通道（`Value` setter 触发，Signal<double> + OnValueChanged）+ **鼠标拖拽/点击已接**（PointerRouter 泛化 · `rt_ui_slider_value_from_px` 像素→值（Step 取整 + clamp）→ `ApplyDragValue` → `SetValue` 触发 ValueChanged）；⛔ GUI 手测待补 | ⛔ 不适用 |
-| **ComboBox** | ✅ SelectedIndex/SelectedText（DP 面 · 渲染 chrome 与平台镜像消费）/OptionCount/SelectedValue + SelectIndex/SetOptions(EnumOptions&lt;T&gt; 强类型数据源) + **SelectionChanged（Signal&lt;T&gt;）** | ✅ SelectedIndex/SelectedText/FontSize/FontFamily/FontWeight/Background/Foreground/IsEnabled（经非泛型 `ComboBoxBase` 基座读取，泛型派生零感知 T · `SyncMirrorSelection` 增量推送） | ✅ 折叠态 chrome：圆角填充 + 描边（VSM ComboBox 态色 + Motion）+ SelectedText 文本 + 右侧 chevron（三横条近似）；chrome 分支提前 `return`（选项行不经通用递归，防叠加）；✅ 展开态 Popup 轨已接（chrome 点击 → `RouteChromeClick` → Popup{ListView}：镜像绝对坐标定位 + 静态方法组回调经 `_activeCombo` 互斥槽路由 + 蒙层点击关闭；v1 下拉底色固定白/超窗口底裁剪，见 ComboBox.as 文件头诚实边界）；⛔ 用户 ControlTemplate 让位未接 | 🟡 SelectionChanged 通道（`SelectIndex` 触发，Signal&lt;T&gt; + OnSelectionChanged，与 ListView 同惯用法）+ 下拉展开/选项点击已接（chrome 点击路由 + ListView 命中联动关闭）；⛔ GUI 手测待补 | ⛔ 不适用 |
-| **Popup** | ✅ Child/PlacementX/PlacementY + Open/Close/IsOpen + **Closed（Signal&lt;bool&gt;）**（OnClosed 订阅） | ✅ 附加层根独立建树（`BuildFromArc` 挂窗口平台根，非主树子节点）+ `RootEpoch` 代际守卫（宿主重建后句柄悬空自愈重走建树）+ 蒙层背景直写 | ✅ `PopupLayer`/`PopupBackdrop` 分支（层根 + 蒙层置顶绘制） | 🟡 蒙层点击关闭（PointerRouter `PopupBackdrop` 槽）；同窗口至多一个展开由消费方互斥槽（`_activeCombo` 型锚点）保证；⛔ 多弹层叠序/滚动内翻定位/主题化后置 | ⛔ 不适用 |
-| **Image** | ✅ Source/Stretch/W/H/Background | ✅ Source/Stretch/Width/Height/Background（PlatformTreeSync.Image 分支 · `Window.Show()` 同步镜像树） | 🟡 占位框（背景 + 描边 `DrawRect`/`DrawRectBorder`）；**Source 解码位图未进 wgpu 路径**（动态纹理走 `VideoSurface` → `DrawTexture` 已接） | ⛔ 显示效果未 GUI 手测验收 | ⛔ 不适用 |
-| **ScrollView** | ✅ Content/ScrollBarVisibility（H·V）/H·VOffset + ExtentWidth·Height/ViewportWidth·Height/ScrollableWidth·Height 只读 | ✅ 全属性 + ScrollRouter | ✅ 视口裁剪（scissor）+ 内容直通 + **竖滚动条**（`DrawVScrollBar` 轨道/滑块主题色；几何与 `rt_ui_vscroll_*` 同契约） | 🟡 滚轮/拖拽命中已解封（容器·根节点写 avail 布局 rect → `rt_ui_find_scrollview_at` 可达；C 级 e2e `ui_container_layout_e2e` 覆盖）；`scroll_win32.c` 滚轮 Offset + 拖动 thumb/track 已接；⛔ GUI 手测未过 | 🟡 内容须自带虚拟化（M-VZ1+） |
-| **ListView** | ✅ 选择面五 DP + **SelectionChanged（Signal&lt;string&gt;）** + SelectionChangedHandler（string 事件名）均**继承 Primitives.Selector**（覆写 `OnSelectionApplied` 装箱 SelectedItem）；ItemsSource（ItemSourceView 强类型数据面）/ItemTemplate 继承 ItemsControl | ✅ SelectedIndex/LayoutHeight + 行 TextBlock ItemIndex（点击命中/高亮定位）+ PointerRouter（ListView 槽 · 点击路由） | ✅ LayoutShell 背景 + 行 TextBlock 递归（选中行高亮经行 TextBlock 呈现；无专属 wgpu 分支） | 🟡 点击选择已接（PointerRouter 泛化 · C 像素命中行 → 镜像 HitItemIndex → `SelectIndex`（Primitives.Selector）→ 选中行高亮 + SelectionChanged 通道载荷=新选中项显示投影）；⛔ Signal.Subscribe 闭包链路挂账（M-D0）；⛔ GUI 点击手测待补；⛔ 键盘/Multiple 后置 | **必须**视口 + 回收池（M-VZ1+） |
-| **ItemsControl** | ✅ ItemsSource（**唯一数据入口**：string/List/ObservableCollection/ItemSourceView 判别物化为强类型视图——object 本体 + 显示投影双通道；null 清空）/ItemTemplate/ItemsPanel/VerticalOffset/ItemHeight（命令式 Set*Items 已撤面，单一惯用法对标 WPF；DisplayMemberPath 已撤，投影并入视图构造期） | ⛔ 无分支 | ✅ LayoutShell 背景（泛化递归） | ⛔ 无（ItemsSource 物化 + 虚拟化非交互面） | **必须**视口 + 回收池（M-VZ1+） |
+| **ToggleButton** | ✅ IsChecked/IsThreeState/Content/IsEnabled + Checked/Unchecked/Indeterminate（ARML 事件名 string）+ **Toggled（Signal）**；**默认 Template** | ✅ IsChecked/Content/FontSize/Background/Foreground/IsEnabled + PointerRouter（Toggle 槽） | ✅ **模板优先**（PART_Chrome VSM.Toggle） | ✅ 点击切换 + Enter/Space | ⛔ 不适用 |
+| **CheckBox** | ✅ 继承 ToggleButton；**默认 Template**（PART_Glyph+PART_Content） | ✅ 同 ToggleButton | ✅ **模板优先**（PART_Glyph） | ✅ 点击 + Enter/Space | ⛔ 不适用 |
+| **RadioButton** | ✅ 继承 ToggleButton + **GroupName**；**默认 Template** | ✅ 同 Toggle + GroupName + PointerRouter | ✅ **模板优先**（圆形 PART_Glyph） | ✅ 点击/Activate 组互斥 | ⛔ 不适用 |
+| **TextBox** | ✅ Text/Placeholder/IsReadOnly/MaxLength/CaretIndex/CompositionText + **TextChanged（Signal）** + SelectionStart/Length（派生）；**默认 Template**（PART_Chrome 壳） | ✅ Text/CompositionText/Placeholder/CaretIndex/SelectionStart/SelectionLength/IsFocused/IsReadOnly/IsEnabled + ImeBridge/InputFocusRouter + **KeyboardRouter** | ✅ **PART_Chrome 壳** + 宿主文本/选区/caret 层 | ✅ TextChanged + IME + 键盘/剪贴板 | ⛔ 不适用 |
+| **PasswordBox** | ✅ Password/PasswordChar/…；**默认 Template** | ✅ 镜像 **Text=掩码**；其余同 TextBox | ✅ 同 TextBox 模板壳 + 掩码文本层 | ✅ 同 TextBox；禁 Copy/Cut | ⛔ 不适用 |
+| **Border** | ✅ Background/BorderBrush/BorderThickness/CornerRadius/Padding/Child | ✅ Background/BorderBrush/CornerRadius/BorderThicknessUniform + Padding + **ChromeHostHandle/ChromeRole（PART）** | ✅ 圆角底+描边；**PART_* 走宿主 VSM** | ⛔ 无交互（装饰容器） | ⛔ 固定少量子项例外 |
+| **Slider** | ✅ Value/Minimum/Maximum/Step/Background/Foreground + **ValueChanged（Signal）**；**默认 Template**（PART_Chrome） | ✅ Value/Minimum/Maximum/Step/Background/Foreground/IsEnabled + IsMouseOver/IsPressed + PointerRouter（Slider 槽 · 拖拽/态色） | ✅ **模板优先**（PART Surface 轨+fill+thumb · VSM.Slider）；无模板宿主回退 | 🟡 ValueChanged + **鼠标拖拽/点击已接**；⛔ GUI 手测矩阵待补 | ⛔ 不适用 |
+| **ProgressBar** | ✅ Value/Minimum/Maximum/IsIndeterminate/IsEnabled；**默认 Template**（PART_Chrome） | ✅ Value/Minimum/Maximum/IsIndeterminate/IsEnabled + BindPlatformMirror | ✅ **模板优先**（PART Surface 轨+填充 / IsIndeterminate 扫掠 · VSM.Progress）；无模板宿主回退 | ⛔ 只读反馈（无指针交互；Focusable=false） | ⛔ 不适用 |
+| **ComboBox** | ✅ SelectedIndex/SelectedText（DP）+ ItemsSource（非泛型基座）/OptionCount/SelectedValue（`ComboBox<T>`）+ SelectionChanged；**默认 Template**（PART_Chrome 壳） | ✅ SelectedIndex/SelectedText/Font*/Background/Foreground/IsEnabled（`ComboBoxBase`） | ✅ **PART_Chrome 壳** + 宿主 SelectedText/chevron；展开态 Popup{ScrollView{ListView}}；无模板折叠 chrome 回退 | ✅ ARML/`ItemsSource` 非泛型轨；**`ComboBox<T>` SetOptions 泛型单态**：基类 DP 全名限定后 **arc-prune-001 已过**（ArmlDemo OnLoaded 冒烟） | ⛔ 不适用 |
+| **Popup** | ✅ Child/PlacementX/PlacementY + Open/Open(Window?)/Close/IsOpen + **IsLightDismissEnabled** + **Closed/Opened（Signal&lt;bool&gt;）** + **ComputeInWindowPlacement** | ✅ 附加层根独立建树 + `RootEpoch` + 蒙层背景直写 + Layout 钳入 + Owner（显式 / Parent / MainWindow） | ✅ `PopupLayer`/`PopupBackdrop` 分支置顶 | ✅ 蒙层点击关闭（PointerRouter `PopupBackdrop` · 受轻关闭门控）+ Esc LIFO（KeyboardRouter）；同窗口互斥由消费方 `_activeCombo` 型锚点；✅ 滚动内翻；✅ ComboBox 钳高 ScrollView 外壳；⛔ 多弹层 Z 序策略 / 无蒙层非模态后置 | ⛔ 不适用 |
+| **MessageBox** | ✅ **ShowAsync**(owner, text, caption, buttons[, image], ct) → `Task&lt;MessageBoxResult&gt;`；按钮 **OK / OKCancel / YesNo / YesNoCancel**；结果 OK/Cancel/Yes/No；**MessageBoxImage** None/Information/Warning/Error/Question | ✅ 经 **Popup** 附加层（`IsLightDismissEnabled=false`）；Surface + 正文主题色；OK/Yes=Primary / Cancel·No=Default；图标 = 主题色色块 + 符号 TextBlock（自绘几何） | ✅ 复用 PopupLayer/Backdrop + Button/TextBlock/StackPanel 通用递归（无专属 chrome） | ✅ 按钮点击完成 TCS；Esc→OKCancel/YesNoCancel=Cancel / YesNo=No / OK-only=OK（KeyboardRouter）；蒙层不关；禁 Win32/原生对话框；同窗单实例（再开先 Cancel 前者） | ⛔ 不适用 |
+| **TabControl** | ✅ SelectedIndex + Children=`TabItem` + **内置页签栏 Header** | ✅ Background/SelectedIndex/TabCount/Header{i}/HeaderWidth{i}/HeaderBarHeight + PointerRouter | ✅ 顶栏**按文案测宽左对齐** Header + 选中 Accent 底线 + LayoutShell 客户区（**未迁模板**：Panel 内容子树，`templated` 门禁不适用） | ✅ 页签栏点击切换 SelectedIndex（C HitTabIndex + HeaderWidth 累进命中）；⛔ 切换动画 / 溢出滚动页签 / 关闭按钮另排 | ⛔ 不适用 |
+| **TabItem** | ✅ Header + Children 内容树 | ✅ Background/Header | ✅ **内容宿主**：Measure 有界时取视口宽高；Arrange 槽位=整页 `finalSize`（Stretch 拉满） | ⛔ 无独立交互（父容器互斥） | ⛔ 不适用 |
+| **Image** | ✅ Source/Stretch/W/H/Background | ✅ Source/Stretch/Width/Height/Background（PlatformTreeSync.Image 分支 · `Window.Show()` 同步镜像树）+ TextureId 回写 | ✅ 解码纹理 `DrawTexture` 采样（GIF/SVG/静态；Stretch 与 VideoSurface 同源 UV；无纹理回退占位框） | ⛔ 显示效果 GUI 手测待补 | ⛔ 不适用 |
+| **ScrollView** | ✅ Content/ScrollBarVisibility（H·V）/H·VOffset + ExtentWidth·Height/ViewportWidth·Height/ScrollableWidth·Height 只读 | ✅ 全属性 + ScrollRouter | ✅ 视口裁剪（scissor）+ 内容直通 + **竖滚动条**（`DrawVScrollBar` 轨道/滑块主题色；几何与 `rt_ui_vscroll_*` 同契约） | 🟡 滚轮/拖拽命中已解封；**Measure 交叉轴有界 + §4 预留条宽；Arrange 内容槽宽≥视口内容区**（修复窄列/条悬浮）；⛔ GUI 手测矩阵待补 | 🟡 内容须自带虚拟化（M-VZ1+） |
+| **ListView** | ✅ 选择面五 DP + **SelectionChanged（Signal&lt;string&gt;）** + SelectionChangedHandler（string 事件名）均**继承 Primitives.Selector**（覆写 `OnSelectionApplied` 装箱 SelectedItem）；ItemsSource（ItemSourceView 强类型数据面）/ItemTemplate 继承 ItemsControl | ✅ SelectedIndex/LayoutHeight + 行 TextBlock ItemIndex（点击命中/高亮定位）+ PointerRouter（ListView 槽 · 点击路由）+ **Focusable/Tab 停靠** | ✅ LayoutShell 背景 + 行 TextBlock 递归（选中行高亮经行 TextBlock 呈现；无专属 wgpu 分支） | 🟡 点击选择已接（PointerRouter · 点击聚焦 + `SelectIndex`）；✅ **键盘导航**（Up/Down/Home/End/Enter → `Selector.TryHandleKey`）；⛔ Signal.Subscribe 闭包链路挂账（M-D0）；⛔ GUI 点击手测待补；⛔ Multiple 后置 | **必须**视口 + 回收池（M-VZ1+） |
+| **ItemsControl** | ✅ ItemsSource（**唯一数据入口**：string/List/ObservableCollection/ItemSourceView 判别物化为强类型视图——object 本体 + 显示投影双通道；null 清空）/ItemTemplate/VerticalOffset/ItemHeight；（**ItemsPanel 已从公开面撤除**——未接线假能力禁留）；命令式 Set*Items 已撤面；DisplayMemberPath 已撤 | ⛔ 无分支 | ✅ LayoutShell 背景（泛化递归） | ⛔ 无（ItemsSource 物化 + 虚拟化非交互面） | **必须**视口 + 回收池（M-VZ1+） |
 | **VirtualizingStackPanel** | ✅ VerticalOffset/ItemHeight/CacheLengthBefore/CacheLengthAfter/Orientation | ⛔ 无分支 | ✅ LayoutShell 背景（泛化递归） | ⛔ 无 | **视口窗口** · M-VZ1 · 回收池 |
 | **Grid** | ✅ ColumnSpacing/RowSpacing/Background + ColumnDefinitions/RowDefinitions（List&lt;object&gt; 字段，非 DP）+ **Grid.Row/Column 附加属性（typed DependencyProperty&lt;int&gt;）** | ✅ ColumnSpacing/RowSpacing/Background | ✅ LayoutShell 背景（行列算法由 GridLayout 决定布局 rect，渲染只消费权威 rect） | ⛔ 无交互语义 | ⛔ 固定少量子项例外 |
 | **DockPanel** | ✅ LastChildFill/Background + Dock 附加属性（string 占位，M3+ RegisterAttached） | ✅ LastChildFill/Background | ✅ LayoutShell 背景（停靠算法由 DockLayout 决定布局 rect） | ⛔ 无交互语义 | ⛔ 固定少量子项例外 |
 | **WrapPanel** | ✅ Orientation/ItemWidth/ItemHeight/Background | ✅ Orientation/ItemWidth/ItemHeight/Background | ✅ LayoutShell 背景（换行算法由 Flexbox.ArrangeWrap 决定布局 rect） | ⛔ 无交互语义 | ⛔ 固定少量子项例外 |
 | **Canvas** | 🟡 Left/Top/Right/Bottom 附加属性（string 占位，M3+ RegisterAttached）+ Background | ✅ Background | ✅ LayoutShell 背景（绝对定位由 CanvasLayout 决定布局 rect） | ⛔ 无交互语义 | ⛔ 固定少量子项例外 |
 | **VisualHost** | ✅ Content/Child/Resources/GetHostResources/SetContent/Rebuild/Clear/Navigate + **ContentChanged/InnerLoaded/InnerUnloaded（Signal）** + IsDataContextBoundary | ✅ Background | ✅ 背景 + 内层根递归（内层根加载/卸载驱动重绘） | 🟡 ContentChanged/InnerLoaded/InnerUnloaded 通道；⛔ M-VH3 输入/焦点/HWND 后置 · **非 1GB 宿主** | 🟡 预览区推荐虚拟化模板 |
-| **CodeEditor** | ✅ VerticalOffset/DocumentPath（DP 元数据；字段后备 __sinit 挂账）+ OpenPath/RenderVirtualizedLines/ContentExtentHeight/SetText | ⛔ 无全文平台镜像（无分支） | 🟡 泛化递归（DrawList 视口虚拟化未进 wgpu 分支） | ⛔ IME/选区/LSP 后置 | **标杆** · CodeEditor 行视口 |
-| **DataGrid** | ✅ SelectedIndex + **SelectionChanged（Signal&lt;string&gt;）** + SelectionChanged（ARML 事件名 · typeck 标识符校验；codegen 挂账待接，现仅 Button.Click 有先例）**继承 Primitives.MultiSelector**（单选面继承 Primitives.Selector；覆写 `SelectionItemCount` 行数上界 + `SelectionPayload` 行首列文本；构造 `ownsItemsHost=false` 自管行宿主——多列单元格视口与基类项宿主管线正交）+ RowHeight/HeaderHeight/VerticalOffset + 编程式 AddColumn/AddRow/GetCell/ClearRows/SelectIndex | ✅ SelectedIndex/ColumnCount/Header{i}/Width{i}/RowHeight/HeaderHeight/RowCount + 行镜像 ItemIndex/C{i}/Layout*（PlatformTreeSync DataGrid/DataGridRow 分支）+ PointerRouter（DataGrid 槽 · 点击路由） | ✅ 专属分支 `RenderDataGrid`：整格底 + 表头带（Stripe 底 + 列头文本 + 底分隔线）+ 斑马纹（`Color.Surface.Stripe`）+ 选中 Accent 整行 + OnAccent 文本 + 列分隔线 + 外框；单元格列宽省略截断（`ClipTextToWidth`）+ 行区 scissor 裁剪 | 🟡 点击选择已接（C `rt_ui_datagrid_hit_row` 行镜像 layout_y 命中 → HitItemIndex → `SelectIndex`（Primitives.Selector）→ SelectionChanged 载荷=选中行首列文本）；⛔ Signal.Subscribe 闭包链路挂账（M-D0）；⛔ GUI 手测待补；⛔ 列拖拽排序/编辑后置 | **必须**行虚拟化 · M-VZ4 ✅（视口窗口 + 回收池；Extent=rowCount×stride 纯算术；e2e `ui_datagrid_selection_e2e` + C `ui_datagrid_selection_c_e2e`） |
+| **CodeEditor** | ✅ VerticalOffset/DocumentPath（DP 元数据；字段后备 __sinit 挂账）+ OpenPath/RenderVirtualizedLines/ContentExtentHeight/SetText + **IFrameDrawListProvider**（BuildFrameDrawList） | ✅ Font*/Background/Foreground + FrameDrawListRouter 登记（PlatformTreeSync.CodeEditor 分支） | ✅ 视口虚拟化 DrawList → `ExecuteDrawList(list, lx, ly)` + PushClip（`ElCodeEditor` 分支；局部坐标 + 布局原点；与 TreeDrawListBuilder 预览同构） | ⛔ IME/选区/LSP 后置 | **标杆** · CodeEditor 行视口 |
+| **DataGrid** | ✅ SelectedIndex + **SelectionChanged（Signal&lt;string&gt;）** + SelectionChanged（ARML 事件名）**继承 Primitives.MultiSelector**；**ItemsSource 唯一行入口**（`List&lt;List&lt;string&gt;&gt;` / `ObservableCollection&lt;List&lt;string&gt;&gt;` 多列；`List&lt;string&gt;` / `ObservableCollection&lt;string&gt;` 单列；可观察源 **CollectionChanged 增量改行**；禁 AddRow 字符串重载双轨）+ AddColumn/GetCell/ClearRows/SelectIndex + RowHeight/HeaderHeight/VerticalOffset | ✅ SelectedIndex/ColumnCount/Header{i}/Width{i}/RowHeight/HeaderHeight/RowCount + 行镜像 ItemIndex/C{i}/Layout*（PlatformTreeSync DataGrid/DataGridRow 分支）+ PointerRouter（DataGrid 槽 · 点击路由） | ✅ 专属分支 `RenderDataGrid`（**未迁模板**：`ControlTemplate.ApplyTo` 清子树会毁行镜像；表头/斑马/选中过大，诚实后置） | 🟡 点击选择已接（C `rt_ui_datagrid_hit_row` → `SelectIndex`）；⛔ Signal.Subscribe 闭包链路挂账（M-D0）；⛔ GUI 手测待补；⛔ 列拖拽排序/编辑后置；**Observable 多实例并发订阅 ✅**（route 槽 + int 按值捕获；ItemsControl/ItemSourceView 同款多槽 ✅） | **必须**行虚拟化 · M-VZ4 ✅（视口窗口 + 回收池；Extent=rowCount×stride 纯算术；e2e `ui_datagrid_selection_e2e` + C `ui_datagrid_selection_c_e2e`） |
 | **TreeView** | ⏳ | ⏳ | ⏳ | ⏳ | **必须**展开路径视口（M-VZ4） |
 
 > \* **SelectedIndex int DP 运行期挂账**：`Signal<int>` 泛型 ABI 首次实例化 AV（`Element.SetValue<int>` 直崩，见 `ui_listview_selection_e2e` 诚实边界）。选择分层后 `Primitives.Selector.SelectedIndex` 统一走 **DP wrapper**（原 ListView/DataGrid 字段后备随迁移消失，DP 元数据与运行期读写同轨）；泛型 int 槽运行期 AV 若在选中流程触发即暴露，届时按 ABI 挂账清偿流程处理。
@@ -76,23 +89,96 @@
 | `RowDefinition` / `ColumnDefinition` | `std/UI/Components/Layout/RowDefinition.as` · `ColumnDefinition.as` | Grid 行/列定义（GridLength.Auto/Star/px） |
 | `WindowHost` | `std/UI/Components/WindowHost.as` | 静态 ABI 桥（ElementCreate/Set*/Get*/AddChild/IME/键盘/滚动 handler）；`NativeHandle`/`CreateWindow`/`RunEventLoop` 为互操作面 |
 
-## 默认观感（Light Theme）
+## 默认观感（Light Theme · Ant Design 6.x 令牌）
 
-> **核对（2026-08-04）**：以下 Token 值与 `std/UI/Styling/DesignTokens.as` / `ThemeDictionary.as` 实据逐项一致（`Color.Focus.Ring` 为 `#661677FF`，即 `#1677FF` @ 40% alpha）。
+> **双对齐（唯一）**：交互语义 / API 对标 WPF；**默认皮肤**对标 [Ant Design 6 Design Token](https://ant.design/docs/react/customize-theme)（`defaultAlgorithm` Light；Dark 为 `darkAlgorithm` 输出快照）。**令牌对齐，不宣称像素级 DOM/CSS 复刻**。色值权威源 `Themes/Light.arml` / `Dark.arml`。架构见 [theme-style-interaction-architecture](../../../docs/rfc/037-ui/references/theme-style-interaction-architecture.md)。
+>
+> **核对（2026-09-08）**：下列值与 `Light.arml` + `BuiltInTheme.Colors.g.as` + `rt_ui_design_tokens.h` 一致。
 
-| Token | 值 | 消费方 |
-|-------|-----|--------|
-| `Color.Primary` | `#1677FF` | Button 默认填充 |
-| `Color.Primary.Hover` | `#4096FF` | Button `:hover` |
-| `Color.Primary.Pressed` | `#0958D9` | Button `:pressed` |
-| `Color.Surface` | `#FFFFFF` | TextBox 背景 |
-| `Color.Border` | `#E8E8E8` | TextBox 描边 |
-| `Color.Focus.Ring` | `#1677FF` @ 40% | Button/TextBox `:focus-visible` 外环 |
-| `Radius.Control` | `6` | Button / TextBox 圆角（wgpu SDF 圆角） |
-| `Spacing.MD` | `12` | Button 水平内边距 |
-| `Spacing.SH` | `8` | TextBox 内边距 |
+| Token | Ant 源 | 值 | 消费方 |
+|-------|--------|-----|--------|
+| `Color.Primary` | colorPrimary | `#1677FF` | Button 默认填充 |
+| `Color.Primary.Hover` | colorPrimaryHover | `#4096FF` | Button Hover（VSM 覆盖静态 Background） |
+| `Color.Primary.Pressed` | colorPrimaryActive | `#0958D9` | Button Pressed |
+| `Color.Background` | colorBgLayout | `#F5F5F5` | Window / 页底 |
+| `Color.Surface` | colorBgContainer | `#FFFFFF` | TextBox / 面板 |
+| `Color.Border` | colorBorder | `#D9D9D9` | TextBox 描边 |
+| `Color.Border.Disabled` | colorBorderDisabled | `#D9D9D9` | Disabled 描边（6.x Map） |
+| `Color.Text.Primary` | colorText | `rgba(0,0,0,0.88)` | 正文 |
+| `Color.Danger` | colorError | `#FF4D4F` | 错误 / 危险 |
+| `Color.Success` | colorSuccess | `#52C41A` | 成功（键已注册） |
+| `Color.Warning` | colorWarning | `#FAAD14` | 警告（键已注册） |
+| `Color.Focus.Ring` | colorPrimary @ 40% | `#1677FF` @ 40% | `:focus-visible` |
+| `Radius.Control` | borderRadius | `6` | ControlMetrics / VSM |
+| `controlHeight` | controlHeight | `32` | ControlMetrics.ControlHeight / InputMetrics.MinHeight |
+| `Color.Danger.Hover` | colorErrorHover | `#FF7875` | Danger Button Hover |
+| `Color.Danger.Pressed` | colorErrorActive | `#D9363E` | Danger Button Pressed |
+| `Motion.Duration.Fast` | motionDurationFast 近似 | `120ms` | hover / press 默认 |
+| `Motion.Duration.Normal` | motionDurationMid 近似 | `160ms` | focus 默认 |
+| `Motion.Easing.Standard` | motionEaseOut 近似 | `ease-out` | MotionEngine 默认曲线 |
+| `Motion.Easing.Linear` | — | `linear` | 备选曲线键 |
+| `Motion.Easing.In` | — | `ease-in` | 备选曲线键 |
+| `Motion.Easing.InOut` | — | `ease-in-out` | 备选曲线键 |
 
-**诚实缺口（本刀）**：`:focus-visible` 依赖 mirror `IsFocused`/`IsFocusVisible` bool（focus 刀合入前静态演示有限）；Image 位图已进双宿主 wgpu 路径（Stretch 映射统一走 `StretchMapper`，WPF 语义）但 **GUI 手测验收待补**；CodeEditor DrawList 视口虚拟化未进 wgpu 分支；ScrollBar/Slider §6.3–6.4 部分达标（Slider 拖拽/点击已接但 **GUI 手测待补**）。
+**诚实缺口（本刀）**：Image/CodeEditor wgpu 路径已闭合但 **完整 GUI 手测矩阵待补**；**独立 ScrollBar 控件延后**（竖条嵌于 ScrollView；C `rt_ui_vscroll_*` 句柄绑定；抽控件须单独立项）；**Dark 未跑完整 darkAlgorithm 运行时**；**每控件/每态曲线覆写**后置（全局 `Motion.Easing.Standard` 已立并接线；ProgressBar `IsIndeterminate` 已接 `ResolveLoop01`）；**空间脏矩形 Present 已挂起**（swapchain 不可 `LoadOp_Load`；`InvalidateRegion` 升整窗 Clear，待离屏保留缓冲后再启）；非控件级失效树后置。Button dashed/text/link + Size 已由 keyed Style 多绑定立（见 `Themes/Controls/Button.arml`）。**`IsFocusVisible`**：键盘 Tab/方向 → 焦点环；指针聚焦 → 清环（caret 仍跟 `IsFocused`）。
+
+> **核对增补（2026-09-09 · swapchain 禁区域 Load）**：根因——Fifo 每帧新 surface texture，`LoadOp_Load`+根 scissor 只重画脏区 → 其余像素为过期/黑（ArmlDemo 启动黑屏闪烁）。处置：`InvalidateRegion`→整窗 `Invalidate`；`HasPresentRegion` 恒 false。保留 API；离屏保留缓冲就绪后再恢复区域 Present。
+
+> **核对增补（2026-09-08 · 空间脏矩形 Present）**：~~`FramePump.InvalidateRegion` 并集 DIP 脏区；`WgpuRender.BeginFrame` 区域帧 `clear=0`（Load）+ 根 `PushClip`~~ → **已挂起**（见上条 2026-09-09）。caret 翻转仍标脏但升整窗；`ForceFullPaint` 于 layout/Motion/surface 重配。禁 LINQ 关键字作局部名（`by`）。列拖拽排序/编辑仍后置（面过大）。
+
+> **核对增补（2026-09-08 · Motion 曲线 token）**：`BuiltInTheme` 增 `Motion.Easing.{Standard,Linear,In,InOut}` 字符串资源；`MotionEngine.EaseProgress` 读 `Standard` 选 `Ease*` 族；禁 Class/SizeMode/Variant。
+
+> **核对增补（2026-09-08 · 绘脏/布局脏分区）**：`FramePump.Invalidate` = 纯绘（整窗）；`InvalidateLayout` = Measure/Arrange + 整窗绘；`InvalidateRegion` = **升整窗**（swapchain 约束）；`SetValue`/`AddChild`/客户区尺寸/Text 绑定走布局脏；caret 翻转标脏（半秒不再全树 Relayout）。
+
+> **核对增补（2026-09-09 · Style 短键标准 §0.1.1）**：① 作者**只写** `Primary, Small`；查找 = `{TargetType}.{K}` → 全局 `K`（`Shared.arml`）；② Shared 尺寸成套（MinHeight+Padding）；隐式 `BasedOn Medium`；**仅差异**才写 `{T}.Small`；**禁** `Button.Size.SM` 双轨与无差异空覆写；③ **删 Appearance DP**；④ ArmlDemo 短键；⑤ 门禁断言回退顺序与对齐表。
+
+> **核对增补（2026-09-09 · Style 单一惯用 + 每控件一文件）**：① VSM = Style 内部交互态引擎；② Padding → `Size.Control.Padding*`；③ **合并** `*.Styles.arml` 进各控件主 `*.arml`。
+
+> **核对增补（2026-09-09 · 硬编码样式清扫）**：① Controls `*.arml` 禁裸 Thickness / 裸 `#hex`（门禁 `controls_arml_no_bare_thickness_or_hex`）；Border → `Size.Border.Thickness`/`Padding`；② 补键 `Color.Text.Selection` / `Color.Image.Fill|Border` / `Color.Text.Highlight`；③ RenderTree/TreeDrawList/MessageBox/Popup/ComboBox/ArmlDemo 主题色一律 `ResolveColor` / `{StaticResource Color.*}`；④ 删死码 `ColorBorder()` Fluent 灰。
+
+> **核对增补（2026-09-09 · 主题资源键命名收敛）**：统一 `Color.*` / `Size.Control.Height*`；`Negative`→`Danger`（与 Style 短键成套）；删 `Accent.Gradient.A/B`（改用 `Color.Primary`）；`Placeholder`→`Color.Text.Placeholder`；`Image.Placeholder.*`→`Color.Image.*`；`Scroll.Thumb.Active`→`.Pressed`；删 `Size.Control.PaddingX/Y` 冗余键。规范表见 [builtin-theme-resources](../../../docs/rfc/037-ui/references/builtin-theme-resources.md)。
+
+> **核对增补（2026-09-08 · Ant Design 6 令牌 + 交互 P0）**：口径升 6.x；`colorBorderDisabled`；Button Hover/Pressed 覆盖宿主静态 Background；`x:Bind` SyncText 触发 Invalidate；PointerRouter Dictionary 破槽上限。Accent 渐变仍为实色 Primary（禁紫蓝混搭）。
+
+> **核对增补（2026-09-08 · Ant Design 默认皮肤）**：BuiltInTheme / Light·Dark.arml / C 头 / InputMetrics 高度对齐 Ant token；ArmlDemo 硬编码 Fluent 色清掉。
+
+> **核对增补（2026-09-08 · 基础控件完整度）**：① `ProgressBar` 三层闭合（DP + RenderTree/VSM.Progress + PlatformTreeSync；只读）；② `RadioButton`（GroupName 互斥 + 圆形 chrome + PointerRouter）；③ ComboBox ARML/`ItemsSource` 非泛型轨封口（codegen→`ComboBoxBase`；基座 `ApplySelectedIndex`/`SelectedText`）；④ Slider hover/pressed 态色接线；⑤ ArmlDemo Controls 页回挂 Progress/Radio/ComboBox。
+
+> **核对增补（2026-09-08 · Border）**：① `Border : Control`（Focusable=false）Background/BorderBrush/BorderThickness/CornerRadius/Padding/Child；② Measure/Arrange 扣描边+内边距；③ wgpu 圆角底+描边；④ 隐式 Style → Color.Surface/Border + Size.Border.Thickness/Padding + Radius.Control；⑤ ArmlDemo Controls 页嵌套演示。非均匀描边绘制取 max 均匀宽（本切片）。
+
+> **核对增补（2026-09-08 · TextBox 剪贴板）**：① `rt_ui_clipboard_get_text`/`set_text`（Win32 CF_UNICODETEXT；非 Win32 stub）；② `TextBoxController` Ctrl+C/V/X；单行 Paste 剥 CR/LF；③ PasswordBox `AllowsClipboardCopy=false`——禁 Copy/Cut 明文出剪贴板，允许 Paste；④ 文档从 text-editing 非目标迁出。
+
+> **核对增补（2026-09-09 · TextBox 双击词选 · ListView 键盘 · ComboBox 钳高）**：① `ImeBridge.RouteInputClick` 500ms/4DIP 双击 → `SelectWordAt`（空白分词 · UTF-8）；三击行选后置；② ListView Focusable+Tab 停靠 + `Selector.TryHandleKey`（↑↓/Home/End/Enter）；点击聚焦；③ ComboBox `Popup{ScrollView{ListView}}` 钳高可滚。
+
+> **核对增补（2026-09-08 · PasswordBox）**：① `PasswordBox : TextBox` 复用 TextBoxModel/Controller/ImeBridge；② 镜像 Text=掩码（PasswordChar 默认 ●）、Composition 恒空；③ GeometryText 命中/Measure 同源；④ Style `PasswordBox` + `PasswordBox.Size.*`；⑤ C 指针/IBeam 同族；⑥ **复制策略**：禁 Copy/Cut；允许 Paste（见上条剪贴板增补）。
+
+> **核对增补（2026-09-08 · ProgressBar.IsIndeterminate）**：RenderTree 扫掠段 + `MotionEngine.ResolveLoop01`/`CancelLoop`；周期 = `Motion.Duration.Normal` × `ControlMetrics.ProgressBarIndeterminatePeriodFactor`；段宽 `ProgressBarIndeterminateFraction`；FramePump 经 `Active()` 含循环槽保帧；ArmlDemo Controls 页不定长条。
+
+> **核对增补（2026-09-09 · Tab 测宽左对齐 + 点击）**：① 页签 Header **内容测宽左对齐**（`HeaderWidth{i}` = 文案测宽 + 2×`TabHeaderPaddingX`；禁均分拉满栏宽）；② C `HitTabIndex` 按 HeaderWidth 累进命中；③ `RT_UI_CONTROL_HANDLER_MAX` 8→32——原 8 槽在 DataGrid 后丢弃 TabControl/ComboBox/PopupBackdrop 注册，导致页签栏点击无回调。
+
+> **核对增补（2026-09-08 · Tab/Scroll 宿主拉满）**：① `TabItem` Arrange 槽位=整页 `finalSize`（禁 DesiredSize 槽）；② `TabControl`/`TabItem` Measure 有界时取视口；③ `ScrollView` 竖滚交叉轴有界测布 + §4 预留条宽 + Arrange 内容槽宽≥视口；④ ArmlDemo 消费方页签选中 chrome。
+
+> **核对增补（2026-09-08 · 可见性 / 继承完备）**：① `Control.Foreground` DP 默认近黑（Light Text.Primary 冷启动保底）；② **环境值镜像**：未本地/样式/继承的 Foreground / 未设 Background 不上平台镜像，渲染与 `StateColor` 回落活动主题键（Text.Primary / VSM），`SwitchTheme` 未显式着色的控件跟随；③ `TabControl`/`TabItem` 最小切片 + ArmlDemo 页签切换；④ codegen `SelectedIndex` 等整型属性发数字字面量；⑤ ComboBox 下拉底色走 `Color.Surface`。
+
+> **核对增补（2026-09-08 · Popup M1）**：① PointerRouter 接线 `PopupBackdrop` + `ComboBox` 点击槽；② `IsLightDismissEnabled`（蒙层/Esc 门控；MessageBox 前置挂钩置 false）；③ `Open(Window?)` Owner（Parent → MainWindow 回退）；④ Esc 经 KeyboardRouter（平台撤无条件 Esc 退窗）；⑤ ComboBox `Open(owner)`。后置：多弹层 Z 序（钳高 ScrollView 已由 ComboBox 消费方闭合）。
+
+> **核对增补（2026-09-08 · DataGrid Observable 行增量）**：`ItemsSource` 接 `ObservableCollection&lt;List&lt;string&gt;&gt;`（多列）/ `ObservableCollection&lt;string&gt;`（单列）；`CollectionChanged` 增量改扁平 `_cells` + `RefreshWindow`（禁每次全量 Clear+重灌）；ArmlDemo BooksGrid 改可观察并 Add 冒烟。
+
+> **核对增补（2026-09-08 · DataGrid Observable 多实例）**：破单活跃槽——`_obsHosts` 槽表 + `OnChanged` 仅按值捕获 route 槽 int（BindingOperations 同款）；ArmlDemo 第二幽灵网格并发 Add 冒烟 `peer=`。
+>
+> **核对增补（2026-09-08 · ItemsControl / ItemSourceView 多实例）**：同 DataGrid——`_viewHosts` / `_obsViews` + route int 按值捕获；ArmlDemo ListView peer `extent0/extent1` / `peer0/peer1` 冒烟（禁再 OnLoaded 掩盖）。几何余量→ControlMetrics（ProgressBar/Slider/MessageBox/RenderTree 焦点环·滚动条·Combo/Tab）；门禁 `items_control_observable_multi_route` + `control_metrics_owns_geometry`。
+>
+> **核对增补（2026-09-08 · Chevron/Tab 微几何 + ScrollBar 裁决）**：① Combo chevron 堆叠/Tab 栏高·字号·指示条 → `ControlMetrics`；② VSM `ScrollBar` 圆角 → `VScrollThumbRadius`；③ MessageBox 图标徽章 → `MessageBoxIconSize`；④ **独立 ScrollBar 延后**（C `rt_ui_vscroll_*`↔ScrollView；嵌套竖条为 §4 能力面）。
+
+> **核对增补（2026-09-08 · DataGrid ItemsSource + ItemsPanel 撤面 + ComboBox&lt;T&gt;）**：① DataGrid 行数据唯一入口 `ItemsSource`（`List<List<string>>` 多列 / `List<string>` 单列）；撤 `AddRow(string…)` 字符串重载双轨；② `ItemsPanel` 未接线假能力从 ItemsControl/ListView 公开面与 arc-ui typeck 移除；③ RenderTree DataGrid 行高/内缩改 `ControlMetrics`；④ `ComboBox<T>.SetOptions` 基类 DP 全名限定消 arc-prune-001；⑤ ArmlDemo Data/Controls 回挂。
+
+> **核对增补（2026-09-08 · Popup 内翻）**：① `Popup.ComputeInWindowPlacement` 窗口内翻定位（优先下方、溢出翻上方、两侧不足钳高）；② ComboBox `OpenDropDown` 接入；③ `LayoutPopupContent` 客户区兜底钳入；**下拉主题化 ✅**；**钳高 ScrollView 外壳 ✅**（`Popup{ScrollView{ListView}}`）。
+
+> **核对增补（2026-09-08 · IN-R2）**：① 平台 `keyboard_win32` 机械转换 key/text，禁 `IsReadOnly`/Shift 扩选分支；② `TextBoxController.HandleKey` 承接 Ctrl+A/Z/Y、方向/词粒度、Home/End/Delete/Backspace/Space；③ `ImeBridge.OnNativeEvent` 仅 composition/commit/focus_lost。
+>
+> **核对增补（2026-09-07 · Input）**：① TextBox 渲染/`HandleClick`/`HandleDrag` 统一 `InputMetrics.PenOriginX`（Wgpu `MinTextPaddingX` 对齐 LayoutHelper=8）；② FocusManager 启动优先首个 TextBox，`ActivateDefaultFocus` 不再旁路抢焦点；③ 鼠标拖选经 `SetControlDragHandler("TextBox")` + 局部 DIP X。
+>
+> **核对增补（2026-09-07 · 下一刀）**：① FocusManager/InputFocusRouter 自固定 8 槽静默丢弃 → `List` 动态表（RFC 037 §8）；② RenderTree Button/TextBox/ComboBox 行高改 `EstTextHeight` 与 DrawText 同源；③ Toggle/CheckBox 键盘 Activate 与 TextBox 选区绘制口径翻新为已接。
 
 ## 依赖接口（与其他「刀」的边界）
 
@@ -109,7 +195,7 @@
 | `rt_ui_ime_*` | **IME 平台刀** · `crates/runtime/platform/windows/ime_win32.c` 等 | TextBox · `ImeBridge` 消费 commit 队列（M-ime1 Win32 已接线） |
 | `rt_editor_*` / `rt_file_mmap_*` | **CodeEditor 刀** · M-CE1 | Piece Table + mmap 打开；**禁止 ReadAllText** |
 | `UIDispatcher` / `FramePump` / `Application.RunAsync` | **异步调度刀** · M-AS1 | 长 I/O 后台 + 主线程 Post；**禁止** UI 线程阻塞 ReadAllText；`RunEventLoop` 仅为兼容 |
-| `rt_ui_set_button_click_handler` / `rt_ui_set_keyboard_handler` / `rt_ui_set_scroll_wheel_handler` | platform `window.cpp` / `keyboard_win32.c` / `scroll_win32.c` | Button Click · M-focus Tab/Enter/Space · ScrollView 滚轮 |
+| `rt_ui_set_button_click_handler` / `rt_ui_set_key_handler` / `rt_ui_set_text_handler` / `rt_ui_set_scroll_wheel_handler` | platform `window.cpp` / `keyboard_win32.c` / `scroll_win32.c` | Button Click · IN-R2 单一键盘通道 · ScrollView 滚轮 |
 | `WindowHost.ImeSetFocusRect/ImeTakeCommit/…` | codegen stub → 上列 ABI | `TextBox.UpdateImeFocusRect` / `DrainCommits` |
 
 ## CodeEditor · 虚拟化立宪（M-CE1 硬约束）
@@ -137,6 +223,10 @@ Arc.UI **优选项**：大列表/大文档控件默认 **视口虚拟化**，禁
 | TextBlock | `Components/TextBlock.as` | 继承 `Font.Body` Token |
 | ToggleButton | `Components/ToggleButton.as` | 同 CheckBox 态反馈原则（IsChecked/IsThreeState + Toggled） |
 | CheckBox | `Components/CheckBox.as` | 同 Button 态反馈原则 |
+| RadioButton | `Components/RadioButton.as` | GroupName 互斥 + 圆形 chrome |
+| ProgressBar | `Components/ProgressBar.as` | Value/Min/Max 比例填充；IsIndeterminate → MotionEngine 扫掠 |
+| PasswordBox | `Components/PasswordBox.as` | 掩码显示 + Password API；Paste 允许；禁 Copy/Cut |
+| Border | `Components/Border.as` | Surface/Border/Radius.Control 隐式 Style；Child 布局装饰 |
 | Window | `Components/Window.as` | `Color.Background` 层次 |
 | VisualHost | `Components/VisualHost.as` | §8（M-VH1+；隔离区仍须默认 Theme） |
 

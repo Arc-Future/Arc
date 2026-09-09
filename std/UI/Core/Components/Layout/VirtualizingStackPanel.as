@@ -148,13 +148,18 @@ public class VirtualizingStackPanel : Panel {
     protected override void ArrangeOverride(LayoutSize finalSize) {
         _lastViewportHeight = finalSize.Height;
         double stride = this.ResolveItemStride();
+        double scrollY = this.VerticalOffset;
+        if (scrollY < 0.0) {
+            scrollY = 0.0;
+        }
         int count = this.Children.Count;
         int i = 0;
         while (i < count) {
             Element raw = this.Children[i];
             TextBlock child = (TextBlock)raw;
             int idx = (int)child.GetAttachedNumber(ItemIndexKey, -1.0);
-            double y = (double)idx * stride;
+            // 视口坐标：项 stride × 索引 − VerticalOffset（与 ItemViewport 窗口一致）。
+            double y = (double)idx * stride - scrollY;
             LayoutHelper.ArrangeChild(this, child, 0.0, y, finalSize.Width, stride);
             i++;
         }

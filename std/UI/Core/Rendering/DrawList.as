@@ -3,6 +3,8 @@
 namespace Arc.UI.Rendering;
 
 using Arc.Collections;
+using Arc.UI;
+using Arc.UI.Styling;
 
 /// <summary>
 /// 后端无关 DrawList IR。可序列化、diff、回放；帧末提交 IRender。
@@ -29,6 +31,17 @@ public class DrawList {
         _commands.Add(command);
     }
 
+    /// <summary>主题键 → hex；无应用时 Transparent 哨兵。</summary>
+    private static string ThemeHex(string key) {
+        if (Application.Current != null) {
+            string hex = Application.Current.ResolveColor(key);
+            if (hex != null && hex.Length > 0) {
+                return hex;
+            }
+        }
+        return "#00000000";
+    }
+
     /// <summary>追加 DrawText 命令（避免临时 DrawContext 析构误 dec 目标 DrawList）。</summary>
     public void AddDrawText(double x, double y, string text, double fontSize,
                             string foreground, string background) {
@@ -42,12 +55,12 @@ public class DrawList {
         }
         payload.FontSize = fontSize;
         if (foreground == null) {
-            payload.Foreground = "#FF000000";
+            payload.Foreground = DrawList.ThemeHex(BuiltInTheme.TextPrimary);
         } else {
             payload.Foreground = foreground;
         }
         if (background == null) {
-            payload.Background = "#FFF4C2";
+            payload.Background = DrawList.ThemeHex(BuiltInTheme.TextHighlight);
         } else {
             payload.Background = background;
         }
@@ -83,6 +96,74 @@ public class DrawList {
         }
         for (int i = 0; i < other.Count; i++) {
             _commands.Add(other.CommandAt(i));
+        }
+    }
+
+    /// <summary>合并另一 DrawList，并对全部图元坐标加原点偏移（预览树与窗口布局对齐）。</summary>
+    public void AppendOffset(DrawList other, double originX, double originY) {
+        if (other == null) {
+            return;
+        }
+        for (int i = 0; i < other.Count; i++) {
+            DrawCommand cmd = other.CommandAt(i);
+            switch (cmd)
+            {
+                case DrawCommand.FillRect(r):
+                {
+                    FillRectPayload p = new FillRectPayload();
+                    p.X = r.X + originX;
+                    p.Y = r.Y + originY;
+                    p.Width = r.Width;
+                    p.Height = r.Height;
+                    p.FillColor = r.FillColor;
+                    _commands.Add(DrawCommand.FillRect(p));
+                    break;
+                }
+                case DrawCommand.DrawLine(l):
+                {
+                    DrawLinePayload p = new DrawLinePayload();
+                    p.X1 = l.X1 + originX;
+                    p.Y1 = l.Y1 + originY;
+                    p.X2 = l.X2 + originX;
+                    p.Y2 = l.Y2 + originY;
+                    p.Color = l.Color;
+                    p.Thickness = l.Thickness;
+                    _commands.Add(DrawCommand.DrawLine(p));
+                    break;
+                }
+                case DrawCommand.DrawText(t):
+                {
+                    DrawTextPayload p = new DrawTextPayload();
+                    p.X = t.X + originX;
+                    p.Y = t.Y + originY;
+                    p.Text = t.Text;
+                    p.FontSize = t.FontSize;
+                    p.Foreground = t.Foreground;
+                    p.Background = t.Background;
+                    _commands.Add(DrawCommand.DrawText(p));
+                    break;
+                }
+                case DrawCommand.DrawTexture(t):
+                {
+                    DrawTexturePayload p = new DrawTexturePayload();
+                    p.X = t.X + originX;
+                    p.Y = t.Y + originY;
+                    p.Width = t.Width;
+                    p.Height = t.Height;
+                    p.SrcU0 = t.SrcU0;
+                    p.SrcV0 = t.SrcV0;
+                    p.SrcU1 = t.SrcU1;
+                    p.SrcV1 = t.SrcV1;
+                    p.TextureId = t.TextureId;
+                    p.Alpha = t.Alpha;
+                    _commands.Add(DrawCommand.DrawTexture(p));
+                    break;
+                }
+                default:
+                {
+                    break;
+                }
+            }
         }
     }
 

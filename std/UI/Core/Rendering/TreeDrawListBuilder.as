@@ -26,6 +26,7 @@ using Arc.UI.Components;
 using Arc.UI.Components.Layout;
 using Arc.UI.Layout;
 using Arc.UI.Media;
+using Arc.UI.Styling;
 
 /// <summary>
 /// Element 树 → DrawList 转换器。执行布局后遍历录制绘制命令。
@@ -114,9 +115,11 @@ public class TreeDrawListBuilder {
                 }
                 case "Button":
                 case "CheckBox":
+                case "RadioButton":
                 case "ToggleButton":
                 case "TextBox":
-                case "Slider": {
+                case "Slider":
+                case "ProgressBar": {
                     // 模板让位（WPF 语义，与运行时 RenderTree 门禁同构）：
                     // 已挂模板视觉子树的控件跳过内置文本 chrome，防双轨叠加。
                     List<Element> chromeChildren = element.Children;
@@ -132,6 +135,18 @@ public class TreeDrawListBuilder {
                 }
                 case "Image": {
                     // 图片占位（无纹理时跳过）
+                    break;
+                }
+                case "CodeEditor": {
+                    // RFC 037 §4 M-CE1：与运行时 RenderTree 同构——贡献方 BuildFrameDrawList
+                    // 后按布局原点偏移合并进预览 DrawList（模板让位不适用：无 chrome 子树）。
+                    if (element is IFrameDrawListProvider) {
+                        IFrameDrawListProvider provider = (IFrameDrawListProvider)element;
+                        DrawList frame = provider.BuildFrameDrawList();
+                        if (frame != null && frame.Count > 0) {
+                            list.AppendOffset(frame, x, y);
+                        }
+                    }
                     break;
                 }
                 case "StackPanel":
@@ -322,10 +337,10 @@ public class TreeDrawListBuilder {
             fill.Y = y;
             fill.Width = w;
             fill.Height = h;
-            fill.FillColor = "#FFD0D0D0";
+            fill.FillColor = this.ResolveThemeHex(BuiltInTheme.ImageFill);
             list.Add(DrawCommand.FillRect(fill));
         }
-        string border = "#FF606060";
+        string border = this.ResolveThemeHex(BuiltInTheme.ImageBorder);
         DrawLinePayload top = new DrawLinePayload();
         top.X1 = x; top.Y1 = y;
         top.X2 = x + w; top.Y2 = y;
@@ -382,27 +397,47 @@ public class TreeDrawListBuilder {
 
     /// <summary>尝试读取 Foreground 的十六进制颜色字符串。</summary>
     private string TryGetForegroundHex(Element element) {
-        Control ctrl = null;
-        if (element is Control) {
-            ctrl = (Control)element;
-        }
-        if (ctrl != null) {
-            string fg = ctrl.Foreground;
-            if (fg != null && fg.Length > 0) {
-                return fg;
+        // 环境前景：仅本地/样式/继承有效值；未设回落活动主题 Text.Primary（禁默认白）。
+        if (element.HasAmbientValue(Control.ForegroundProperty.Id)) {
+            Control ctrl = null;
+            if (element is Control) {
+                ctrl = (Control)element;
+            }
+            if (ctrl != null) {
+                string fg = ctrl.Foreground;
+                if (fg != null && fg.Length > 0) {
+                    return fg;
+                }
+            }
+            object dp = element.ResolveProperty("Foreground");
+            if (dp != null) {
+                object val = element.GetValue<object>((DependencyProperty<object>)dp);
+                if (val is Brush) {
+                    return ((Brush)val).ToHex();
+                }
+                if (val is string) {
+                    return (string)val;
+                }
             }
         }
-        object dp = element.ResolveProperty("Foreground");
-        if (dp != null) {
-            object val = element.GetValue<object>((DependencyProperty<object>)dp);
-            if (val is Brush) {
-                return ((Brush)val).ToHex();
-            }
-            if (val is string) {
-                return (string)val;
+        if (Application.Current != null) {
+            string textPrimary = Application.Current.ResolveColor(BuiltInTheme.TextPrimary);
+            if (textPrimary != null && textPrimary.Length > 0) {
+                return textPrimary;
             }
         }
-        return "#FFFFFFFF"; // 白色
+        return this.ResolveThemeHex(BuiltInTheme.TextPrimary);
+    }
+
+    /// <summary>主题键 → hex；Application 未起时回落 Transparent 哨兵（禁 chrome hex 双源）。</summary>
+    private string ResolveThemeHex(string key) {
+        if (Application.Current != null) {
+            string hex = Application.Current.ResolveColor(key);
+            if (hex != null && hex.Length > 0) {
+                return hex;
+            }
+        }
+        return "#00000000";
     }
 
     /// <summary>尝试读取文本内容。处理 Content variant 和各种控件类型。</summary>
@@ -497,7 +532,7 @@ public class TreeDrawListBuilder {
                 return (string)val;
             }
         }
-        return "#FF000000"; // 黑色
+        return this.ResolveThemeHex(BuiltInTheme.TextPrimary); // Shape stroke 默认 = 正文色
     }
 
     /// <summary>尝试读取描边宽度。</summary>

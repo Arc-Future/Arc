@@ -106,7 +106,8 @@ public class Image : Control {
     void OnSourceChanged() {
         this.ReleaseDecoded();
         _sourceDirty = true;
-        FramePump.Invalidate();
+        // Source 换图可能改固有尺寸 → 布局脏；GIF 帧推进仍走纯绘 Invalidate。
+        FramePump.InvalidateLayout();
     }
 
     /// <summary>PlatformTreeSync 调用：登记镜像句柄并回写当前 TextureId（0 即占位）。</summary>

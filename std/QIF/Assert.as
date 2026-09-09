@@ -1,6 +1,7 @@
 namespace Arc.QIF;
 
 using Arc;
+using Arc.Reflection;
 
 /// <summary>
 /// XUnit 风格静态断言类。对标 C# XUnit.Assert。
@@ -40,6 +41,12 @@ public static class Assert {
         }
     }
 
+    public static void Equal(bool expected, bool actual) {
+        if (expected != actual) {
+            throw new Arc.Exception("Assert.Equal failed. Expected: " + expected.ToString() + ", Actual: " + actual.ToString());
+        }
+    }
+
     public static void NotEqual(int notExpected, int actual) {
         if (notExpected == actual) {
             throw new Arc.Exception("Assert.NotEqual failed. Values are equal: " + actual.ToString());
@@ -55,6 +62,31 @@ public static class Assert {
     public static void NotEqual(string notExpected, string actual) {
         if (notExpected == actual) {
             throw new Arc.Exception("Assert.NotEqual failed. Values are equal: '" + actual + "'");
+        }
+    }
+
+    public static void NotEqual(bool notExpected, bool actual) {
+        if (notExpected == actual) {
+            throw new Arc.Exception("Assert.NotEqual failed. Values are equal: " + actual.ToString());
+        }
+    }
+
+    // ── 引用同一性（对标 xUnit Assert.Same / NotSame）──
+
+    /// <summary>
+    /// 断言两个引用指向同一实例（Arc 引用类型 <c>==</c> 语义）。
+    /// 字符串等值比较请用 <see cref="Equal(string, string)"/>，勿用 Same 表达内容相等。
+    /// </summary>
+    public static void Same(object expected, object actual) {
+        if (expected != actual) {
+            throw new Arc.Exception("Assert.Same failed. Expected and actual are not the same instance.");
+        }
+    }
+
+    /// <summary>断言两个引用不是同一实例。</summary>
+    public static void NotSame(object unexpected, object actual) {
+        if (unexpected == actual) {
+            throw new Arc.Exception("Assert.NotSame failed. Values are the same instance.");
         }
     }
 
@@ -258,6 +290,26 @@ public static class Assert {
         }
     }
 
+    /// <summary>
+    /// 断言集合中恰好一个元素满足 predicate（对标 xUnit <c>Assert.Single(collection, predicate)</c>）。
+    /// </summary>
+    public static void Single<T>(List<T> collection, Func<T, bool> predicate) {
+        if (collection == null) {
+            throw new Arc.Exception("Assert.Single failed. Collection is null.");
+        }
+        int matchCount = 0;
+        int i = 0;
+        while (i < collection.Count) {
+            if (predicate(collection[i])) {
+                matchCount = matchCount + 1;
+            }
+            i = i + 1;
+        }
+        if (matchCount != 1) {
+            throw new Arc.Exception("Assert.Single failed. Expected exactly 1 matching element, found " + matchCount.ToString());
+        }
+    }
+
     // ── 谓词断言 ──
 
     /// <summary>断言集合中所有元素都满足 predicate。</summary>
@@ -365,13 +417,6 @@ public static class Assert {
         throw new Arc.Exception("Assert.Throws failed. No exception was thrown by '" + actionName + "'. Expected: " + errorCode);
     }
 
-    // ── 泛型版 Throws / IsType / Single(predicate) 延后实现——
-    // Arc MIR lowering 对泛型 + 委托 + is T 组合支持仍在完善中。
-    // 运行时行为由非泛型重载（Throws(string, Action) / Throws(code, name, Action)）覆盖。
-    // public static void Throws<T>(string actionName, Action action) { ... }
-    // public static void IsType<T>(object value) { ... }
-    // public static void Single<T>(List<T> collection, Func<T, bool> predicate) { ... }
-
     /// <summary>
     /// 断言 action 不抛出任何异常。
     /// <param name="actionName">动作描述（用于失败消息）。</param>
@@ -385,11 +430,33 @@ public static class Assert {
         }
     }
 
-    // ── 类型断言（泛型版延后实现） ──
-    // public static void IsType<T>(object value) { ... }
+    // ── 类型断言 ──
 
-    // ── 单元素谓词断言（泛型版延后实现） ──
-    // public static void Single<T>(List<T> collection, Func<T, bool> predicate) { ... }
+    /// <summary>
+    /// 断言两个编译期 <c>typeof</c> 身份相同（对标 xUnit IsType 在「无 GetType 反查」下的诚实子集）。
+    /// 用法：<c>Assert.IsType(typeof(Foo), typeof(Foo))</c>；任意 object 实例的运行时类型反查永久不支持。
+    /// 实例路径请用 <c>Assert.True(value is Foo)</c>，或待 MIR 支持后启用泛型 <c>IsType&lt;T&gt;(object)</c>。
+    /// </summary>
+    public static void IsType(Type expectedType, Type actualType) {
+        if (expectedType == null) {
+            throw new Arc.Exception("Assert.IsType failed. expectedType cannot be null.");
+        }
+        if (actualType == null) {
+            throw new Arc.Exception("Assert.IsType failed. actualType is null.");
+        }
+        if (expectedType.TypeId != actualType.TypeId) {
+            throw new Arc.Exception("Assert.IsType failed. Expected: " + expectedType.FullName + ", Actual: " + actualType.FullName);
+        }
+    }
+
+    /// <summary>
+    /// 断言 value 为 Exception（最常见契约自测）。完整泛型 <c>IsType&lt;T&gt;(object)</c> 延后。
+    /// </summary>
+    public static void IsException(object value) {
+        if (!(value is Exception)) {
+            throw new Arc.Exception("Assert.IsException failed. Value is not an Exception.");
+        }
+    }
 
     // ── 跳过（测试框架内部使用） ──
 

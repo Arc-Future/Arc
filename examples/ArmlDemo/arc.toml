@@ -22,6 +22,6 @@ internals_visible_to = ["Arc.UI", "Arc.UI.Edit"]
 #   3. 编译 `Program.as` 为 `bin/<config>/<package>.exe`
 [ui]
 arml = ["App.arml", "MainWindow.arml"]
-sources = ["App.arml.as", "MainWindow.arml.as"]
+sources = ["App.arml.as", "MainWindow.arml.as", "DemoThemeKind.as"]
 program = "Program.as"
 namespace = "ArmlDemo"

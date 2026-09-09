@@ -22,6 +22,9 @@ public class ListView : Selector {
     public ListView() {
         this.Type = typeof(ListView);
         this.TypeName = "ListView";
+        // 键盘导航（Up/Down/Home/End/Enter）经 Selector.TryHandleKey；非 InputElement，显式停靠。
+        this.Focusable = true;
+        this.IsTabStop = true;
     }
 
     /// <summary>选中后附加同步：按选中项文本装箱 SelectedItem（基类默认空）。</summary>

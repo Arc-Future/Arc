@@ -13,17 +13,15 @@
 //     （沿用原 ItemsControl string 轨行为：源列表原地变更后经 RefreshItems 可见）。
 //   - 强类型静态轨：From&lt;T&gt;(List&lt;T&gt;, display) / From&lt;T&gt;(EnumOptions&lt;T&gt;)——From 时
 //     一次烘焙平行表（object 本体 + string 投影）；静态源不可变，无变更通道。
-//   - 动态轨：From(ObservableCollection&lt;string&gt;)——视图内订阅源通道（静态方法组 +
-//     单活跃路由槽，逃逸闭包 UB 惯例同 ItemsControl 原机制，机制自此迁入视图），
-//     string 载荷转换 object 载荷后经视图变更表面（CollectionChangedEventArgs&lt;object&gt;）
-//     转发；ItemsControl 只消费视图表面，不再感知 ObservableCollection。
+//   - 动态轨：From(ObservableCollection&lt;string&gt;)——视图内订阅源通道（route 槽 +
+//     OnChanged 仅按值捕获 route int；逃逸闭包禁捕获 this，同 DataGrid /
+//     BindingOperations），string 载荷转换 object 载荷后经视图变更表面转发；
+//     ItemsControl 只消费视图表面，不再感知 ObservableCollection。
 //
 // 诚实边界：
-//   - ObservableCollection&lt;T&gt;（非 string）动态轨暂不支持：泛型方法内无法以静态
-//     方法组订阅 T 闭型通道（泛型方法组未支持 + 逃逸闭包 UB 未修复，属编译器
-//     依赖项）；能力恢复后于本文件扩展 From&lt;T&gt;(ObservableCollection&lt;T&gt;, display)。
-//   - 单活跃实例约束：同进程同时至多一个视图订阅动态源生效（多实例并发订阅
-//     依赖编译器逃逸闭包修复）——与原 ItemsControl 机制约束等价，非退化。
+//   - ObservableCollection&lt;T&gt;（非 string）动态轨暂不支持：泛型方法内无法以稳定
+//     闭型通道订阅 T（属编译器依赖项）；能力恢复后于本文件扩展
+//     From&lt;T&gt;(ObservableCollection&lt;T&gt;, display)。
 //   - 接口化（IItemSourceView）暂缓：当前单一实现，待第二实现出现时再抽
 //     （契约免维护双份）；管道消费方（ItemsControl/Generator/Panel）持具体类引用。
 
@@ -53,9 +51,11 @@ public class ItemSourceView {
     private List<Action<CollectionChangedEventArgs<object>>> _handlers;
     private int _nextToken;
 
-    /// <summary>动态轨订阅路由槽：静态方法组回调经此定位当前活跃视图
-    /// （单活跃实例约束，见文件头诚实边界）。</summary>
-    private static ItemSourceView _activeObservableView;
+    /// <summary>本实例在 <see cref="_obsViews"/> 中的槽位（-1 = 未登记）。</summary>
+    private int _obsRouteSlot;
+
+    /// <summary>动态轨多视图路由表：OnChanged 回调按 route id 回查视图。</summary>
+    private static List<ItemSourceView> _obsViews;
 
     private ItemSourceView() {
         _stringList = null;
@@ -65,6 +65,7 @@ public class ItemSourceView {
         _sourceToken = -1;
         _handlers = null;
         _nextToken = 0;
+        _obsRouteSlot = -1;
     }
 
     // ── 数据面（管道消费方：ItemsControl / ItemContainerGenerator / VirtualizingStackPanel）──
@@ -143,9 +144,7 @@ public class ItemSourceView {
             _observableSource.Unsubscribe(_sourceToken);
             _observableSource = null;
             _sourceToken = -1;
-            if (_activeObservableView == this) {
-                _activeObservableView = null;
-            }
+            this.UnregisterObsRoute();
         }
     }
 
@@ -179,13 +178,38 @@ public class ItemSourceView {
         }
     }
 
-    // ── 动态轨源订阅（静态方法组 + 单活跃路由槽；逃逸闭包 UB 惯例见文件头）──
+    // ── 动态轨源订阅（route 槽 + int 按值捕获；多实例并发）──
 
-    private static void OnSourceChangedStatic(CollectionChangedEventArgs<string> args) {
-        ItemSourceView view = _activeObservableView;
-        if (view != null) {
-            view.OnSourceChanged(args);
+    void EnsureObsRoute() {
+        if (_obsRouteSlot >= 0) {
+            return;
         }
+        if (_obsViews == null) {
+            _obsViews = new List<ItemSourceView>();
+        }
+        _obsRouteSlot = _obsViews.Count;
+        _obsViews.Add(this);
+    }
+
+    void UnregisterObsRoute() {
+        if (_obsRouteSlot < 0) {
+            return;
+        }
+        if (_obsViews != null && _obsRouteSlot < _obsViews.Count) {
+            _obsViews[_obsRouteSlot] = null;
+        }
+        _obsRouteSlot = -1;
+    }
+
+    private static void DispatchSourceChange(int routeSlot, CollectionChangedEventArgs<string> args) {
+        if (_obsViews == null || routeSlot < 0 || routeSlot >= _obsViews.Count) {
+            return;
+        }
+        ItemSourceView view = _obsViews[routeSlot];
+        if (view == null) {
+            return;
+        }
+        view.OnSourceChanged(args);
     }
 
     // ── 静态工厂（ItemsSource 判别物化的唯一构建入口）──
@@ -237,15 +261,18 @@ public class ItemSourceView {
     }
 
     /// <summary>动态轨：订阅可观察源（CollectionChanged → 视图变更表面转发，
-    /// string 载荷 object 化）；null 源退化为空视图。</summary>
+    /// string 载荷 object 化）；null 源退化为空视图。多实例并发：每视图稳定
+    /// route 槽，OnChanged 只按值捕获 route int。</summary>
     public static ItemSourceView From(ObservableCollection<string> items) {
         ItemSourceView view = new ItemSourceView();
         if (items != null) {
             view._observableSource = items;
-            Action<CollectionChangedEventArgs<string>> handler =
-                ItemSourceView.OnSourceChangedStatic;
-            _activeObservableView = view;
-            view._sourceToken = items.OnChanged(handler);
+            view.EnsureObsRoute();
+            int routeSlot = view._obsRouteSlot;
+            // 只按值捕获 routeSlot（int）；禁捕获 this / 集合引用（逃逸闭包 UB）。
+            view._sourceToken = items.OnChanged((args) => {
+                ItemSourceView.DispatchSourceChange(routeSlot, args);
+            });
         }
         return view;
     }

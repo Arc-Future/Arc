@@ -4,11 +4,14 @@
 // 终态色后，经本引擎按角色（Background/Foreground/Border/FocusRing/Accent）做
 // 时间插值，使态切换呈现平滑过渡而非瞬时跳变。
 //
+// 循环相位：ResolveLoop01 / CancelLoop 服务 ProgressBar.IsIndeterminate 等周期动画；
+// Active() 在循环槽非空时亦为真，FramePump 保持每帧渲染。
+//
 // 设计（对齐 PointerRouter ≤8 固定槽 + 平行 List 模式）：
 //   - 按 (platformHandle, role) 建立槽位；首现直返终态（无过渡）；
 //   - 目标色变化 → 从「当前显示色」向新目标色开始 160ms ease-out 过渡；
 //   - 目标色不变 → 按已流逝时间插值；到时长即吸附目标并停摆；
-//   - <see cref="Active"/> 供 FramePump 在过渡期间保持每帧渲染。
+//   - <see cref="Active"/> 供 FramePump 在过渡/循环期间保持每帧渲染。
 //
 // 时间源：<see cref="Stopwatch"/>（Arc.Diagnostics · QPC/CLOCK_MONOTONIC）。
 // 与 C 侧无耦合；纯 Arc 实现（架构红线：编译器 arc-ui 不含视觉插值领域逻辑）。
@@ -69,6 +72,11 @@ public class MotionEngine {
     private static List<int> _dCbRole = new List<int>();
     private static List<Action> _dCbCallback = new List<Action>();
     private static List<int> _dCbFired = new List<int>();
+
+    // ---- 循环相位槽（不定长 ProgressBar 扫掠等；与过渡槽独立）----
+    private static List<long> _loopHandle = new List<long>();
+    private static List<long> _loopStartTick = new List<long>();
+    private static List<double> _loopPeriodMs = new List<double>();
 
     // ===== 颜色插值 API =====
 
@@ -131,7 +139,7 @@ public class MotionEngine {
         double elapsedMs = ElapsedMs(_startTick[i], nowTick);
 
         if (!SameColor(_targetR[i], _targetG[i], _targetB[i], _targetA[i], tr, tg, tb, ta)) {
-            double eased = Ease(Clamp01(elapsedMs / _durationMs[i]));
+            double eased = EaseProgress(Clamp01(elapsedMs / _durationMs[i]));
             BeginTransitionFrom(i,
                 Interp(_fromR[i], _targetR[i], eased),
                 Interp(_fromG[i], _targetG[i], eased),
@@ -146,7 +154,7 @@ public class MotionEngine {
             return tc;
         }
 
-        double et = Ease(Clamp01(elapsedMs / _durationMs[i]));
+        double et = EaseProgress(Clamp01(elapsedMs / _durationMs[i]));
         return Color.FromRgba(
             Interp(_fromR[i], _targetR[i], et),
             Interp(_fromG[i], _targetG[i], et),
@@ -205,7 +213,7 @@ public class MotionEngine {
         double elapsedMs = ElapsedMs(_dStartTick[i], nowTick);
 
         if (_dTarget[i] != target) {
-            double eased = Ease(Clamp01(elapsedMs / _dDurationMs[i]));
+            double eased = EaseProgress(Clamp01(elapsedMs / _dDurationMs[i]));
             BeginDoubleTransition(i, Interp(_dFrom[i], _dTarget[i], eased), target, durationMs);
         }
 
@@ -215,7 +223,7 @@ public class MotionEngine {
             return target;
         }
 
-        double et = Ease(Clamp01(elapsedMs / _dDurationMs[i]));
+        double et = EaseProgress(Clamp01(elapsedMs / _dDurationMs[i]));
         return Interp(_dFrom[i], _dTarget[i], et);
     }
 
@@ -389,10 +397,83 @@ public class MotionEngine {
         _dDurationMs[i] = durationMs;
     }
 
+    // ===== 循环相位（不定长动画）=====
+
+    /// <summary>
+    /// 周期相位 [0,1)：注册后 <see cref="Active"/> 恒真直至 <see cref="CancelLoop"/>。
+    /// <paramref name="periodMs"/> 非正时回退 <see cref="BuiltInTheme.MotionDurationNormal"/>。
+    /// </summary>
+    public static double ResolveLoop01(long handle, double periodMs) {
+        if (handle == (long)0) {
+            return 0.0;
+        }
+        if (!(periodMs > 0.0)) {
+            periodMs = Application.Current.ResolveNumber(BuiltInTheme.MotionDurationNormal);
+            if (!(periodMs > 0.0)) {
+                periodMs = BuiltInTheme.MotionFocusMs;
+            }
+        }
+        long nowTick = Stopwatch.GetTimestamp();
+        int i = FindLoopSlot(handle);
+        if (i == -1) {
+            _loopHandle.Add(handle);
+            _loopStartTick.Add(nowTick);
+            _loopPeriodMs.Add(periodMs);
+            return 0.0;
+        }
+        _loopPeriodMs[i] = periodMs;
+        double elapsed = ElapsedMs(_loopStartTick[i], nowTick);
+        double period = _loopPeriodMs[i];
+        if (!(period > 0.0)) {
+            period = BuiltInTheme.MotionFocusMs;
+        }
+        double cycles = elapsed / period;
+        int whole = (int)cycles;
+        double phase = cycles - (double)whole;
+        if (phase < 0.0) {
+            phase = 0.0;
+        }
+        return phase;
+    }
+
+    /// <summary>取消句柄上的循环相位槽（定长模式切换时调用）。</summary>
+    public static void CancelLoop(long handle) {
+        if (handle == (long)0) {
+            return;
+        }
+        int i = FindLoopSlot(handle);
+        if (i == -1) {
+            return;
+        }
+        int last = _loopHandle.Count - 1;
+        if (i != last) {
+            _loopHandle[i] = _loopHandle[last];
+            _loopStartTick[i] = _loopStartTick[last];
+            _loopPeriodMs[i] = _loopPeriodMs[last];
+        }
+        _loopHandle.RemoveAt(last);
+        _loopStartTick.RemoveAt(last);
+        _loopPeriodMs.RemoveAt(last);
+    }
+
+    /// <summary>查找循环槽位索引（未找到返回 -1）。</summary>
+    private static int FindLoopSlot(long handle) {
+        int count = _loopHandle.Count;
+        for (int i = 0; i < count; i++) {
+            if (_loopHandle[i] == handle) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     // ===== 状态查询/重置 =====
 
-    /// <summary>是否有过渡进行中（颜色或 double；FramePump 据此保持每帧渲染）。</summary>
+    /// <summary>是否有过渡或循环进行中（颜色 / double / loop；FramePump 据此保持每帧渲染）。</summary>
     public static bool Active() {
+        if (_loopHandle.Count > 0) {
+            return true;
+        }
         int colorCount = _handle.Count;
         for (int i = 0; i < colorCount; i++) {
             if (_active[i] != 0) {
@@ -408,7 +489,7 @@ public class MotionEngine {
         return false;
     }
 
-    /// <summary>清空全部过渡槽（颜色 + double + 回调；Window 每 Show 前调用）。</summary>
+    /// <summary>清空全部过渡/循环槽（颜色 + double + 回调 + loop；Window 每 Show 前调用）。</summary>
     public static void Reset() {
         _handle.Clear();
         _role.Clear();
@@ -438,9 +519,37 @@ public class MotionEngine {
         _dCbRole.Clear();
         _dCbCallback.Clear();
         _dCbFired.Clear();
+        _loopHandle.Clear();
+        _loopStartTick.Clear();
+        _loopPeriodMs.Clear();
     }
 
     // ===== 缓动函数 =====
+
+    /// <summary>
+    /// 按主题 <see cref="BuiltInTheme.MotionEasingStandard"/> 解析当前默认曲线并求值。
+    /// 字面量对齐 <c>ease-out</c>/<c>linear</c>/<c>ease-in</c>/<c>ease-in-out</c>；
+    /// 未命中或空串回退 ease-out（Ant 跟手默认）。
+    /// </summary>
+    private static double EaseProgress(double t) {
+        string curve = BuiltInTheme.MotionCurveEaseOut;
+        if (Application.Current != null) {
+            string resolved = Application.Current.ResolveString(BuiltInTheme.MotionEasingStandard);
+            if (resolved != null && resolved.Length > 0) {
+                curve = resolved;
+            }
+        }
+        if (curve == BuiltInTheme.MotionCurveLinear) {
+            return EaseLinear(t);
+        }
+        if (curve == BuiltInTheme.MotionCurveEaseIn) {
+            return EaseIn(t);
+        }
+        if (curve == BuiltInTheme.MotionCurveEaseInOut) {
+            return EaseInOut(t);
+        }
+        return Ease(t);
+    }
 
     /// <summary>标准 ease-out 缓动（RFC 037 §3.6 Motion.Easing.Standard → cubic-bezier 近似）。</summary>
     public static double Ease(double t) {

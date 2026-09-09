@@ -66,8 +66,10 @@ public class DefaultElementFactory : IElementFactory {
         this.Add("Button", () => new Button());
         this.Add("ToggleButton", () => new ToggleButton());
         this.Add("CheckBox", () => new CheckBox());
+        this.Add("RadioButton", () => new RadioButton());
         this.Add("TextBox", () => new TextBox());
         this.Add("Slider", () => new Slider());
+        this.Add("ProgressBar", () => new ProgressBar());
         this.Add("Image", () => new Image());
         this.Add("Rectangle", () => new Rectangle());
         // ComboBox<T> 泛型→用非泛型基座 ComboBoxBase（TypeName="ComboBox"）

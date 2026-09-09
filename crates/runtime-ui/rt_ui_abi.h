@@ -29,21 +29,7 @@ void rt_ui_element_set_font_size(RtUiElement* e, double size);
 #define RT_UI_IME_COMMIT                2
 #define RT_UI_IME_COMPOSITION_END       3
 #define RT_UI_IME_FOCUS_LOST            4
-#define RT_UI_IME_BACKSPACE             5
-/* M-caret1 ASCII / caret?????IME ??/commit ?? 1?5 */
-#define RT_UI_IME_ASCII_CHAR            6  /* payload: const char* utf8????? */
-#define RT_UI_IME_CARET_LEFT            7
-#define RT_UI_IME_CARET_RIGHT           8
-/* M-caret2 选区：Shift+方向键扩选 / Ctrl+A 全选 / 点击定位 caret。
- * M-caret3 补齐桌面编辑键：Delete 前删 / Home+End 行首行尾（Shift 变体扩选）。 */
-#define RT_UI_IME_CARET_LEFT_EXT        9
-#define RT_UI_IME_CARET_RIGHT_EXT       10
-#define RT_UI_IME_SELECT_ALL            11
-#define RT_UI_IME_DELETE_FORWARD        12
-#define RT_UI_IME_CARET_HOME            13
-#define RT_UI_IME_CARET_END             14
-#define RT_UI_IME_CARET_HOME_EXT        15
-#define RT_UI_IME_CARET_END_EXT         16
+/* IN-R2：编辑键/ASCII 不再经 IME kind；见 rt_ui_dispatch_key / rt_ui_dispatch_text。 */
 
 typedef struct RtUiImeComposition {
     const char* text;
@@ -68,8 +54,15 @@ void rt_ui_dispatch_input_focus(RtUiElement* elem);
 /* M-caret2：Input 点击定位 caret（local_dip_x 为命中元素局部坐标）。 */
 void rt_ui_set_input_click_handler(void* fn, void* env);
 void rt_ui_dispatch_input_click_at(RtUiElement* elem, int32_t local_dip_x);
-void rt_ui_set_keyboard_handler(void* fn, void* env);
-void rt_ui_dispatch_keyboard(int32_t virtual_key, int32_t shift_down);
+/* RFC 037 §8 IN-R2：单一键盘通道（mods bit0=Shift bit1=Ctrl）。 */
+void rt_ui_set_key_handler(void* fn, void* env);
+void rt_ui_dispatch_key(int32_t virtual_key, int32_t mods);
+void rt_ui_set_text_handler(void* fn, void* env);
+void rt_ui_dispatch_text(const char* utf8);
+
+/* RFC 037 TextBox 剪贴板：堆 UTF-8（空→""；失败可 NULL）；Set 写 CF_UNICODETEXT。 */
+char* rt_ui_clipboard_get_text(void);
+void rt_ui_clipboard_set_text(const char* utf8);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -20,27 +20,99 @@ internal class FramePump {
 
     // ===== A-1 帧泵脏标记 + 按需渲染（RFC 037 §9.1 A-1②）=====
     //
-    // 从「每帧无条件渲染」改为「仅需时渲染」：任何影响视觉的属性变更经
-    // <see cref="Invalidate"/> 标记脏；帧泵循环仅在脏时执行一次 Measure/Arrange
-    // + RenderFrame，随后 <see cref="MarkRendered"/> 清脏。
-    // 初始 _dirty = true —— 首帧恒渲染（窗口刚创建必须上屏）。
+    // 从「每帧无条件渲染」改为「仅需时渲染」：视觉变更经 Invalidate 标绘脏；
+    // 几何/树结构变更经 InvalidateLayout 标布局脏（含绘脏）。
+    // 帧泵：布局脏 → Measure/Arrange；绘脏或布局脏 → RenderFrame；随后 MarkRendered 清双旗。
+    //
+    // 空间脏矩形：API（InvalidateRegion）保留并升整窗 Invalidate。
+    // **禁止**对 swapchain 纹理 LoadOp_Load 区域 Present——Fifo/Mailbox 每帧
+    // 取得的 surface texture 与上一帧不是同一缓冲，Load 读到的是过期/未定义
+    // 内容，再叠加根 scissor 只重画脏区 → 启动后黑屏闪烁（ArmlDemo 实证）。
+    // 保留帧缓冲（offscreen）就绪前，区域 Present 一律回退整窗 Clear。
+    // 布局脏 / 显式 Invalidate / resize / Motion 本就整窗 Clear+Present。
 
-    /// <summary>是否需要重绘（任何视觉变更置 true）。</summary>
-    private static bool _dirty = true;
+    /// <summary>是否需要重绘（纯视觉变更置 true；布局脏亦隐含绘脏）。</summary>
+    private static bool _paintDirty = true;
 
-    /// <summary>标记一帧需要重绘（元素属性/树结构变更时调用；幂等——多次变更合并为一次渲染）。</summary>
+    /// <summary>是否需要 Measure/Arrange（几何/树结构变更置 true）。</summary>
+    private static bool _layoutDirty = true;
+
+    /// <summary>本帧须整窗 Clear Present（swapchain 路径恒为 true）。</summary>
+    private static bool _fullPaint = true;
+
+    /// <summary>空间脏矩形（swapchain 停用区域 Present 后仅作合并占位，不驱动 LoadOp）。</summary>
+    private static bool _hasRegion;
+
+    private static double _dirtyX;
+    private static double _dirtyY;
+    private static double _dirtyW;
+    private static double _dirtyH;
+
+    /// <summary>标记一帧需要重绘（整窗 Present；幂等——一帧多变更合并一次 Present）。</summary>
     internal static void Invalidate() {
-        _dirty = true;
+        _paintDirty = true;
+        _fullPaint = true;
+        _hasRegion = false;
     }
 
-    /// <summary>当前是否需要渲染（帧泵循环据此按需渲染）。</summary>
+    /// <summary>标记需要全树 Measure/Arrange + 整窗重绘（几何/子树结构；隐含 Invalidate）。</summary>
+    internal static void InvalidateLayout() {
+        _layoutDirty = true;
+        FramePump.Invalidate();
+    }
+
+    /// <summary>
+    /// 标记 DIP 空间脏矩形。Swapchain 路径升整窗 Invalidate（见类首注释）；
+    /// 宽高非正时同样升整窗。
+    /// </summary>
+    internal static void InvalidateRegion(double x, double y, double w, double h) {
+        // swapchain 不可 LoadOp_Load 保留上一帧——区域脏一律整窗 Clear。
+        FramePump.Invalidate();
+    }
+
+    /// <summary>强制下一 Present 整窗 Clear（resize / surface 重配 / Motion）。</summary>
+    internal static void ForceFullPaint() {
+        _fullPaint = true;
+        _hasRegion = false;
+    }
+
+    /// <summary>本帧是否可走区域 Present——swapchain 路径恒 false（见 InvalidateRegion）。</summary>
+    internal static bool HasPresentRegion() {
+        return false;
+    }
+
+    internal static double PresentDirtyX() {
+        return _dirtyX;
+    }
+
+    internal static double PresentDirtyY() {
+        return _dirtyY;
+    }
+
+    internal static double PresentDirtyW() {
+        return _dirtyW;
+    }
+
+    internal static double PresentDirtyH() {
+        return _dirtyH;
+    }
+
+    /// <summary>当前是否需要渲染（绘脏或布局脏）。</summary>
     internal static bool NeedsRender() {
-        return _dirty;
+        return _paintDirty || _layoutDirty;
     }
 
-    /// <summary>一次渲染完成：清脏（下次渲染须重新 Invalidate）。</summary>
+    /// <summary>当前是否需要 Relayout（几何脏）。</summary>
+    internal static bool NeedsLayout() {
+        return _layoutDirty;
+    }
+
+    /// <summary>一次渲染完成：清绘脏与布局脏；允许后续 InvalidateRegion 走区域 Present。</summary>
     internal static void MarkRendered() {
-        _dirty = false;
+        _paintDirty = false;
+        _layoutDirty = false;
+        _fullPaint = false;
+        _hasRegion = false;
     }
 
     // ===== Image 动画保活（RFC 029 M2）=====
@@ -110,14 +182,36 @@ internal class FramePump {
         return (int)ms;
     }
 
-    // ===== caret 闪烁相位机（RFC 026 M-caret · 桌面惯例：编辑重置相位、空闲 ~480ms 翻转）=====
+    /// <summary>距 caret 下一翻转的剩余毫秒（有焦点时空闲等待用；下限 16）。</summary>
+    private static int CaretWaitMs() {
+        if (!ImeBridge.HasFocusedInput()) {
+            return 120;
+        }
+        long now = Stopwatch.GetTimestamp();
+        long freq = Stopwatch.Frequency;
+        if (freq <= 0 || _caretPhaseStartTick == 0) {
+            return (int)CaretHalfPeriodMs;
+        }
+        double elapsedMs = (double)(now - _caretPhaseStartTick) * 1000.0 / (double)freq;
+        double remain = CaretHalfPeriodMs - elapsedMs;
+        if (remain < 16.0) {
+            return 16;
+        }
+        if (remain > CaretHalfPeriodMs) {
+            return (int)CaretHalfPeriodMs;
+        }
+        return (int)remain;
+    }
+
+    // ===== caret 闪烁相位机（RFC 026 M-caret · 桌面惯例：编辑重置相位、空闲 ~530ms 翻转）=====
     //
-    // 空闲循环节拍 120ms（WaitEvents 超时），累计 4 拍（≈480ms）翻转相位并标脏；
+    // 墙钟驱动（禁按 WaitEvents 早醒次数计拍——消息唤醒会把「闪太快」放大到不可用）；
     // 键入/退格/caret 移动经 ResetCaretBlink 立即回「亮」相位。无焦点 TextBox 时
-    // 相位恒亮、循环回到 -1 阻塞（零空转）。
+    // 相位恒亮、循环回到 -1 阻塞（零空转）。半周期对齐 Win32 默认 caret ~530ms。
 
     private static bool _caretOn = true;
-    private static int _caretIdleTicks;
+    private static long _caretPhaseStartTick;
+    private const double CaretHalfPeriodMs = 530.0;
 
     /// <summary>caret 当前相位（渲染端 caret 绘制条件之一）。</summary>
     internal static bool CaretBlinkOn() {
@@ -127,20 +221,52 @@ internal class FramePump {
     /// <summary>编辑活动（键入/退格/caret 移动）：相位重置为亮。</summary>
     internal static void ResetCaretBlink() {
         _caretOn = true;
-        _caretIdleTicks = 0;
+        _caretPhaseStartTick = Stopwatch.GetTimestamp();
     }
 
-    /// <summary>空闲节拍推进：有焦点 TextBox 时 120ms 一拍，4 拍翻转。</summary>
+    /// <summary>墙钟推进：有焦点 TextBox 时按半周期翻转；可在 dirty/motion 帧调用。</summary>
     private static void PumpCaretIdle() {
         if (!ImeBridge.HasFocusedInput()) {
             _caretOn = true;
-            _caretIdleTicks = 0;
+            _caretPhaseStartTick = 0;
             return;
         }
-        _caretIdleTicks = _caretIdleTicks + 1;
-        if (_caretIdleTicks >= 4) {
-            _caretIdleTicks = 0;
+        long now = Stopwatch.GetTimestamp();
+        if (_caretPhaseStartTick == 0) {
+            _caretPhaseStartTick = now;
+            return;
+        }
+        long freq = Stopwatch.Frequency;
+        if (freq <= 0) {
+            return;
+        }
+        double elapsedMs = (double)(now - _caretPhaseStartTick) * 1000.0 / (double)freq;
+        if (elapsedMs < CaretHalfPeriodMs) {
+            return;
+        }
+        int steps = (int)(elapsedMs / CaretHalfPeriodMs);
+        if ((steps % 2) != 0) {
             _caretOn = !_caretOn;
+        }
+        _caretPhaseStartTick = now;
+        // caret 翻转：优先脏焦点 TextBox 区域 Present；无焦点几何则升整窗纯绘。
+        TextBox focus = ImeBridge.FocusedInput();
+        if (focus != null) {
+            double pad = 8.0;
+            double w = focus.RenderWidth;
+            double h = focus.RenderHeight;
+            if (w <= 0.0) {
+                w = InputMetrics.MinWidth;
+            }
+            if (h <= 0.0) {
+                h = InputMetrics.MinHeight;
+            }
+            FramePump.InvalidateRegion(
+                focus.LayoutX - pad,
+                focus.LayoutY - pad,
+                w + pad * 2.0,
+                h + pad * 2.0);
+        } else {
             FramePump.Invalidate();
         }
     }
@@ -193,8 +319,9 @@ internal class FramePump {
         if (main == null) {
             return;
         }
+        // 不在此 Invalidate：调用方已在 dirty 路径；再标脏会与「渲染后无节流」叠成
+        // 全速重绘空转（CodeEditor/DataGrid 页表现为卡死）。
         main.RelayoutSynced();
-        FramePump.Invalidate();
     }
 
     /// <summary>
@@ -232,7 +359,7 @@ internal class FramePump {
                 main.Height = (double)dipH;
             }
         }
-        FramePump.Invalidate();
+        FramePump.InvalidateLayout();
     }
 
     /// <summary>渲染一帧：BeginFrame → RenderElementTree → EndFrame。</summary>
@@ -241,10 +368,15 @@ internal class FramePump {
         if (backend == null) {
             return;
         }
+        // Motion 插值可能跨控件——区域 Present 会漏绘，升整窗。
+        if (MotionEngine.Active()) {
+            FramePump.ForceFullPaint();
+        }
         backend.BeginFrame((double)width, (double)height);
         backend.RenderElementTree(rootHandle);
         backend.EndFrame();
     }
+
 
     /// <summary>
     /// Blocking message loop using PumpOnce (compat entry — not终态正道; see Application.RunAsync).
@@ -270,29 +402,34 @@ internal class FramePump {
             FramePump.SyncClientSizeDip(win, ref width, ref height);
             // Image 动画：GIF 帧推进（延迟解码 + 帧上传 + 标脏）；须在 NeedsRender 之前。
             FramePump.TickImages(backend);
-            // A-1②：脏 → Measure/Arrange + 渲染；仅 Motion 插值时跳过布局（几何未变）。
+            // caret 墙钟：dirty/motion 帧也推进，避免焦点环插值期间「空 TextBox 不闪」。
+            FramePump.PumpCaretIdle();
+            // A-1②：布局脏 → Measure/Arrange；绘脏/布局脏 → Present；仅 Motion 时跳过布局。
             bool dirty = FramePump.NeedsRender();
+            bool layout = FramePump.NeedsLayout();
             bool motion = MotionEngine.Active();
             if (dirty || motion) {
-                if (dirty) {
+                if (layout) {
                     FramePump.RelayoutMainWindowAfterMetrics();
                 }
                 FramePump.RenderFrame(backend, rootHandle, width, height);
                 FramePump.MarkRendered();
-                if (motion && !dirty) {
-                    // 纯插值帧：15ms（≈60fps）节拍唤醒，避免全速重绘空转。
-                    WindowHost.WaitEvents(win, 15);
+                // 任何重绘路径都必须节流：dirty 帧若零等待，会与 WM_PAINT/消息早醒
+                // 叠成全速空转（第 8 tab CodeEditor+DataGrid 即卡死）。
+                int paceMs = motion ? 15 : 16;
+                if (ImeBridge.HasFocusedInput() && paceMs < 16) {
+                    paceMs = 16;
                 }
+                WindowHost.WaitEvents(win, paceMs);
             } else {
                 // 空闲：GIF 动画待切换帧 → 按到期剩余毫秒等待（不阻塞睡死）；
-                // 有焦点 TextBox 时 120ms 节拍推进 caret 闪烁；否则阻塞至
-                // 新输入/唤醒消息（跨线程 Post 经 WakeUIThread 唤醒）。
+                // 有焦点 TextBox 时按 caret 半周期剩余等待；否则阻塞至新输入/唤醒。
                 int animWait = FramePump.AnimationWaitMs();
                 if (animWait >= 0) {
                     WindowHost.WaitEvents(win, animWait);
                 } else if (ImeBridge.HasFocusedInput()) {
-                    WindowHost.WaitEvents(win, 120);
-                    FramePump.PumpCaretIdle();
+                    int caretWait = FramePump.CaretWaitMs();
+                    WindowHost.WaitEvents(win, caretWait);
                 } else {
                     WindowHost.WaitEvents(win, -1);
                 }
@@ -332,28 +469,27 @@ internal class FramePump {
             FramePump.SyncClientSizeDip(win, ref width, ref height);
             // Image 动画：GIF 帧推进（延迟解码 + 帧上传 + 标脏）；须在 NeedsRender 之前。
             FramePump.TickImages(backend);
-            // A-1②：脏 → Measure/Arrange + 渲染；仅 Motion 插值时跳过布局（几何未变）。
+            FramePump.PumpCaretIdle();
+            // A-1②：布局脏 → Measure/Arrange；绘脏/布局脏 → Present；仅 Motion 时跳过布局。
             bool dirty = FramePump.NeedsRender();
+            bool layout = FramePump.NeedsLayout();
             bool motion = MotionEngine.Active();
             if (dirty || motion) {
-                if (dirty) {
+                if (layout) {
                     FramePump.RelayoutMainWindowAfterMetrics();
                 }
                 FramePump.RenderFrame(backend, rootHandle, width, height);
                 FramePump.MarkRendered();
             }
-            // 异步骨架（M-AS1）：延迟节流替代忙让步——纯插值帧 15ms（≈60fps）；
-            // GIF 动画待切换帧按其到期剩余毫秒节拍（不睡死）；
-            // 空闲且有焦点 TextBox 时 120ms 节拍推进 caret 闪烁，否则 64ms 兜底轮询；
-            // UiSynchronizationContext / EventLoop waker 合并后置 M-AS2。
+            // 异步骨架（M-AS1）：延迟节流替代忙让步——重绘/插值 ≥15ms；caret 墙钟剩余；
+            // 否则 64ms 兜底；UiSynchronizationContext / EventLoop waker 合并后置 M-AS2。
             int animWait = FramePump.AnimationWaitMs();
-            if (motion) {
-                await Task.Delay(15);
+            if (dirty || motion) {
+                await Task.Delay(motion ? 15 : 16);
             } else if (animWait >= 0) {
                 await Task.Delay(animWait);
             } else if (ImeBridge.HasFocusedInput()) {
-                await Task.Delay(120);
-                FramePump.PumpCaretIdle();
+                await Task.Delay(FramePump.CaretWaitMs());
             } else {
                 await Task.Delay(64);
             }
