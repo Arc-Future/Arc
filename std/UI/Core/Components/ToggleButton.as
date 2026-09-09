@@ -21,6 +21,7 @@
 
 namespace Arc.UI.Components;
 
+using Arc.UI;
 using Arc.UI.Layout;
 
 /// <summary>
@@ -77,6 +78,8 @@ public class ToggleButton : ContentControl {
     public ToggleButton() {
         this.Type = typeof(ToggleButton);
         this.Toggled = new Signal<bool>(false);
+        // 与 Button 同构：内容尺寸 chrome（CheckBox/Radio 经本构造继承）。
+        this.HorizontalAlignment = HorizontalAlignment.Left;
     }
 
     // ===== 指针交互（RFC 037 D10.6 · PointerRouter 分发入口）=====

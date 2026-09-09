@@ -110,6 +110,8 @@ public class Button : ContentControl {
     public Button() {
         this.Type = typeof(Button);
         this.Clicked = new Signal<bool>(false);
+        // Ant 内容尺寸：竖向 StackPanel 槽虽给满宽，Left 使 chrome 按文案+Padding 收缩（禁拉满栏宽）。
+        this.HorizontalAlignment = HorizontalAlignment.Left;
     }
 
     /// <summary>Enter/Space 默认激活（InputElement.Activate）：等价点击。</summary>

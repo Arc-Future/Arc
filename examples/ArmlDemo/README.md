@@ -12,8 +12,8 @@
 
 | 页签 | 内容 | 本轮状态 | 诚实边界 |
 |------|------|----------|----------|
-| 1 Hello | 元素树 / 自定义字体 / Button Click | ✅ 可交互 | — |
-| 2 Controls | Button Style 多绑定 + Toggle/Check/Radio/TextBox/PasswordBox **Size keyed Style** + Border 装饰 + VSM；Progress/Combo/Popup/Scroll/MessageBox | ✅ Style 权威变体 | PasswordBox：禁 Copy/Cut；允许 Paste |
+| 1 Hello | 元素树 / 自定义字体 / Button Click（内容尺寸 chrome） | ✅ 可交互 | — |
+| 2 Controls | Button Style 多绑定（**Left 内容尺寸**）+ Toggle/Check/Radio/TextBox/PasswordBox **Size keyed Style** + Border 装饰 + VSM；Progress/Combo/Popup/Scroll/MessageBox | ✅ Style 权威变体 | PasswordBox：禁 Copy/Cut；允许 Paste |
 | 3 Bind | x:Bind OneWay + Change/Append Message（SyncText→Invalidate） | ✅ 数据驱动重画 | — |
 | 4 List | ListView 选中 + **键盘导航**（↑↓ Home/End/Enter） | ✅ 有界高度 + 多项 | Observable 多实例并发 ✅ |
 | 5 Media | Image + Slider（Value 标签联动） | ✅ 拖拽/态色已接 | — |

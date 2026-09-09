@@ -11,6 +11,8 @@
 >
 > **核对增补（2026-08-31）**：内置组件模板让位门禁全量对齐——`WgpuRender.RenderTree` chrome 分支（Button/CheckBox/TextBox/Slider）`templated` 跳过内置 chrome；`TreeDrawListBuilder` 设计时预览同构门禁（已挂子树跳过文本 chrome）；ComboBox 折叠态 chrome 分支落地（提前 `return` 跳过通用递归）并新增矩阵行。三层编写契约见 [production-surface §6](../../../docs/rfc/037-ui/references/production-surface.md)。
 >
+> **核对增补（2026-09-09 · Margin 内容盒 + Button 内容尺寸 + List 行距）**：① `FrameworkElement.Arrange`：外边距盒原点 +Margin → 内容盒 `LayoutX/Y`，`RenderSize`=无 Margin（生产面 §1 禁 Margin 布局忽略；ArmlDemo 页 `Margin="16,12,…"` 左/上内缩生效，消「内容贴边 / 左缘空洞」类观感）；② Button/ToggleButton 构造期 `HorizontalAlignment=Left`（Ant 内容尺寸 chrome，禁竖向 Stack 拉满栏宽；隐式 Style 仍仅 BasedOn Medium）；`LayoutHelper.ButtonPadding*` 字面量对齐 `ControlMetrics`（15/4）；③ VSP 行 arrange 收 `FrameworkElement`（非仅 TextBlock）；`ResolveItemStride` 用 `EstimateLineHeight`+`MinTextPaddingY` 防行重叠。
+
 > **核对增补（2026-09-09 · Data/List/Input 三回归）**：① CodeEditor `ArrangeOverride` 须 `void`（误返 `LayoutSize` 与基类 ABI 不符 → 第 8 tab AV）；DataGrid `SyncMirrorRows` 写绝对 `LayoutX/Y`；② ItemsControl `ArrangeChild` 项宿主 + VSP `VerticalOffset` + ListView `PushClip`（行叠原点）；③ 模板态 TextBox/PasswordBox/ComboBox：**先 PART 子树再内容层并 `return`**（壳盖 caret/placeholder）；`SyncMirrorText` → `Invalidate` 非布局脏。
 
 > **核对增补（2026-09-09 · Placeholder 禁跟 caret 闪 + 聚焦即消）**：① 空+焦点时 placeholder 曾与 caret 共用 `RoleForeground` Motion 槽 → blink 亮/灭切换目标色致水印闪；占位色改 `ResolveThemeKey` 恒定。② **显示条件**：仅 `Text` 空且 **未聚焦** 时画水印；聚焦即消，只留 caret（有文案时亦消）。

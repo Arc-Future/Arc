@@ -249,7 +249,8 @@ public class ScrollView : Panel {
     }
 
     /// <summary>
-    /// 内容槽宽 ≥ 视口内容区（减条宽），使内部 StackPanel/Button Stretch 拉满；
+    /// 内容槽宽 ≥ 视口内容区（减条宽），使内部 StackPanel 交叉轴可 Stretch；
+    /// Button 隐式 Style 为 Left（内容尺寸），不因本槽被拉满栏宽。
     /// 槽高取 extent，避免把可滚内容压成视口高。
     /// </summary>
     protected override void ArrangeOverride(LayoutSize finalSize) {

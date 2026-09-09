@@ -22,9 +22,9 @@ internal class LayoutHelper {
 
     public const double MinTextPaddingX = 8.0;
     public const double MinTextPaddingY = 4.0;
-    // Align with ControlMetrics.ButtonPaddingX / ButtonPaddingY (literal: Arc const must be literal).
-    public const double ButtonPaddingX = 16.0;
-    public const double ButtonPaddingY = 8.0;
+    // 字面量对齐 ControlMetrics.ButtonPaddingX / ButtonPaddingY（Arc const 须字面量）。
+    public const double ButtonPaddingX = 15.0;
+    public const double ButtonPaddingY = 4.0;
     /// <summary>竖滚动条轨道宽（字面量对齐 <c>ControlMetrics.VScrollWidth</c> / <c>RT_UI_VSCROLL_WIDTH</c>）。</summary>
     public const double VScrollBarWidth = 12.0;
     /// <summary>行高相对字号倍率（编辑器视口 / 多行估算）。</summary>

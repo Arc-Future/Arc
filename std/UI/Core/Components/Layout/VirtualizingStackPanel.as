@@ -155,9 +155,12 @@ public class VirtualizingStackPanel : Panel {
         int count = this.Children.Count;
         int i = 0;
         while (i < count) {
-            Element raw = this.Children[i];
-            TextBlock child = (TextBlock)raw;
+            FrameworkElement child = (FrameworkElement)this.Children[i];
             int idx = (int)child.GetAttachedNumber(ItemIndexKey, -1.0);
+            if (idx < 0) {
+                i++;
+                continue;
+            }
             // 视口坐标：项 stride × 索引 − VerticalOffset（与 ItemViewport 窗口一致）。
             double y = (double)idx * stride - scrollY;
             LayoutHelper.ArrangeChild(this, child, 0.0, y, finalSize.Width, stride);
@@ -201,15 +204,27 @@ public class VirtualizingStackPanel : Panel {
         if (h > 0.0) {
             return h;
         }
+        // 行高与 DrawText/编辑器同源（EstimateLineHeight），再加 MinTextPaddingY，
+        // 避免 stride 小于字形盒导致相邻行视觉重叠。
+        double fontSize = ControlMetrics.FontBodySize;
+        string family = "";
+        string weight = "Normal";
         if (this.ItemDefaults != null) {
-            LayoutSize est = LayoutHelper.EstimateTextSize(
-                "X", this.ItemDefaults.FontSize,
-                LayoutHelper.MinTextPaddingX, LayoutHelper.MinTextPaddingY,
-                this.ItemDefaults.FontFamily, this.ItemDefaults.FontWeight);
-            if (est.Height > 0.0) {
-                return est.Height;
+            if (this.ItemDefaults.FontSize > 0.0) {
+                fontSize = this.ItemDefaults.FontSize;
+            }
+            if (this.ItemDefaults.FontFamily != null) {
+                family = this.ItemDefaults.FontFamily;
+            }
+            if (this.ItemDefaults.FontWeight != null) {
+                weight = this.ItemDefaults.FontWeight;
             }
         }
-        return 20.0;
+        double line = LayoutHelper.EstimateLineHeight(fontSize, family, weight);
+        double stride = line + LayoutHelper.MinTextPaddingY;
+        if (stride < 1.0) {
+            return 20.0;
+        }
+        return stride;
     }
 }

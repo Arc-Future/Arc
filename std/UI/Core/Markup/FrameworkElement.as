@@ -250,7 +250,10 @@ public class FrameworkElement : Element {
     }
 
     /// <summary>
-    /// 排列阶段：给定最终尺寸，设置 RenderSize 并递归排列子元素。
+    /// 排列阶段：父级 <see cref="LayoutHelper.ArrangeChild"/> 已写入外边距盒原点；
+    /// 本方法把 LayoutX/Y 推到内容盒（+Margin.Left/Top），以无边距尺寸调
+    /// <see cref="ArrangeOverride"/>，并将 RenderSize 写成内容盒（WPF 同构；
+    /// 禁止「Margin DP 存在但布局忽略」——见 production-surface §1）。
     /// </summary>
     public virtual void Arrange(LayoutSize finalSize) {
         double sizeW = LayoutHelper.Sanitize(finalSize.Width);
@@ -263,10 +266,15 @@ public class FrameworkElement : Element {
             this.Measure(new LayoutSize(sizeW, sizeH));
         }
 
+        // 外边距盒 → 内容盒：子树 ArrangeChild 以本元素 LayoutX/Y 为父原点。
+        this.LayoutX = LayoutHelper.SanitizePos(this.LayoutX + margin.Left);
+        this.LayoutY = LayoutHelper.SanitizePos(this.LayoutY + margin.Top);
+
         this.ArrangeOverride(innerFinal);
-        this.RenderSize = new LayoutSize(sizeW, sizeH);
-        this.RenderWidth = sizeW;
-        this.RenderHeight = sizeH;
+        // 命中/镜像/绘制消费内容盒（不含 Margin）。
+        this.RenderSize = new LayoutSize(innerFinal.Width, innerFinal.Height);
+        this.RenderWidth = innerFinal.Width;
+        this.RenderHeight = innerFinal.Height;
     }
 
     /// <summary>
