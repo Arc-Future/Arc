@@ -832,6 +832,62 @@ pub(super) fn maybe_unbox_iface_to_object(
     }
 }
 
+/// iface → `object`/`object?` **赋值/局部初始化**拆盒（与实参路径同族）。
+///
+/// `object? provider = _provider`（`_provider: IServiceProvider`）若缺拆盒，
+/// fat 盒指针进 object 槽；后续 `(IServiceProvider)provider` 经 `rt_obj_to_iface`
+/// 把盒当对象读 vtable → InvalidCastException / Unix SIGSEGV
+/// （`Mediator::get_Provider` / UnitTest 取证）。实参路径已有
+/// [`maybe_unbox_iface_to_object`]；本函数覆盖 Assign / let 初始化。
+///
+/// 仅处理 `MirRvalue::Use`（字段读 / 局部 / 已物化操作数）；复杂 rvalue
+/// （MethodCall 等）由调用方先物化为 Use 再套用，或保持原样（调用方补 temp）。
+pub(super) fn maybe_unbox_iface_rvalue_to_object_place(
+    value_expr: &Expr,
+    rv: MirRvalue,
+    place_ty: &TypeId,
+    ctx: &LowerCtx,
+) -> MirRvalue {
+    if !place_ty_is_object_slot(place_ty) {
+        return rv;
+    }
+    let MirRvalue::Use(op) = rv else {
+        return rv;
+    };
+    if matches!(op, MirOperand::UnboxIface { .. } | MirOperand::Iface { .. }) {
+        return MirRvalue::Use(op);
+    }
+    let ty = infer_type_from_expr(value_expr, ctx);
+    let ty = match ty {
+        TypeId::Nullable { inner } => *inner,
+        other => other,
+    };
+    let TypeId::Named(iface) = ty else {
+        return MirRvalue::Use(op);
+    };
+    if !ctx.registry.is_interface(&iface) {
+        return MirRvalue::Use(op);
+    }
+    MirRvalue::Use(MirOperand::UnboxIface {
+        object: Box::new(op),
+        class: iface.to_string(),
+    })
+}
+
+fn place_ty_is_object_slot(ty: &TypeId) -> bool {
+    // `object` 在 AST 为 `TypeId::Object`（非 Named("object")）；`object?` 为
+    // `Nullable { Object }`。仅认 Named 会漏拆盒（Mediator.get_Provider 实测）。
+    let is_object = |t: &TypeId| {
+        matches!(t, TypeId::Object) || matches!(t, TypeId::Named(n) if n.as_str() == "object")
+    };
+    match ty {
+        t if is_object(t) => true,
+        TypeId::Nullable { inner } if is_object(inner.as_ref()) => true,
+        TypeId::Named(n) if n.as_str() == "object?" => true,
+        _ => false,
+    }
+}
+
 /// 泛型方法实例化（`g.M<int>(…)`）调用目标的符号基底。
 ///
 /// 与静态路径 `user_type_static_method_sig` 一致：基底必须取**模板** link 名
