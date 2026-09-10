@@ -41,6 +41,26 @@ function Get-ArcTempRoot {
     return '/tmp'
 }
 $TempRoot = Get-ArcTempRoot
+$Work = $null
+$BuildScratch = $null
+
+# Prefer real curl/tar binaries — never the PowerShell `curl` alias (IWR).
+function Get-ArcCurl {
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) { return 'curl.exe' }
+    $app = Get-Command curl -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($app) { return $app.Source }
+    if (Test-Path '/usr/bin/curl') { return '/usr/bin/curl' }
+    throw 'curl not found on PATH'
+}
+function Get-ArcTar {
+    if (Get-Command tar.exe -ErrorAction SilentlyContinue) { return 'tar.exe' }
+    $app = Get-Command tar -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($app) { return $app.Source }
+    if (Test-Path '/usr/bin/tar') { return '/usr/bin/tar' }
+    throw 'tar not found on PATH'
+}
 
 $IsWin = $env:OS -eq "Windows_NT"
 $IsMac = -not $IsWin -and ((uname) -match "Darwin")
@@ -85,7 +105,8 @@ if ($SourceDir) {
 
 try {
     if (!$SourceDir) {
-        curl.exe -L --retry 3 --connect-timeout 30 --retry-delay 2 -o $Tar $DownloadUrl
+        $Curl = Get-ArcCurl
+        & $Curl -L --retry 3 --connect-timeout 30 --retry-delay 2 -o $Tar $DownloadUrl
         if ($LASTEXITCODE -ne 0) {
             throw "curl download failed (exit $LASTEXITCODE); check network or proxy"
         }
@@ -97,7 +118,8 @@ try {
 
         Write-Host "Extracting to temp dir..."
         # tf-psa-crypto mldsa-native 示例树含符号链接，tar.exe 无法直解；排除。
-        tar.exe -xf $Tar -C $Work --exclude "*mldsa-native*"
+        $TarCmd = Get-ArcTar
+        & $TarCmd -xf $Tar -C $Work --exclude "*mldsa-native*"
         if ($LASTEXITCODE -ne 0) {
             throw "tar extraction failed (exit $LASTEXITCODE)"
         }
@@ -295,7 +317,9 @@ try {
     Write-Host ""
     Write-Host "Next: link -lcrypto_native (Unix) or crypto_native.lib (Windows) for rt_crypto_*."
 } finally {
-    Remove-Item -Recurse -Force $BuildScratch -ErrorAction SilentlyContinue
+    if ($BuildScratch) {
+        Remove-Item -Recurse -Force $BuildScratch -ErrorAction SilentlyContinue
+    }
     if ($Work) {
         Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
     }

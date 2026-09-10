@@ -397,16 +397,32 @@ mod tests {
             "Release link missing -flto=thin: {:?}",
             args
         );
-        // ThinLTO requires lld linker; verify -fuse-ld is set appropriately
+        // Host Release：Windows→lld-link；Linux→lld；macOS→不注入（Apple clang
+        // 无 lld，走系统 ld64）——与 `clang_link` Host 分支一致。
         #[cfg(target_os = "windows")]
-        let expected_fuse_ld = "lld-link";
-        #[cfg(not(target_os = "windows"))]
-        let expected_fuse_ld = "lld";
-        assert!(
-            args.contains(&format!("-fuse-ld={expected_fuse_ld}")),
-            "Release link missing -fuse-ld={expected_fuse_ld}: {:?}",
-            args
-        );
+        {
+            assert!(
+                args.contains(&"-fuse-ld=lld-link".to_string()),
+                "Release link missing -fuse-ld=lld-link: {:?}",
+                args
+            );
+        }
+        #[cfg(target_os = "linux")]
+        {
+            assert!(
+                args.contains(&"-fuse-ld=lld".to_string()),
+                "Release link missing -fuse-ld=lld: {:?}",
+                args
+            );
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert!(
+                !args.iter().any(|a| a.starts_with("-fuse-ld=")),
+                "macOS host Release must not force -fuse-ld: {:?}",
+                args
+            );
+        }
     }
 
     #[test]
