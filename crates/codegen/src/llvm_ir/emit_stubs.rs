@@ -1930,11 +1930,13 @@ impl<'a> FnEmitter<'a> {
                  }}\n"
             ),
             "AddRange" => format!(
+                // RFC 051 D2：`items` 为接口堆 fat 盒（obj@+16），非旧 16B `{obj,it}`。
                 "define void @{mangled}(ptr %self, ptr %items) {{\n\
                  entry:\n\
                  \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                  \x20 %handle = load ptr, ptr %hp\n\
-                 \x20 %obj = load ptr, ptr %items\n\
+                 \x20 %obj_slot = getelementptr inbounds i8, ptr %items, i32 16\n\
+                 \x20 %obj = load ptr, ptr %obj_slot\n\
                  \x20 %ihp = getelementptr inbounds i8, ptr %obj, i32 16\n\
                  \x20 %ihandle = load ptr, ptr %ihp\n\
                  \x20 call void @rt_list_add_range_list(ptr %handle, ptr %ihandle)\n\
@@ -1986,15 +1988,16 @@ impl<'a> FnEmitter<'a> {
                 )
             }
             "InsertRange" => format!(
-                // 源 `items` 为 IEnumerable<T> 胖指针（{ obj, vtable }）。解包 obj 后
-                // 读 _handle(offset 16) 得源 List handle。rt_list_buffer_and_size 在任一
-                // out 参数为 NULL 时提前返回（不写其它 out），故必须一次性传入两个有效
-                // out 参数，否则 %buf/%n 为未初始化垃圾，rt_list_insert_range 会提前返回。
+                // 源 `items` 为 IEnumerable<T> RFC 051 D2 堆 fat 盒（obj@+16）。
+                // 旧 `load ptr, ptr %items` 读到盒 rc（常为 1）→ [1+0x10]=0x11 AV
+                // （UnitTest web_listening 后 InsertRange 取证）。解包 obj 后读
+                // _handle(+16)。rt_list_buffer_and_size 须两 out 同时有效。
                 "define void @{mangled}(ptr %self, i32 %index, ptr %items) {{\n\
                  entry:\n\
                  \x20 %hp = getelementptr inbounds i8, ptr %self, i32 16\n\
                  \x20 %handle = load ptr, ptr %hp\n\
-                 \x20 %obj = load ptr, ptr %items\n\
+                 \x20 %obj_slot = getelementptr inbounds i8, ptr %items, i32 16\n\
+                 \x20 %obj = load ptr, ptr %obj_slot\n\
                  \x20 %ihp = getelementptr inbounds i8, ptr %obj, i32 16\n\
                  \x20 %ihandle = load ptr, ptr %ihp\n\
                  \x20 %bufp = alloca ptr\n\
