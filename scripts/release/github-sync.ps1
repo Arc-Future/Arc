@@ -16,12 +16,48 @@ param(
     [string]$SyncDir = "",
     [string]$Message = "",
     [string]$AuthorName = "LUSIDA (Start)",
-    [string]$AuthorEmail = "209404271+lusida2026@users.noreply.github.com"
+    [string]$AuthorEmail = "209404271+lusida2026@users.noreply.github.com",
+    [string]$Token = ""
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 if (-not $SyncDir) { $SyncDir = Join-Path $repoRoot "target\github-sync\arc" }
+
+# Non-interactive GitHub auth: never pop GCM account picker / credential UI.
+$env:GCM_INTERACTIVE = 'never'
+$env:GIT_TERMINAL_PROMPT = '0'
+
+function Resolve-GitHubToken {
+    param([string]$Explicit)
+    if ($Explicit) { return $Explicit }
+    if ($env:GH_TOKEN) { return $env:GH_TOKEN }
+    if ($env:GITHUB_TOKEN) { return $env:GITHUB_TOKEN }
+    $session = Join-Path $env:TEMP 'arc-github-pat.session'
+    if (Test-Path $session) {
+        $t = [System.IO.File]::ReadAllText($session).Trim()
+        if ($t) { return $t }
+    }
+    $credIn = Join-Path $env:TEMP 'arc-github-sync-cred-fill.txt'
+    [System.IO.File]::WriteAllText($credIn, "protocol=https`nhost=github.com`n`n")
+    $fill = cmd /c "git credential fill < `"$credIn`" 2>nul"
+    Remove-Item $credIn -Force -ErrorAction SilentlyContinue
+    foreach ($line in ($fill -split "`r?`n")) {
+        if ($line -match '^password=(.+)$') { return $Matches[1] }
+    }
+    return ''
+}
+
+function Invoke-GitHubPush {
+    param([string]$Dir, [string]$Tok)
+    if (-not $Tok) {
+        throw "no GitHub token: pass -Token, set GH_TOKEN/GITHUB_TOKEN, or run 'gh auth login --with-token' (non-interactive)"
+    }
+    # Bypass credential helpers / account UI: Authorization header only.
+    $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$Tok"))
+    cmd /c "git -C `"$Dir`" -c credential.helper= -c http.extraHeader=`"Authorization: Basic $basic`" push origin main"
+    if ($LASTEXITCODE -ne 0) { throw "git push failed (exit $LASTEXITCODE)" }
+}
 
 # --- shared exclusion list (same file as github-export.ps1) ---
 $exclusionFile = Join-Path $PSScriptRoot "export-exclusions.txt"
@@ -38,13 +74,25 @@ function Test-Excluded([string]$f) {
     return $false
 }
 
+$gitHubToken = Resolve-GitHubToken -Explicit $Token
+
 # --- 1. clone (first run) or refresh the public clone ---
 if (-not (Test-Path (Join-Path $SyncDir ".git"))) {
     if (Test-Path $SyncDir) { Remove-Item $SyncDir -Recurse -Force }
-    git clone "https://github.com/$Repo.git" $SyncDir
+    if ($gitHubToken) {
+        $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$gitHubToken"))
+        cmd /c "git -c credential.helper= -c http.extraHeader=`"Authorization: Basic $basic`" clone https://github.com/$Repo.git `"$SyncDir`""
+    } else {
+        git clone "https://github.com/$Repo.git" $SyncDir
+    }
     if ($LASTEXITCODE -ne 0) { throw "clone https://github.com/$Repo.git failed" }
 }
-cmd /c "git -C `"$SyncDir`" fetch origin >nul 2>&1"
+if ($gitHubToken) {
+    $basic = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$gitHubToken"))
+    cmd /c "git -C `"$SyncDir`" -c credential.helper= -c http.extraHeader=`"Authorization: Basic $basic`" fetch origin >nul 2>&1"
+} else {
+    cmd /c "git -C `"$SyncDir`" fetch origin >nul 2>&1"
+}
 if ($LASTEXITCODE -ne 0) { throw "git fetch origin failed in $SyncDir" }
 cmd /c "git -C `"$SyncDir`" reset --hard origin/main >nul 2>&1"
 cmd /c "git -C `"$SyncDir`" clean -fd >nul 2>&1"
@@ -102,9 +150,8 @@ if (-not $dirty) {
 if (-not $Message) { $Message = "sync: internal snapshot $(Get-Date -Format 'yyyy-MM-dd HH:mm')" }
 git -C $SyncDir commit -q -m $Message
 if ($LASTEXITCODE -ne 0) { throw "git commit failed in $SyncDir" }
-# git writes progress to stderr; under ErrorAction=Stop that becomes a terminating
-# ErrorRecord even on success — drive push via cmd so only $LASTEXITCODE matters.
-cmd /c "git -C `"$SyncDir`" push origin main"
-if ($LASTEXITCODE -ne 0) { throw "git push failed (exit $LASTEXITCODE)" }
+# Push via token header only — never GCM account-picker UI.
+# Progress on stderr must not become a terminating ErrorRecord (use cmd).
+Invoke-GitHubPush -Dir $SyncDir -Tok $gitHubToken
 $hash = git -C $SyncDir rev-parse --short HEAD
 Write-Host "==> synced to github.com/$Repo (main @ $hash)"
