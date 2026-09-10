@@ -425,6 +425,30 @@ int32_t rt_semaphore_wait_timeout(void* sem, uint64_t ms) {
 #ifdef _WIN32
     DWORD r = WaitForSingleObject((HANDLE)obj->handle, (DWORD)ms);
     return r == WAIT_OBJECT_0 ? 1 : 0;
+#elif defined(__APPLE__)
+    /* Darwin 无 sem_timedwait（unnamed sem 亦已 deprecated）；trywait + 单调时钟轮询。 */
+    if (ms == 0) {
+        return sem_trywait((sem_t*)obj->handle) == 0 ? 1 : 0;
+    }
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    uint64_t deadline_ns = (uint64_t)start.tv_sec * 1000000000ull
+                         + (uint64_t)start.tv_nsec
+                         + ms * 1000000ull;
+    for (;;) {
+        if (sem_trywait((sem_t*)obj->handle) == 0) {
+            return 1;
+        }
+        if (errno != EAGAIN && errno != EINTR) {
+            return 0;
+        }
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        uint64_t now_ns = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
+        if (now_ns >= deadline_ns) {
+            return 0;
+        }
+        usleep(1000); /* 1ms 轮询粒度 */
+    }
 #else
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
