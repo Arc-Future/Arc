@@ -86,8 +86,8 @@ fn frame_pump_renders_during_transition() {
 
 #[test]
 fn render_tree_resolves_state_colors_through_motion() {
-    let render = read_file("std/UI/Core/Rendering/Wgpu/WgpuRender.RenderTree.as");
-    let chrome = read_file("std/UI/Core/Rendering/Wgpu/WgpuRender.TemplateChrome.as");
+    let render = read_file("std/UI/Core/Rendering/wgpu/WgpuRender.RenderTree.as");
+    let chrome = read_file("std/UI/Core/Rendering/wgpu/WgpuRender.TemplateChrome.as");
     // 状态色经 MotionEngine 解析后上屏（背景/前景/边框/焦点环/强调）
     let expected = [
         "MotionEngine.RoleBackground",

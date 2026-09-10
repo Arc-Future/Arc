@@ -17,7 +17,7 @@
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
 
-#include "rt_abi.h"
+#include "../rt_abi.h"
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
