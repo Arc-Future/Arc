@@ -16,7 +16,7 @@
 #        powershell -File .\scripts\fetch-boringssl-native.ps1 -Force -SourceDir <已解压源码树> (离线复用)
 #
 # Idempotent: skips when the platform shared library already present unless -Force.
-# Hygiene: download/build entirely under $env:TEMP; only final artifacts go to the
+# Hygiene: download/build entirely under temp (GetTempPath/TMPDIR/tmp); only final artifacts go to the
 #          vendor dir. Never writes scratch files into the source tree.
 #
 # Requires: clang (same soft-skip convention as e2e tests).
@@ -29,6 +29,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+
+# Unix pwsh often has no $env:TEMP (Windows-only); prefer GetTempPath / TMPDIR /tmp.
+function Get-ArcTempRoot {
+    $t = [System.IO.Path]::GetTempPath()
+    if (![string]::IsNullOrWhiteSpace($t)) { return $t.TrimEnd('\', '/') }
+    foreach ($k in @('TEMP', 'TMP', 'TMPDIR')) {
+        $v = [Environment]::GetEnvironmentVariable($k)
+        if (![string]::IsNullOrWhiteSpace($v)) { return $v.TrimEnd('\', '/') }
+    }
+    return '/tmp'
+}
+$TempRoot = Get-ArcTempRoot
 
 $IsWin = $env:OS -eq "Windows_NT"
 $IsMac = -not $IsWin -and ((uname) -match "Darwin")
@@ -57,7 +69,7 @@ if (!$Force -and (Test-Path $DllTarget)) {
 Write-Host "Fetching crypto base $Version (mbedTLS LTS, Apache-2.0) for $Platform..."
 Write-Host "  URL: $DownloadUrl"
 
-# Hygiene: all download/build under $env:TEMP, never in the source tree.
+# Hygiene: all download/build under temp root, never in the source tree.
 # -SourceDir 复用已解压源码树（跳过下载/校验/解压），用于离线重建。
 if ($SourceDir) {
     $SourceDir = (Resolve-Path $SourceDir).Path
@@ -66,7 +78,7 @@ if ($SourceDir) {
         throw "-SourceDir 不是有效的 mbedtls 源码树: $Base (缺少 library/)"
     }
 } else {
-    $Work = Join-Path $env:TEMP "crypto-vendor-$([guid]::NewGuid().ToString('N'))"
+    $Work = Join-Path $TempRoot "crypto-vendor-$([guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $Work -Force | Out-Null
     $Tar = Join-Path $Work $AssetName
 }
@@ -130,7 +142,7 @@ try {
     }
     # 编译/链接 scratch 目录（-SourceDir 模式下 $Work 未定义，独立建 scratch）。
     if ($SourceDir) {
-        $BuildScratch = Join-Path $env:TEMP "crypto-vendor-build-$([guid]::NewGuid().ToString('N'))"
+        $BuildScratch = Join-Path $TempRoot "crypto-vendor-build-$([guid]::NewGuid().ToString('N'))"
         New-Item -ItemType Directory -Path $BuildScratch -Force | Out-Null
     } else {
         $BuildScratch = $Work

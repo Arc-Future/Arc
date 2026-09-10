@@ -776,18 +776,23 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     // RFC 009 M3: env destructor callback
     out.push_str("declare void  @rt_task_set_dtor_fn(ptr, ptr)\n");
 
-    // RFC 009 I1（plan.md 阶段 3）：LLVM 协程 intrinsic 声明——签名以本机
-    // clang 22 前端产出（C++ 协程 .ll 探针 ref_raw.ll）为准，非 LLVM 经典
-    // 文档：coro.end 三参数 void、coro.save 收 ptr、coro.suspend switch 语义
-    // 0=resume / 1=destroy / default=suspend。CoroSplit 由函数属性
-    // `presplitcoroutine` 驱动（默认管线含 -O0 均跑）。
+    // RFC 009 I1（plan.md 阶段 3）：LLVM 协程 intrinsic 声明。
+    //
+    // `llvm.coro.end` 返回类型随工具链分叉：
+    // - Apple clang ≤21（Xcode 26 CI）：仍为经典 `i1`
+    // - clang 22+ / 近期上游：改为 `void`（PR #153404）
+    // Darwin 宿主/目标走 i1；其余走 void（与 Ubuntu CI / 本机 clang 22 探针一致）。
     out.push_str("declare token @llvm.coro.id(i32, ptr, ptr, ptr)\n");
     out.push_str("declare i1 @llvm.coro.alloc(token)\n");
     out.push_str("declare i64 @llvm.coro.size.i64()\n");
     out.push_str("declare ptr @llvm.coro.begin(token, ptr)\n");
     out.push_str("declare token @llvm.coro.save(ptr)\n");
     out.push_str("declare i8 @llvm.coro.suspend(token, i1)\n");
-    out.push_str("declare void @llvm.coro.end(ptr, i1, token)\n");
+    if cfg!(target_os = "macos") {
+        out.push_str("declare i1 @llvm.coro.end(ptr, i1, token)\n");
+    } else {
+        out.push_str("declare void @llvm.coro.end(ptr, i1, token)\n");
+    }
     out.push_str("declare ptr @llvm.coro.free(token, ptr)\n");
     out.push_str("declare void @llvm.coro.resume(ptr)\n");
     out.push_str("declare void @llvm.coro.destroy(ptr)\n");

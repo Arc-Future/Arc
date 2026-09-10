@@ -455,7 +455,15 @@ impl<'a> FnEmitter<'a> {
         // yield 返回：suspend 的 default 分支汇聚于此（ramp 首挂返回 /
         // resume 调用栈内返回，返回值对后者无意义但 IR 一致）。
         self.emit_label("coro_ret");
-        self.emit("call void @llvm.coro.end(ptr null, i1 false, token none)");
+        // Apple clang ≤21：coro.end 仍返回 i1；clang 22+：void（见 runtime_decls）。
+        if cfg!(target_os = "macos") {
+            let end = self.fresh_temp();
+            self.emit(&format!(
+                "{end} = call i1 @llvm.coro.end(ptr null, i1 false, token none)"
+            ));
+        } else {
+            self.emit("call void @llvm.coro.end(ptr null, i1 false, token none)");
+        }
         let ret_task = self.fresh_temp();
         self.emit(&format!("{ret_task} = load ptr, ptr %__coro_task"));
         self.emit(&format!("ret ptr {ret_task}"));

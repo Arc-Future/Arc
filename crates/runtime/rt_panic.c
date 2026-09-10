@@ -277,7 +277,13 @@ static LONG WINAPI arc_dbg_veh(PEXCEPTION_POINTERS e) {
 static void* arc_dbg_veh_handle = NULL;
 
 __attribute__((constructor)) static void arc_dbg_install_veh(void) {
+    /* 默认关闭：常驻 first-chance VEH 在热卸载/双副本/异常测试路径上可致
+     * 悬垂回调 → 分发器内 silent 0xC0000005（见下方 destructor 注记）。
+     * 取证时显式 `ARC_DIAG=1` 或 `ARC_CRASH_PROBE=1`；`ARC_NO_DIAG_VEH=1` 仍可强关。 */
     if (getenv("ARC_NO_DIAG_VEH") && getenv("ARC_NO_DIAG_VEH")[0] == '1') {
+        return;
+    }
+    if (getenv("ARC_DIAG") == NULL && getenv("ARC_CRASH_PROBE") == NULL) {
         return;
     }
     arc_dbg_veh_handle = AddVectoredExceptionHandler(1, arc_dbg_veh);
