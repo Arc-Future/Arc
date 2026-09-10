@@ -223,7 +223,9 @@ void rt_cts_destroy(void* cts) {
         free(node);  /* destroy 时直接 free，不归还 free-list（避免跨线程） */
         node = next;
     }
-    free(c);
+    /* RFC 050：CTS 经 RT_OPAQUE_NEW 分配（头在业务指针前 16B）；
+     * plain free(c) 会释放业务区中部 → 堆损坏（UnitTest CTS_Dispose 0xC0000374）。 */
+    rt_obj_free(c);
 }
 
 /* ThrowIfCancellationRequested 的完整封装：若已取消则 rt_panic。
