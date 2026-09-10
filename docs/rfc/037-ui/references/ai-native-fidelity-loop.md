@@ -95,6 +95,7 @@
 | Controls `*.arml` 无裸 hex/Thickness（既有） | ✅ | `controls_arml_no_bare_thickness_or_hex` |
 | 契约测试：拒绝裸值 / 接受 StaticResource | ✅ | `crates/arc-ui/tests/fidelity_token_gate.rs` |
 | 组件 Golden 最小硬门槛（Button/TextBlock 布局结构） | ✅ | 见 §8 |
+| 组件 Golden 矩阵扩一格（CheckBox 布局结构 · IsChecked） | ✅ | 见 §8 |
 | 控件×主题态 Golden 全集 / 审视回路 / 三层验收像素闸 | ☐ | 后置；本切片不宣称 |
 | G1 双宿主像素一致 / G2 属性补丁 / G3 VideoSurface | ☐ | 后置；本切片不宣称 |
 
@@ -102,15 +103,16 @@
 
 **本切片边界（§1 token）**：未强制 FontSize/Spacing/CornerRadius 字面量迁 token；未迁 ArmlDemo 元素 `Margin` 字面量（typeck 已拒，演示面另排）；未宣称审视回路。
 
-## 8. 验收 checklist（组件 Golden 最小硬门槛）
+## 8. 验收 checklist（组件 Golden 布局结构硬门槛）
 
-> **宣称纪律**：下列仅关「一条固定 Button/TextBlock fixture 的布局结构 Golden 可 CI」；勾选后仍 **不** 宣称 G1/G2/G3、控件×主题态 Golden 全集、审视回路闭环、像素闸或「保真闭环全部完成」。
+> **宣称纪律**：下列仅关「固定 fixture 的布局结构 Golden 可 CI」（当前：Button/TextBlock + CheckBox·IsChecked）；勾选后仍 **不** 宣称 G1/G2/G3、控件×主题态 Golden 全集、审视回路闭环、像素闸或「保真闭环全部完成」。
 
 | 项 | 状态 | 证据 |
 |----|------|------|
 | 固定 fixture：StackPanel + TextBlock(`Title`) + Button(`OkBtn`)，显式宽高 | ✅ | `l2_ui_component_golden_batch` 内嵌 ARML |
+| 矩阵扩一格：StackPanel + CheckBox(`Feature`, `IsChecked=true`)，显式宽高 | ✅ | 同批 `checkbox_layout_v1` |
 | GetLayoutSnapshot → 结构骨架（Type/Name/整数几何；排除 Margin/TextLines/字体） | ✅ | `BuildCanonical` + `ARC_COMPONENT_GOLDEN:` |
-| 与仓库 golden 文件比对（可 UPDATE 再生） | ✅ | `crates/arc-tests/goldens/ui/button_textblock_layout.golden.json` |
+| 与仓库 golden 文件比对（可 UPDATE 再生） | ✅ | `button_textblock_layout.golden.json` + `checkbox_layout.golden.json` |
 | headless / full-rt 可绿 | ✅ | `cargo test -p arc-tests --features full-rt --test l2_ui_component_golden_batch` |
 
 验证：`cargo test -p arc-tests --features full-rt --test l2_ui_component_golden_batch`；再生：`UPDATE_UI_COMPONENT_GOLDEN=1` 同命令。
