@@ -129,7 +129,27 @@ try {
     }
 
     Write-Host "Compiling with clang (mbedtls library + tf-psa-crypto + ABI shim)..."
+    # 编译/链接 scratch 目录（-SourceDir 模式下 $Work 未定义，独立建 scratch）。
+    if ($SourceDir) {
+        $BuildScratch = Join-Path $TempRoot "crypto-vendor-build-$([guid]::NewGuid().ToString('N'))"
+        New-Item -ItemType Directory -Path $BuildScratch -Force | Out-Null
+    } else {
+        $BuildScratch = $Work
+    }
+    # mbedtls 4.x `build_info.h` includes generated `mbedtls_config_check_user.h`
+    # (cmake normally emits these into the build tree). Provide empty stubs so
+    # clang-direct builds can proceed without a full cmake configure.
+    $GenInc = Join-Path $BuildScratch "gen-include"
+    New-Item -ItemType Directory -Path $GenInc -Force | Out-Null
+    @(
+        'mbedtls_config_check_user.h',
+        'tf_psa_crypto_config_check_user.h',
+        'psa_crypto_config_check_user.h'
+    ) | ForEach-Object {
+        Set-Content -Path (Join-Path $GenInc $_) -Value "#pragma once`n" -Encoding ascii
+    }
     $Include = @(
+        "-I$GenInc",
         "-I$Base/include",
         "-I$Base/tf-psa-crypto/include",
         "-I$Base/tf-psa-crypto/core",
@@ -161,13 +181,6 @@ try {
     )
     if ($IsWin) {
         $Cflags = @("-D_CRT_SECURE_NO_WARNINGS") + $Cflags
-    }
-    # 编译/链接 scratch 目录（-SourceDir 模式下 $Work 未定义，独立建 scratch）。
-    if ($SourceDir) {
-        $BuildScratch = Join-Path $TempRoot "crypto-vendor-build-$([guid]::NewGuid().ToString('N'))"
-        New-Item -ItemType Directory -Path $BuildScratch -Force | Out-Null
-    } else {
-        $BuildScratch = $Work
     }
     $Obj = Join-Path $BuildScratch "obj"
     New-Item -ItemType Directory -Path $Obj -Force | Out-Null

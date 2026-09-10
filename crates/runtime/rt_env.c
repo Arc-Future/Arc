@@ -98,19 +98,27 @@ static LONG WINAPI rt_env_crash_probe_veh(EXCEPTION_POINTERS* ep) {
             (unsigned long long)target,
             (unsigned long long)c->Rcx, (unsigned long long)c->Rdx,
             (unsigned long long)c->R8, (unsigned long long)c->Rsp);
-    /* 栈上返回地址候选：扫描 [rsp, rsp+0x200) 落在本模块映像内的 QWORD，
-     * 打印其模块偏移——harness 侧用 PDB publics 符号化重建调用链。 */
-    if (base != 0) {
-        uintptr_t lo = base;
-        uintptr_t hi = base + 0x4000000; /* 64MB 映像上界（粗略） */
-        uintptr_t* sp = (uintptr_t*)c->Rsp;
-        int shown = 0;
-        for (int i = 0; i < 128 && shown < 8; i++) {
-            uintptr_t v = sp[i];
-            if (v > lo + 0x1000 && v < hi) {
-                fprintf(stderr, "[crash] ret%d @rsp+%d = %p off=+0x%llX\n",
-                        shown, i * 8, (void*)v, (unsigned long long)(v - base));
-                shown++;
+    /* RIP 落在非映像（如 null fn ptr → rip=1）时旧逻辑跳过栈扫描。
+     * 改为 RtlCaptureStackBackTrace + 逐帧模块 RVA，保证 XEXEC@0x1 仍有调用链。 */
+    {
+        void* frames[16];
+        USHORT n = CaptureStackBackTrace(0, 16, frames, NULL);
+        for (USHORT i = 0; i < n && i < 12; i++) {
+            HMODULE fm = NULL;
+            char fpath[MAX_PATH] = "?";
+            uintptr_t fbase = 0;
+            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                   (LPCWSTR)frames[i], &fm) &&
+                fm) {
+                fbase = (uintptr_t)fm;
+                GetModuleFileNameA(fm, fpath, (DWORD)sizeof(fpath));
+                const char* base_name = strrchr(fpath, '\\');
+                base_name = base_name ? base_name + 1 : fpath;
+                fprintf(stderr, "[crash] #%u %s+0x%llX\n", (unsigned)i, base_name,
+                        (unsigned long long)((uintptr_t)frames[i] - fbase));
+            } else {
+                fprintf(stderr, "[crash] #%u %p\n", (unsigned)i, frames[i]);
             }
         }
     }
