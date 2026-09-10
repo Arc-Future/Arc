@@ -143,6 +143,10 @@ pub(super) fn platform_link_flags(target: Option<&str>) -> Vec<&'static str> {
             "-lstdc++",
             // RFC 048 M2：POSIX wait_connect_async 线程卸载
             "-lpthread",
+            // RFC 021：Math.* → LLVM intrinsic / libm；未链 -lm 时 floor/rint 等 undefined
+            "-lm",
+            // rt_proc openpty（pty.h）
+            "-lutil",
         ],
         TargetOs::Macos => vec![
             "-framework",
@@ -153,6 +157,9 @@ pub(super) fn platform_link_flags(target: Option<&str>) -> Vec<&'static str> {
             "CoreGraphics",
             // RFC 010 / 里程碑⑨：`__gxx_personality_v0`（libc++）
             "-lc++",
+            // RFC 021 Math.* / rt_proc openpty（util.h）
+            "-lm",
+            "-lutil",
         ],
         TargetOs::Ohos => vec![],
         TargetOs::Host => {
@@ -182,6 +189,8 @@ pub(super) fn platform_link_flags(target: Option<&str>) -> Vec<&'static str> {
                     "-ldl",      // RFC 017: rt_library_load/sym/unload
                     "-lstdc++",  // RFC 010 Itanium personality
                     "-lpthread", // RFC 048 M2 pipe async
+                    "-lm",       // RFC 021 Math.* / libm
+                    "-lutil",    // rt_proc openpty
                 ]
             } else if cfg!(target_os = "macos") {
                 vec![
@@ -191,7 +200,9 @@ pub(super) fn platform_link_flags(target: Option<&str>) -> Vec<&'static str> {
                     "Foundation",
                     "-framework",
                     "CoreGraphics",
-                    "-lc++", // RFC 010 Itanium personality
+                    "-lc++",  // RFC 010 Itanium personality
+                    "-lm",    // RFC 021 Math.*
+                    "-lutil", // rt_proc openpty
                 ]
             } else {
                 vec![]

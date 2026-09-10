@@ -664,7 +664,11 @@ int32_t rt_pty_send_signal(void* handle, int32_t signal) {
 #include <sys/time.h>
 #include <signal.h>
 #include <errno.h>
+#if defined(__APPLE__)
+#include <util.h>   /* openpty（macOS；Linux 用 pty.h） */
+#else
 #include <pty.h>    /* openpty */
+#endif
 #include <sys/ioctl.h>
 
 void* rt_proc_spawn(const char* exe_path, const char* args, const char* working_dir,
