@@ -215,8 +215,8 @@ Win32 WM_MOUSE* / KEY
 
 1. ~~脏区：控件级 invalidate 矩形（替代整客户区）~~ → **最小面 ✅**（`InvalidateRegion` + LoadOp_Load + 根 scissor；caret）；控件级精确失效树后置
 2. ~~Motion 曲线 token（对标 Ant `motionEaseOut` 子集）~~ → **✅**
-3. 几何魔法数收敛余量（Slider/Tab 等剩余硬编码）
-4. 控件 Golden + DesignTokenCatalog 无裸值门禁加严（ai-native-fidelity-loop）
+3. ~~几何魔法数收敛余量（Slider/Tab 等剩余硬编码）~~ → **✅**（ControlMetrics 再扫；Golden `control_metrics_owns_geometry`）
+4. ~~控件 Golden + DesignTokenCatalog 无裸值门禁加严~~ → **最小硬门槛 ✅**（DesignTokenCatalog + bare_value typeck + Button/TextBlock 布局 Golden）；控件×主题态 Golden 全集 / 审视回路仍后置
 
 **登记后置**：DataGrid 列拖拽排序 / 单元格编辑（面过大，本轮跳过）。
 
