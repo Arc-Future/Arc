@@ -136,21 +136,16 @@ try {
     } else {
         $BuildScratch = $Work
     }
-    # mbedtls 4.x `build_info.h` includes generated `mbedtls_config_check_user.h`
-    # (cmake normally emits these into the build tree). Provide empty stubs so
-    # clang-direct builds can proceed without a full cmake configure.
-    $GenInc = Join-Path $BuildScratch "gen-include"
-    New-Item -ItemType Directory -Path $GenInc -Force | Out-Null
-    @(
-        'mbedtls_config_check_user.h',
-        'tf_psa_crypto_config_check_user.h',
-        'psa_crypto_config_check_user.h'
-    ) | ForEach-Object {
-        Set-Content -Path (Join-Path $GenInc $_) -Value "#pragma once`n" -Encoding ascii
-    }
+    # mbedtls 4.x ships generated config-check headers in the release tarball
+    # (library/mbedtls_config_check_*.h, tf-psa-crypto/core/tf_psa_*).
+    # build_info.h includes mbedtls_config_check_user.h from a different
+    # directory than library/, so -I$Base/library is required. Do NOT place
+    # empty stubs ahead of these paths: *_check_before.h undefs PSA/time
+    # macros and only *_check_user.h restores them; empty stubs wiped TLS
+    # prerequisites (CI: "defined, but not all prerequisites").
     $Include = @(
-        "-I$GenInc",
         "-I$Base/include",
+        "-I$Base/library",
         "-I$Base/tf-psa-crypto/include",
         "-I$Base/tf-psa-crypto/core",
         "-I$Base/tf-psa-crypto/dispatch",
@@ -168,19 +163,19 @@ try {
     # RFC 035 S5：0-RTT 早数据（MBEDTLS_SSL_EARLY_DATA）默认关闭，须显式启用
     # （否则 mbedtls_ssl_write/read_early_data 等符号不编译；实测差异见
     # rt_crypto_native.c S5 段注记）。
+    # HAVE_TIME / HAVE_TIME_DATE already on in default psa/crypto_config.h;
+    # do not -D them (redefinition + confuses config-check before/user dance).
     $Cflags = @(
         "-c", "-O2", "-ffunction-sections", "-fdata-sections",
-        "-fPIC",
         "-DMBEDTLS_PEM_PARSE_C",
         "-DMBEDTLS_BASE64_C",
-        "-DMBEDTLS_SSL_EARLY_DATA",
-        # RFC 035 S5：证书有效期/吊销时间检查需系统时钟（MBEDTLS_HAVE_TIME_DATE
-        # 默认关 → 过期证书校验不触发；S5 完整链校验 e2e 依赖其生效）。
-        "-DMBEDTLS_HAVE_TIME",
-        "-DMBEDTLS_HAVE_TIME_DATE"
+        "-DMBEDTLS_SSL_EARLY_DATA"
     )
     if ($IsWin) {
         $Cflags = @("-D_CRT_SECURE_NO_WARNINGS") + $Cflags
+    } else {
+        # ELF/Mach-O PIC; MSVC clang rejects -fPIC.
+        $Cflags = @("-fPIC") + $Cflags
     }
     $Obj = Join-Path $BuildScratch "obj"
     New-Item -ItemType Directory -Path $Obj -Force | Out-Null

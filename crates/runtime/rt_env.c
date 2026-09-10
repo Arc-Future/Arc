@@ -98,28 +98,41 @@ static LONG WINAPI rt_env_crash_probe_veh(EXCEPTION_POINTERS* ep) {
             (unsigned long long)target,
             (unsigned long long)c->Rcx, (unsigned long long)c->Rdx,
             (unsigned long long)c->R8, (unsigned long long)c->Rsp);
-    /* RIP 落在非映像（如 null fn ptr → rip=1）时旧逻辑跳过栈扫描。
-     * 改为 RtlCaptureStackBackTrace + 逐帧模块 RVA，保证 XEXEC@0x1 仍有调用链。 */
+    /* XEXEC@null 时 RIP 不在任何映像：CaptureStackBackTrace 只见 VEH/ntdll。
+     * 扫故障 CONTEXT.Rsp 上的返回地址候选，按模块 RVA 打印（含 exe 与 dll）。 */
     {
-        void* frames[16];
-        USHORT n = CaptureStackBackTrace(0, 16, frames, NULL);
-        for (USHORT i = 0; i < n && i < 12; i++) {
-            HMODULE fm = NULL;
-            char fpath[MAX_PATH] = "?";
-            uintptr_t fbase = 0;
-            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                                   GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                                   (LPCWSTR)frames[i], &fm) &&
-                fm) {
-                fbase = (uintptr_t)fm;
-                GetModuleFileNameA(fm, fpath, (DWORD)sizeof(fpath));
-                const char* base_name = strrchr(fpath, '\\');
-                base_name = base_name ? base_name + 1 : fpath;
-                fprintf(stderr, "[crash] #%u %s+0x%llX\n", (unsigned)i, base_name,
-                        (unsigned long long)((uintptr_t)frames[i] - fbase));
-            } else {
-                fprintf(stderr, "[crash] #%u %p\n", (unsigned)i, frames[i]);
+        uintptr_t* sp = (uintptr_t*)(void*)c->Rsp;
+        int shown = 0;
+        for (int i = 0; i < 160 && shown < 12; i++) {
+            void* slot = (void*)(sp + i);
+            MEMORY_BASIC_INFORMATION mbi;
+            if (VirtualQuery(slot, &mbi, sizeof(mbi)) == 0 ||
+                !(mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ |
+                                 PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY |
+                                 PAGE_EXECUTE_WRITECOPY))) {
+                break;
             }
+            uintptr_t v = sp[i];
+            if (v < 0x10000) {
+                continue;
+            }
+            HMODULE fm = NULL;
+            if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                    GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                    (LPCWSTR)v, &fm) ||
+                !fm) {
+                continue;
+            }
+            char fpath[MAX_PATH] = "?";
+            GetModuleFileNameA(fm, fpath, (DWORD)sizeof(fpath));
+            const char* base_name = strrchr(fpath, '\\');
+            base_name = base_name ? base_name + 1 : fpath;
+            fprintf(stderr, "[crash] ret%d @rsp+%d %s+0x%llX\n", shown, i * 8,
+                    base_name, (unsigned long long)(v - (uintptr_t)fm));
+            shown++;
+        }
+        if (shown == 0) {
+            fprintf(stderr, "[crash] (no module return addrs near rsp)\n");
         }
     }
     fflush(stderr);
