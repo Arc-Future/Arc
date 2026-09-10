@@ -1,22 +1,27 @@
 // RFC 037 M5: Arc.UI.Components — ICommand 命令接口。
 //
-// 设计决策：Arc 无 event/delegate 体系，ICommand.CanExecuteChanged 改用
-// Signal<bool> 替代——订阅者通过 Observe/Signal API 监听，无需引入事件系统。
+// 设计决策：Arc 无 C# event 体系；本切片仅 CanExecute/Execute 同步面。
+// CanExecuteChanged（Signal 推送 → 自动刷新 IsEnabled）为后移项——调用方在
+// RaiseClick / 程序化查询时再读 CanExecute（诚实最小面，禁假开推送通道）。
 //
 // 与 WPF ICommand 对比：
 //   WPF: event EventHandler CanExecuteChanged
-//   Arc: Signal<bool> CanExecuteChanged  (Signal-based)
+//   Arc: 本面无变更通知通道（后置）；点击路径经 Button.RaiseClick 再查
 //
 // 使用模式：
-//   - MVVM: ViewModel 实现 ICommand，绑定到 Button.Command
-//   - 简单场景：直接用 Button.Clicked 替代命令模式
+//   - MVVM: RelayCommand / 自定义 ICommand → Button.Command
+//   - 简单场景：直接用 Button.Clicked / OnClick
 
 namespace Arc.UI.Components;
 
 /// <summary>
-/// 命令接口——封装可执行的用户操作，支持启用/禁用状态。
-/// Arc 版本用 Signal<bool> 替代 CanExecuteChanged 事件。
+/// 命令接口——封装可执行的用户操作，支持启用/禁用查询。
 /// </summary>
+/// <remarks>
+/// 变更通知（对标 WPF CanExecuteChanged）未纳入本面；见文件头诚实边界。
+/// 最小实现见 <see cref="RelayCommand"/>；Button.RaiseClick 在 IsEnabled 通过后
+/// 若 Command 为 ICommand 且 CanExecute 为真则 Execute，并仍触发 Clicked。
+/// </remarks>
 public interface ICommand {
     /// <summary>判断命令当前是否可执行。</summary>
     /// <param name="parameter">命令参数（可选，传 null）。</param>

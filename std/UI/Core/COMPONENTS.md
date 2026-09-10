@@ -11,6 +11,8 @@
 >
 > **核对增补（2026-08-31）**：内置组件模板让位门禁全量对齐——`WgpuRender.RenderTree` chrome 分支（Button/CheckBox/TextBox/Slider）`templated` 跳过内置 chrome；`TreeDrawListBuilder` 设计时预览同构门禁（已挂子树跳过文本 chrome）；ComboBox 折叠态 chrome 分支落地（提前 `return` 跳过通用递归）并新增矩阵行。三层编写契约见 [production-surface §6](../../../docs/rfc/037-ui/references/production-surface.md)。
 >
+> **核对增补（2026-09-10 · Button ICommand 最小面）**：`RelayCommand` + `Button.RaiseClick` 在 IsEnabled 通过后若 `Command is ICommand` 且 `CanExecute(param)` 则 `Execute`（Clicked 仍发）；CanExecute=false 跳过 Execute；headless `l2_ui_button_command_batch`。**不**宣称 CanExecuteChanged→IsEnabled 自动同步、ARML `{x:Bind}/{Binding}` Command、RoutedCommand、完整 MVVM 全家桶。
+>
 > **核对增补（2026-09-09 · Margin 内容盒 + Button 内容尺寸 + List 行距）**：① `FrameworkElement.Arrange`：外边距盒原点 +Margin → 内容盒 `LayoutX/Y`，`RenderSize`=无 Margin（生产面 §1 禁 Margin 布局忽略；ArmlDemo 页 `Margin="16,12,…"` 左/上内缩生效，消「内容贴边 / 左缘空洞」类观感）；② Button/ToggleButton 构造期 `HorizontalAlignment=Left`（Ant 内容尺寸 chrome，禁竖向 Stack 拉满栏宽；隐式 Style 仍仅 BasedOn Medium）；`LayoutHelper.ButtonPadding*` 字面量对齐 `ControlMetrics`（15/4）；③ VSP 行 arrange 收 `FrameworkElement`（非仅 TextBlock）；`ResolveItemStride` 用 `EstimateLineHeight`+`MinTextPaddingY` 防行重叠。
 
 > **核对增补（2026-09-09 · Data/List/Input 三回归）**：① CodeEditor `ArrangeOverride` 须 `void`（误返 `LayoutSize` 与基类 ABI 不符 → 第 8 tab AV）；DataGrid `SyncMirrorRows` 写绝对 `LayoutX/Y`；② ItemsControl `ArrangeChild` 项宿主 + VSP `VerticalOffset` + ListView `PushClip`（行叠原点）；③ 模板态 TextBox/PasswordBox/ComboBox：**先 PART 子树再内容层并 `return`**（壳盖 caret/placeholder）；`SyncMirrorText` → `Invalidate` 非布局脏。
@@ -36,7 +38,7 @@
 | **Window** | ✅ Title/Left/Top/Content/W/H/Background | ✅ Background | ✅ 根背景 + 子树（`RenderElementTree` 根 `DrawRect` + 通用递归） | 🟡 Show/ShowAsync（帧泵）；Close 已接编程式关闭（codegen 传平台镜像句柄 → `rt_window_close`；真窗 GUI 手测待补） | ⛔ 不适用 |
 | **StackPanel** | ✅ Orientation/Spacing/Background/Margin | ✅ Orientation/Spacing/Background | ✅ 背景（`DrawBackground`）+ 子元素递归 | ⛔ 无用户交互语义 | ⛔ 固定少量子项例外 |
 | **TextBlock** | ✅ Text/FontSize/Foreground/Background/Font* | ✅ Text/FontSize/Background/Foreground/IsEnabled | ✅ `DrawText` 真实字形（动态 stb_truetype atlas，8x16 点阵 fallback；布局 Measure 与绘制同源 `ITextMetrics`） | ⛔ 字形/选区 M4+ | ⛔ 不适用 |
-| **Button** | ✅ Content/Background/Foreground/FontSize/IsEnabled/IsMouseOver/IsPressed/Command/CommandParameter/Click（string）+ **Clicked（Signal）**；变体 = **`Style="{StaticResource Primary, Small}"`**（§0.1.1；**禁 Class/Appearance/`*.Size.SM`**）；**无 Appearance DP**；**默认 Template**（PART_Chrome+PART_Content） | ✅ Content/FontSize/Background/Foreground/IsEnabled/StyleKeys/PaddingX\|Y + PointerRouter | ✅ **模板优先**（PART VSM）；无模板宿主回退 | 🟡 Click + 指针 hit + M-focus | ⛔ 不适用 |
+| **Button** | ✅ Content/Background/Foreground/FontSize/IsEnabled/IsMouseOver/IsPressed/Command/CommandParameter/Click（string）+ **Clicked（Signal）**；**RaiseClick→ICommand.Execute**（CanExecute 同步查询；`RelayCommand` 最小实现）；变体 = **`Style="{StaticResource Primary, Small}"`**（§0.1.1；**禁 Class/Appearance/`*.Size.SM`**）；**无 Appearance DP**；**默认 Template**（PART_Chrome+PART_Content） | ✅ Content/FontSize/Background/Foreground/IsEnabled/StyleKeys/PaddingX\|Y + PointerRouter | ✅ **模板优先**（PART VSM）；无模板宿主回退 | 🟡 Click + 指针 hit + M-focus；⛔ CanExecuteChanged→IsEnabled 自动同步 / ARML Command 绑定后置 | ⛔ 不适用 |
 | **Rectangle** | ✅ W/H/Fill/Stroke/StrokeThickness/RadiusX/Y | ✅ W/H/Fill/Stroke/StrokeThickness/RadiusX/Y | ✅ fill + stroke（`DrawRect` + `DrawRectBorder`；圆角走 `DrawRoundedRect`/`DrawRoundedBorder`） | ⛔ 无交互语义（Shape） | ⛔ 不适用 |
 | **ToggleButton** | ✅ IsChecked/IsThreeState/Content/IsEnabled + Checked/Unchecked/Indeterminate（ARML 事件名 string）+ **Toggled（Signal）**；**默认 Template** | ✅ IsChecked/Content/FontSize/Background/Foreground/IsEnabled + PointerRouter（Toggle 槽） | ✅ **模板优先**（PART_Chrome VSM.Toggle） | ✅ 点击切换 + Enter/Space | ⛔ 不适用 |
 | **CheckBox** | ✅ 继承 ToggleButton；**默认 Template**（PART_Glyph+PART_Content） | ✅ 同 ToggleButton | ✅ **模板优先**（PART_Glyph） | ✅ 点击 + Enter/Space | ⛔ 不适用 |
@@ -86,7 +88,7 @@
 | `ContentPresenter` | `std/UI/Components/ContentPresenter.as` | ControlTemplate 内 Content 呈现占位（OnLoaded 沿父链同步 ContentControl.Content；ApplyTo 显式注入） |
 | `UserControl` / `Page` | `std/UI/Components/UserControl.as` · `Page.as` | ContentControl 语义子类（UserControl 空类；Page 有 Title DP） |
 | `Application` | `std/UI/Components/Application.as` | MainWindow/Resources + Run·RunAsync/RunCore/OnStartup/OnExit（隐式样式 + IME handler 装配） |
-| `ICommand` | `std/UI/Components/ICommand.as` | CanExecute/Execute 接口（Button.Command 预留 · MVVM） |
+| `ICommand` / `RelayCommand` | `std/UI/Components/ICommand.as` · `RelayCommand.as` | CanExecute/Execute；`RelayCommand` 委托实现；`Button.RaiseClick` 接线（headless `ui_button_command`）；⛔ CanExecuteChanged 推送后置 |
 | `ItemContainerGenerator` | `std/UI/Components/ItemContainerGenerator.as` | ItemsHost 回收池 + 视口物化（M-VZ1；ItemsControl 内部接线，非控件） |
 | `RowDefinition` / `ColumnDefinition` | `std/UI/Components/Layout/RowDefinition.as` · `ColumnDefinition.as` | Grid 行/列定义（GridLength.Auto/Star/px） |
 | `WindowHost` | `std/UI/Components/WindowHost.as` | 静态 ABI 桥（ElementCreate/Set*/Get*/AddChild/IME/键盘/滚动 handler）；`NativeHandle`/`CreateWindow`/`RunEventLoop` 为互操作面 |

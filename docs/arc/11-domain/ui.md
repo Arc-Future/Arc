@@ -77,21 +77,22 @@ public class MainWindow : Window {
 
 ### 3. 视图模型
 
-用 `[Observable]` 特性声明属性变更通知，配合 `ICommand` 承载命令：
+用 `[Observable]` 特性声明属性变更通知，配合 `ICommand` / `RelayCommand` 承载命令：
 
 ```as
 namespace Demo;
 
 using Arc.UI;
+using Arc.UI.Components;
 
 public class MainViewModel {
-    [Observable] public string Title;
-    [Observable] public string Greeting;
+    [Observable] public string Title { get; set; }
+    [Observable] public string Greeting { get; set; }
     public ICommand Click;
 }
 ```
 
-`[Observable]` 由编译器合成属性变更通知，绑定自动刷新。集合变更用 `ObservableCollection<T>`。
+`[Observable]` 由编译器合成属性变更通知（Signal 通道），`{x:Bind}` 编译期脱糖订阅刷新。集合变更用 `ObservableCollection<T>`。`Button.Command = new RelayCommand(...)` 经 `RaiseClick` 执行（CanExecute 同步查询）；**CanExecuteChanged→IsEnabled 自动同步**与 ARML 上 `Command="{x:Bind …}"` 标记扩展仍后置。
 
 ### 4. 启动入口
 
@@ -138,12 +139,14 @@ void Main() {
 
 | 机制 | 用途 |
 |------|------|
-| `{Binding Path}` | 属性路径投影，绑定路径编译期对照模型类型解析，绑错即编译期报错 |
-| `[Observable]` 特性 | 属性变更通知，触发绑定刷新 |
-| `ObservableCollection<T>` | 集合变更通知，驱动列表刷新 |
-| `DataContext` | 每个元素的强类型数据上下文 |
+| `{x:Bind Path}` | **现行主路径**：编译期脱糖到 `ObserveProperty` + `BindingOperations`（TextBlock/TextBox Text 最小面；Mode=OneTime/OneWay/TwoWay） |
+| `{Binding Path}` | **后移**：codegen 拒绝；运行时路径解析 / DataContext 动态切换未开 |
+| `[Observable]` 特性 | 属性变更 → 合成 Signal；触发 `x:Bind` 刷新 |
+| `ObservableCollection<T>` | 集合变更通知，驱动列表增量（ItemsControl/DataGrid 等） |
+| `DataContext` | 元素树继承 + VisualHost 边界；**不**驱动 `{Binding}` 运行时解析 |
+| `ICommand` / `RelayCommand` | `Button.Command` + `RaiseClick`→Execute（CanExecute 同步查询） |
 
-绑定带生命周期管理：弱引用避免长生命周期宿主泄漏，确定性退订保证不悬挂。
+绑定带生命周期管理：G2 `RegisterDetach` 退订；订阅回调只捕获绑定 id（逃逸闭包约束）。**不**宣称 Converter / ElementName / RelativeSource / UpdateSourceTrigger / CanExecuteChanged 推送。
 
 ### 渲染与虚拟化
 

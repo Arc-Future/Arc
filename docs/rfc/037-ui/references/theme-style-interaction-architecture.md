@@ -159,6 +159,8 @@ Win32 WM_MOUSE* / KEY
 
 正道：`x:Bind` 编译期脱糖（`ObserveProperty` 静态定址）；`{Binding}` 运行时路径为后移项（037 §4）。逃逸闭包约束：订阅回调只捕获绑定 id（见 `BindingOperations.as`）。
 
+**命令面（2026-09-10 最小刀）**：`Button.RaiseClick` → `ICommand.Execute`（`RelayCommand`；CanExecute 同步查询；headless `ui_button_command`）。**不**宣称 CanExecuteChanged→IsEnabled、ARML Command 绑定扩展。
+
 ## 5. 现状病灶表（诚实）
 
 | ID | 病灶 | 证据路径 | 影响 | 状态 |

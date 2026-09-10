@@ -96,10 +96,9 @@ docs/failed/
 # - IDE 私有文档（.trae/）：本地规划/备忘，非仓库资产（spec-guard SKIP_DIRS 同源）
 .trae/
 
-# 根目录散落探测 / 构建 / e2e 诊断输出（防再入库 · 2026-08-29 收敛）
-# - 历史污染源：arc/e2e/probe/h4c/t1c/r2 等一次性重定向文件；合法根级
-#   文档一律走 .md（README/docs/），根目录禁止散落 .txt（含点前缀转储）。
-/*.txt
+# 根目录散落探测 / 构建 / e2e 诊断输出（防再入库 · 2026-08-29 收敛；2026-09-10 对齐 G″：
+# 不再用 /*.txt 掩盖根目录污染——合法根文档走 .md；llms.txt 已跟踪；散落 .txt 由
+# check-no-pollution.ps1 / clean-debug-artifacts.ps1 诚实暴露并清除）
 *.bak
 # - 一次性诊断 / 复现工作目录（arc 诊断转储、探针工程副本）
 /.arc_asan/

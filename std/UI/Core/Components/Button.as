@@ -8,13 +8,14 @@
 //   - 旧 Click: string 保留兼容 ARML Click="MethodName" 语法
 //
 // **ICommand 模式**（可选，MVVM 场景）：
-//   - Command / CommandParameter DP 保留（RoutedCommand 预留）
-//   - ICommand 接口定义见 ICommand.as
+//   - Command / CommandParameter DP；RaiseClick 在 IsEnabled 通过后若
+//     Command is ICommand 且 CanExecute(param) 则 Execute（再触发 Clicked）
+//   - 最小实现：RelayCommand；CanExecuteChanged→IsEnabled 自动同步后置
 //
 // 使用模式：
 //   简单：btn.OnClick(_ => DoSomething());
 //   完整：btn.Clicked.Subscribe(_ => DoSomething());
-//   MVVM：btn.Command = myCommand;  // ICommand 实现
+//   MVVM：btn.Command = new RelayCommand(...);
 
 namespace Arc.UI.Components;
 
@@ -128,12 +129,24 @@ public class Button : ContentControl {
     }
 
     /// <summary>触发点击——由平台层（WindowHost / native event loop）调用。</summary>
+    /// <remarks>
+    /// 顺序对齐 WPF ButtonBase.OnClick 心智：先 Clicked 信号，再尝试 ICommand。
+    /// Command 非 ICommand 或 CanExecute=false 时跳过 Execute（Clicked 仍发）。
+    /// </remarks>
     public void RaiseClick() {
         if (!this.IsEnabled) {
             return;
         }
         if (Clicked != null) {
             Clicked.Set(true);
+        }
+        object cmdObj = this.Command;
+        if (cmdObj is ICommand) {
+            ICommand cmd = (ICommand)cmdObj;
+            object param = this.CommandParameter;
+            if (cmd.CanExecute(param)) {
+                cmd.Execute(param);
+            }
         }
     }
 

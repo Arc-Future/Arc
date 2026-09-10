@@ -88,8 +88,8 @@ function Measure-Pollution {
         elseif ($_.Name -match '^(test_|arc_|stderr|stdout|err\.txt|out\.txt|\.test_output)' -and $_.Extension -in '.txt', '.err', '.log', '') {
             Add-IfExists $_.FullName
         }
-        elseif ($_.Extension -in '.txt', '.err', '.log' -and $_.Name -notin @('Cargo.toml', 'LICENSE.txt', 'README.txt')) {
-            # Stray debug redirect at repo root (not tracked docs)
+        elseif ($_.Extension -in '.txt', '.err', '.log' -and $_.Name -notin @('Cargo.toml', 'LICENSE.txt', 'README.txt', 'llms.txt')) {
+            # Stray debug redirect at repo root (not tracked docs / AI map)
             $rel = $_.FullName.Substring($RepoRoot.Length + 1)
             if ($rel -notmatch '[/\\]') { Add-IfExists $_.FullName }
         }
@@ -101,18 +101,27 @@ function Measure-Pollution {
         }
     }
 
-    # Non-standard obj-*/bin-* under source roots
+    # Non-standard obj-*/bin-* under source roots (never under Cargo target/ — that is allowed)
     @($RepoRoot, (Join-Path $RepoRoot 'examples'), (Join-Path $RepoRoot 'crates'), (Join-Path $RepoRoot 'std')) | ForEach-Object {
         if (-not (Test-Path $_)) { return }
-        Get-ChildItem -LiteralPath $_ -Directory -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch '\\\.git\\' -and ($_.Name -like 'obj-*' -or $_.Name -like 'bin-*') } |
+        $scanRoot = $_
+        Get-ChildItem -LiteralPath $scanRoot -Directory -Recurse -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.FullName -notmatch '\\(\.git|target)\\' -and
+                ($_.Name -like 'obj-*' -or $_.Name -like 'bin-*')
+            } |
             ForEach-Object { Add-IfExists $_.FullName }
     }
 
-    # Stray *.bin in crates/
+    # Stray *.bin / *.exe / *.pdb sitting in crates/ source dirs (not vendored runtime bins, not bin/obj/target)
     $crates = Join-Path $RepoRoot 'crates'
     if (Test-Path $crates) {
-        Get-ChildItem -LiteralPath $crates -Filter '*.bin' -Recurse -File -ErrorAction SilentlyContinue |
+        Get-ChildItem -LiteralPath $crates -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.FullName -notmatch '\\(bin|obj|target|wgpu-native)\\' -and
+                $_.FullName -notmatch '\\runtime-(crypto|quic|ui)\\' -and
+                $_.Extension -in '.bin', '.exe', '.pdb'
+            } |
             ForEach-Object { Add-IfExists $_.FullName }
     }
 
@@ -170,7 +179,7 @@ Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue | ForEach-
     }
     elseif ($_.Extension -in '.txt', '.err', '.log') {
         $rel = $_.FullName.Substring($root.Length + 1)
-        if ($rel -notmatch '[/\\]' -and $_.Name -notin @('Cargo.toml')) {
+        if ($rel -notmatch '[/\\]' -and $_.Name -notin @('Cargo.toml', 'LICENSE.txt', 'README.txt', 'llms.txt')) {
             Remove-IfExists $_.FullName
         }
     }
@@ -182,16 +191,24 @@ Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue | ForEach-
     }
 }
 
-# obj-*/bin-* under repo root, examples/, crates/, std/
+# obj-*/bin-* under repo root, examples/, crates/, std/ (exclude Cargo target/)
 @($root, (Join-Path $root 'examples'), (Join-Path $root 'crates'), (Join-Path $root 'std')) | ForEach-Object {
     if (-not (Test-Path $_)) { return }
     Get-ChildItem -LiteralPath $_ -Directory -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '\\\.git\\' -and ($_.Name -like 'obj-*' -or $_.Name -like 'bin-*') } |
+        Where-Object {
+            $_.FullName -notmatch '\\(\.git|target)\\' -and
+            ($_.Name -like 'obj-*' -or $_.Name -like 'bin-*')
+        } |
         ForEach-Object { Remove-IfExists $_.FullName }
 }
 
-# Stray *.bin in crates/
-Get-ChildItem -LiteralPath (Join-Path $root 'crates') -Filter '*.bin' -Recurse -File -ErrorAction SilentlyContinue |
+# Stray *.bin / *.exe / *.pdb in crates/ source dirs (not vendored runtime bins)
+Get-ChildItem -LiteralPath (Join-Path $root 'crates') -Recurse -File -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.FullName -notmatch '\\(bin|obj|target|wgpu-native)\\' -and
+        $_.FullName -notmatch '\\runtime-(crypto|quic|ui)\\' -and
+        $_.Extension -in '.bin', '.exe', '.pdb'
+    } |
     ForEach-Object { Remove-IfExists $_.FullName }
 
 # examples/UnitTest non-standard exe (UnitTest.h1.exe etc.)

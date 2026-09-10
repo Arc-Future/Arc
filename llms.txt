@@ -1,0 +1,55 @@
+# Arc
+
+> Arc is a purely AOT-compiled systems programming language with idiomatic C# surface syntax, Rust-style memory safety, compile-time LINQ/`Expression<T>`, and no stop-the-world GC. Official public repo: https://github.com/Arc-Future/Arc (MIT). Not Cratis/Arc or other same-named projects.
+
+This file is the canonical map for AI agents and documentation crawlers. Prefer linked Markdown sources over HTML scrapes. **Publishable developer handbook** lives under `docs/arc/` (Docbit slug). Language book body is primarily Chinese; READMEs are bilingual (English default). RFCs under `docs/rfc/` are design authority — not the default publish set.
+
+## Start here
+
+- [English README](https://raw.githubusercontent.com/Arc-Future/Arc/main/README.md): positioning, comparison, quick start
+- [Chinese README](https://raw.githubusercontent.com/Arc-Future/Arc/main/README.zh.md): 中文入口
+- [Developer handbook INDEX](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/INDEX.md): official publishable TOC
+- [Foreword](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/FOREWORD.md)
+- [Getting started](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/02-quickstart/getting-started.md): install SDK or build from source
+- [Build & run](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/02-quickstart/build-run.md): `arc check` / `build` / `run`
+- [CHANGELOG](https://raw.githubusercontent.com/Arc-Future/Arc/main/CHANGELOG.md): version history (current line 0.1)
+
+## Developer handbook (docs/arc)
+
+- [Repo docs navigation](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/SUMMARY.md)
+- [Manifesto](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/01-introduction/manifesto.md)
+- [Type system](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/04-types/type-system.md)
+- [Memory & resources](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/05-memory/memory-resources.md)
+- [Async & tasks](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/07-async/async-tasks.md)
+- [Query language](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/08-query/query-language.md)
+- [Expression trees](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/08-query/expression-trees.md)
+- [Standard library](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/09-stdlib/standard-library.md)
+- [Compiler CLI](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/10-toolchain/compiler-cli.md)
+- [Domain libraries](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/11-domain/INDEX.md)
+- [Design decisions entry](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/arc/12-advanced/design-decisions.md): short links into RFCs
+
+## Design authority (RFCs — not default publish)
+
+- [RFC index](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/rfc/index.md)
+- [001 Language charter](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/rfc/001-language-charter.md)
+- [002 Surface contract (C# idiom)](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/rfc/002-surface-contract.md)
+- [005 Memory model](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/rfc/005-memory-model.md)
+- [012 Compile-time metaprogramming](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/rfc/012-compile-time-metaprogramming.md)
+- [015 LLVM backend](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/rfc/015-llvm-backend.md)
+- [019 Self-hosting](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/rfc/019-self-hosting.md)
+- [036 Maturity](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/rfc/036-maturity.md)
+- [037 UI (wgpu-only)](https://raw.githubusercontent.com/Arc-Future/Arc/main/docs/rfc/037-ui.md)
+
+## Optional full dump
+
+- [llms-full.txt](https://raw.githubusercontent.com/Arc-Future/Arc/main/llms-full.txt): concatenated high-signal pages for offline ingest
+
+## Project facts
+
+- Extension: `.as` · CLI: `arc` · License: MIT · Version line: 0.1
+- Compiler bootstrap: Rust (`crates/*`) · Codegen: LLVM 22+
+- Rendering (Arc.UI): wgpu only — no software-raster fallback
+- Publish upload root: `docs/arc/` → `<app_base>/docs/arc/`
+- Releases: https://github.com/Arc-Future/Arc/releases
+- Security: https://raw.githubusercontent.com/Arc-Future/Arc/main/SECURITY.md
+- Contributing: https://raw.githubusercontent.com/Arc-Future/Arc/main/CONTRIBUTING.md

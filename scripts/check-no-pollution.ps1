@@ -44,6 +44,7 @@ function Test-PollutionPath {
     if ($p -match '^target-[A-Za-z0-9_.-]+(/|$)') { return $true }            # 根 target-* 目录
     if ($p -match '^(test_|tmp_)[A-Za-z0-9_.-]*\.as$') { return $true }       # 根一次性测试源码
     if ($p -match '^(stderr|stdout|err|out)\.txt$') { return $true }          # 根调试重定向
+    if ($p -match '^[A-Za-z0-9_.+-]+\.txt$' -and $p -notin @('llms.txt', 'LICENSE.txt', 'README.txt')) { return $true }  # 根散落 .txt（G″：不掩盖）
     if ($p -match '(^|/)\.tmp-[A-Za-z0-9_.-]+(/|$)') { return $true }         # .tmp-* 目录
     return $false
 }
