@@ -92,6 +92,11 @@ jobs:
       - name: Cargo test
         run: cargo test --workspace
 
+      - name: Vendor crypto_native (Unix)
+        if: runner.os != 'Windows'
+        shell: pwsh
+        run: scripts/fetch-boringssl-native.ps1
+
       - name: Build CompilerSmoke example
         run: cargo run -p arc -- build examples/CompilerSmoke/Program.as -o compiler_smoke${{ runner.os == 'Windows' && '.exe' || '' }}
 

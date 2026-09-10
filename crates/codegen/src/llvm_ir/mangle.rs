@@ -230,6 +230,26 @@ pub(super) fn is_windows_target(target: Option<&str>) -> bool {
         || (matches!(target_os(target), TargetOs::Host) && cfg!(windows))
 }
 
+/// 判断目标是否为 macOS / Darwin（含主机直连的 `None` 目标，与
+/// [`is_windows_target`] 对称——`cfg!(target_os = "macos")` 兜底）。
+///
+/// 批测（arc-tests）进程内编译常传 `target=None`，`target_os` 落 `Host`；
+/// 若仅窄判 `TargetOs::Macos`，Darwin 宿主上会误以为非 MachO。
+pub(super) fn is_macos_target(target: Option<&str>) -> bool {
+    matches!(target_os(target), TargetOs::Macos)
+        || (matches!(target_os(target), TargetOs::Host) && cfg!(target_os = "macos"))
+}
+
+/// LLVM IR `comdat` 是否可发射。MachO（macOS）不支持 COMDAT——clang 后端报
+/// `MachO doesn't support COMDATs, '…' cannot be lowered`；COFF 必需显式
+/// comdat；ELF 映射为 section group（无害）。wasm 无 COMDAT 语义。
+pub(super) fn supports_comdat(target: Option<&str>) -> bool {
+    if target.map(is_wasm_triple).unwrap_or(false) {
+        return false;
+    }
+    !is_macos_target(target)
+}
+
 /// Windows GUI 子系统链接标志：消除运行时弹出的控制台窗口（"黑框"）。
 ///
 /// 仅 Windows 目标有效；非 UI 可执行文件不应调用（由调用方以 `needs_platform_window`
@@ -283,17 +303,25 @@ pub(super) fn wgpu_native_vendor_subdir(target: Option<&str>) -> Option<&'static
 /// 预编译二进制位于 `crates/runtime-crypto/bin/<subdir>/`：
 /// - Windows：`windows`（`crypto_native.dll` + `crypto_native.lib` +
 ///   `libcrypto_native.dll.a`，由 `scripts/fetch-boringssl-native.ps1` 生成）
-/// - 其余平台：当前返回 `None`（未入库；e2e 按 clang/DLL 软跳过纪律门禁）
+/// - Linux：`linux`（`libcrypto_native.so`，同脚本在 Unix 宿主产出）
+/// - macOS：`macos`（`libcrypto_native.dylib`）
 ///
-/// 当目标平台未 vendoring 时返回 `None`，调用方跳过 lib path 注入与 DLL 复制。
+/// 目录缺失时调用方（`ensure_crypto_native_link_lib` / `-L` 注入）跳过；
+/// CI 在 UnitTest 前跑 fetch 脚本补齐 Unix 产物。
 pub(super) fn crypto_native_vendor_subdir(target: Option<&str>) -> Option<&'static str> {
     match target_os(target) {
         TargetOs::WebAssembly | TargetOs::Wasi => None,
         TargetOs::Windows => Some("windows"),
-        TargetOs::Linux | TargetOs::Macos | TargetOs::Ohos => None,
+        TargetOs::Linux => Some("linux"),
+        TargetOs::Macos => Some("macos"),
+        TargetOs::Ohos => None,
         TargetOs::Host => {
             if cfg!(windows) {
                 Some("windows")
+            } else if cfg!(target_os = "linux") {
+                Some("linux")
+            } else if cfg!(target_os = "macos") {
+                Some("macos")
             } else {
                 None
             }

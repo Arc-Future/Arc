@@ -313,10 +313,24 @@ static _Atomic(int64_t) g_diag_busy_since[RT_DIAG_MAX_WORKERS];
 static _Atomic(uintptr_t) g_diag_busy_fn[RT_DIAG_MAX_WORKERS];
 
 /* 低频诊断转储：worker 心跳自醒时由唯一认领者每 2s 打一行计数快照。
- * 挂死时计数冻结，watchdog kill 前 stderr 末行为最终现场。 */
+ * 挂死时计数冻结，watchdog kill 前 stderr 末行为最终现场。
+ *
+ * **默认关闭**（`ARC_DIAG=1` 开启）：无条件转储会在首个 worker 心跳即走
+ * SuspendThread/StackWalk64（`rt_diag_thread_stack`）——实测 UnitTest 起跑
+ * ~70ms 内 0xC0000005（取证码本身 AV，非被测逻辑）。壁钟 epoch 初始化为
+ * 当前桶，避免首次心跳因 `cur > 0` 立刻触发。 */
 static void rt_diag_maybe_dump(void) {
+    if (getenv("ARC_DIAG") == NULL) {
+        return;
+    }
     static _Atomic(uint64_t) last_epoch;
+    static _Atomic(int) epoch_seeded;
     uint64_t cur = (uint64_t)(rt_tp_now_ms() / 2000);
+    if (!atomic_load_explicit(&epoch_seeded, memory_order_relaxed)) {
+        atomic_store_explicit(&last_epoch, cur, memory_order_relaxed);
+        atomic_store_explicit(&epoch_seeded, 1, memory_order_relaxed);
+        return;
+    }
     uint64_t prev = atomic_load_explicit(&last_epoch, memory_order_relaxed);
     if (cur > prev &&
         atomic_compare_exchange_strong_explicit(&last_epoch, &prev, cur,

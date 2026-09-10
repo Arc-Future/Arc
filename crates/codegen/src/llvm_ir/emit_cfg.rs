@@ -3179,6 +3179,7 @@ mod observable_synth_tests {
             layouts,
             false,
             false,
+            true,
             "test.as",
             "",
             false,

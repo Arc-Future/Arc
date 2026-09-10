@@ -28,16 +28,23 @@ arc-integration 退场，a2627a0f），并为 M1–M3 的
 crates/runtime-crypto/
 ├── bin/
 │   ├── VENDOR.md                 # 本文件
-│   └── windows/                  # Windows x86_64
-│       ├── crypto_native.dll     # 运行时 DLL（M0 动态加载；M1+ 供 codegen 链接后自动复制）
-│       ├── crypto_native.lib     # COFF 导入库（clang/MSVC 链接用）
-│       └── libcrypto_native.dll.a# MinGW 导入库（Clang MinGW 惯例，备用）
-├── NOTICE                        # 许可证署名（上游依赖列表）
+│   ├── windows/                  # Windows x86_64
+│   │   ├── crypto_native.dll
+│   │   ├── crypto_native.lib
+│   │   └── libcrypto_native.dll.a
+│   ├── linux/                    # Linux x86_64（CI / `fetch-boringssl-native.ps1`）
+│   │   └── libcrypto_native.so
+│   └── macos/                    # macOS（同脚本）
+│       └── libcrypto_native.dylib
+├── NOTICE
 └── shim/
-    └── openssl_compat.c          # M0 探针 shim（导出三枚核心符号；真实语义由 M1–M3 落地）
+    ├── openssl_compat.c
+    └── rt_crypto_native.c
 ```
 
-Linux/macOS 平台：M1+ 阶段按同一 wgpu 模式补齐（`.so`/`.dylib` + SONAME）。
+Linux/macOS：由 `scripts/fetch-boringssl-native.ps1` 在对应宿主产出；CI 在
+UnitTest 前幂等调用。codegen 经 `crypto_native_vendor_subdir` + `-lcrypto_native`
++ rpath（`$ORIGIN` / `@executable_path`）接线。
 
 ## 手动 vendoring 步骤
 

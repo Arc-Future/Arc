@@ -64,6 +64,7 @@ use typeck::{ClassLayout, ProgramLayouts, StructLayout};
 
 use mangle::{
     clang_path, crypto_native_vendor_subdir, gui_subsystem_flags, mangle_fn_name, mangle_method,
+    supports_comdat,
     platform_link_flags, platform_ui_link_flags, target_os, wgpu_native_vendor_subdir, TargetOs,
 };
 use string_pool::{collect_string_literals, emit_string_globals, StringConstAccumulator};
@@ -365,29 +366,30 @@ fn ensure_crypto_native_link_lib(libs: Vec<String>, target: Option<&str>) -> Vec
     libs
 }
 
-/// RFC 026 M1: Windows 链接后落位 `crypto_native.dll` 到可执行文件同目录
-///（best-effort；运行时 DLL 必须与 .exe 同目录才能被加载）。经
-/// [`stage_vendored_dll`] 走全局单副本缓存。
+/// RFC 026 M1: 链接后落位 vendored `crypto_native` 共享库到可执行文件同目录
+///（best-effort；经 [`stage_vendored_dll`] 走全局单副本缓存）。
 ///
-/// 门卫必须用 [`mangle::is_windows_target`]（与 [`copy_wgpu_native_dll_if_needed`]
-/// 同谓词）：批测（arc-tests）进程内编译传 `target=None`，`target_os` 落
-/// `TargetOs::Host`——若此处用 `matches!(target_os(..), Windows)` 窄判，
-/// Windows 宿主上的批测会跳过落位，产物导入 `crypto_native.dll`（Arc.Net 包
-/// 经源码合并编入 TLS 面，链接器写入导入表）却缺 DLL → 0xC0000135
-/// STATUS_DLL_NOT_FOUND 起跑即死，批测全部 case「未执行」（l2_net_batch
-/// 边界崩溃实证）。
+/// - Windows：`crypto_native.dll`（加载器默认搜 exe 旁）
+/// - Linux / macOS：`libcrypto_native.so` / `.dylib`（经 `$ORIGIN` /
+///   `@executable_path` rpath 解析）
+///
+/// Windows 门卫必须用 [`mangle::is_windows_target`]（与
+/// [`copy_wgpu_native_dll_if_needed`] 同谓词）：批测传 `target=None` 时
+/// `target_os` 落 `Host`——窄判 `Windows` 会跳过落位 → 0xC0000135。
 fn copy_crypto_native_dll_if_needed(output: &Path, target: Option<&str>) {
-    if !mangle::is_windows_target(target) {
-        return;
-    }
     let Some(subdir) = crypto_native_vendor_subdir(target) else {
         return;
     };
-    let dll = crypto_native_vendor_root()
-        .join("bin")
-        .join(subdir)
-        .join("crypto_native.dll");
-    if !dll.exists() {
+    let vendor = crypto_native_vendor_root().join("bin").join(subdir);
+    let (src_name, dest_name) = if mangle::is_windows_target(target) {
+        ("crypto_native.dll", "crypto_native.dll")
+    } else if mangle::is_macos_target(target) {
+        ("libcrypto_native.dylib", "libcrypto_native.dylib")
+    } else {
+        ("libcrypto_native.so", "libcrypto_native.so")
+    };
+    let src = vendor.join(src_name);
+    if !src.exists() {
         return;
     }
     let Some(dest_dir) = output.parent() else {
@@ -396,7 +398,7 @@ fn copy_crypto_native_dll_if_needed(output: &Path, target: Option<&str>) {
     if dest_dir.as_os_str().is_empty() {
         return;
     }
-    stage_vendored_dll(&dll, &dest_dir.join("crypto_native.dll"));
+    stage_vendored_dll(&src, &dest_dir.join(dest_name));
 }
 
 /// Entry point: compile MIR functions to an executable via LLVM IR.
@@ -421,7 +423,7 @@ pub fn compile_via_llvm_ir(
     // Main() 唯一性检查由 compile_module 在上层统一处理（已含 ProjectKind）,
     // 此处不再重复校验，避免库项目被错误拒绝。
     let is_windows = mangle::is_windows_target(target);
-    let is_macos = matches!(target_os(target), TargetOs::Macos);
+    let is_macos = mangle::is_macos_target(target);
     // RFC 016 M4（用户裁决简化 2026-08-03）：相对 `library` 基准 = 执行程序根目录
     //（`-o` 输出可执行文件所在目录）。先统一解析为绝对路径，供符号验证 / 链接
     // 标志 / 运行时候选使用；`exe_dir` 同时供环境变量形式的相对路径运行期前置。
@@ -451,6 +453,7 @@ pub fn compile_via_llvm_ir(
             layouts,
             is_windows,
             target.map(mangle::is_wasm_triple).unwrap_or(false),
+            supports_comdat(target),
             file_path,
             source,
             debug_info,
@@ -524,6 +527,7 @@ pub fn compile_via_llvm_ir(
             layouts,
             is_windows,
             target.map(mangle::is_wasm_triple).unwrap_or(false),
+            supports_comdat(target),
             file_path,
             source,
             debug_info,
@@ -816,7 +820,7 @@ pub fn compile_to_object(
     keep_ir: bool,
 ) -> Result<Vec<StaticInitDiagnostic>, CodegenError> {
     let is_windows = mangle::is_windows_target(target);
-    let is_macos = matches!(target_os(target), TargetOs::Macos);
+    let is_macos = mangle::is_macos_target(target);
     // RFC 016 M4（用户裁决简化 2026-08-03）：相对 `library` 基准 = 执行程序根目录。
     // 发布路径无最终可执行位置，按 `.o` 输出目录烘焙（一致基准，确定性行为）。
     let exe_dir = output.parent().unwrap_or_else(|| Path::new("."));
@@ -834,6 +838,7 @@ pub fn compile_to_object(
         layouts,
         is_windows,
         target.map(mangle::is_wasm_triple).unwrap_or(false),
+        supports_comdat(target),
         file_path,
         source,
         debug_info,
@@ -896,6 +901,7 @@ pub fn compile_to_object(
             layouts,
             is_windows,
             target.map(mangle::is_wasm_triple).unwrap_or(false),
+            supports_comdat(target),
             file_path,
             source,
             debug_info,
@@ -1590,7 +1596,7 @@ fn diagnose_vendored_link_gap(target: Option<&str>, stderr: &str) -> Option<Stri
     } else if mentions("rt_crypto_") || mentions("crypto_native") {
         Some((
             "crypto_native 密码底座（`rt_crypto_*` ABI）",
-            "`crypto_native_vendor_subdir`：Linux/macOS 未供应（M1+）",
+            "`crypto_native_vendor_subdir`：需 `bin/linux` 或 `bin/macos` 产物（跑 `scripts/fetch-boringssl-native.ps1`）",
         ))
     } else {
         None
@@ -1598,9 +1604,9 @@ fn diagnose_vendored_link_gap(target: Option<&str>, stderr: &str) -> Option<Stri
     let (name, where_note) = family?;
     let triple = target.unwrap_or("<host>");
     Some(format!(
-        "error[arc-vendor-001]: 目标 `{triple}` 链接失败，疑似引用{name}——该底座目前仅随 \
-         Windows 发行交付（{where_note}；仓库无 .so/.dylib 资产）。请在 Windows 目标构建，\
-         或接入对应平台底座供应（fetch/build 脚本平台分支 + vendored 入库）后重试"
+        "error[arc-vendor-001]: 目标 `{triple}` 链接失败，疑似引用{name}——底座目录缺失或未落位 \
+         （{where_note}）。请先跑 `scripts/fetch-boringssl-native.ps1`（或对应平台 fetch）补齐 \
+         vendored 共享库后再重试"
     ))
 }
 
@@ -1669,6 +1675,25 @@ mod vendor_gap_tests {
     fn wgpu_without_undefined_keyword_is_not_misattributed() {
         let stderr = "clang: error: linker command failed with exit code 1 (use -v to see invocation)\nnote: wgpu options";
         assert!(diagnose_vendored_link_gap(Some("x86_64-unknown-linux-gnu"), stderr).is_none());
+    }
+
+    #[test]
+    fn strip_llvm_comdat_removes_decls_and_attrs() {
+        let ir = "\
+$__finalize_Span = comdat any\n\
+define linkonce_odr void @__finalize_Span(ptr %self) comdat {\n\
+entry:\n\
+  ret void\n\
+}\n\
+@.typeinfo.Foo = linkonce_odr constant { i32 } { i32 1 }, comdat\n\
+";
+        let stripped = strip_llvm_comdat(ir);
+        assert!(
+            !stripped.contains("comdat"),
+            "residual comdat: {stripped}"
+        );
+        assert!(stripped.contains("define linkonce_odr void @__finalize_Span(ptr %self) {"));
+        assert!(stripped.contains("@.typeinfo.Foo = linkonce_odr constant { i32 } { i32 1 }"));
     }
 }
 
@@ -2205,6 +2230,9 @@ struct ModuleEmitter<'a> {
     /// registry ABI），宿主 dbg 表登记注入（`render_host_dbg_registration`）
     /// 据此跳过。
     is_wasm: bool,
+    /// MachO 不支持 COMDAT：为 false 时 `emit_module` 末尾剥离全部
+    /// `$… = comdat any` / `comdat` 属性（见 [`strip_llvm_comdat`]）。
+    use_comdat: bool,
     file_path: &'a str,
     /// Byte offset of each line start (RFC 024 M1: span → line/col resolution).
     line_starts: Vec<u32>,
@@ -2319,6 +2347,7 @@ impl<'a> ModuleEmitter<'a> {
         layouts: &'a ProgramLayouts,
         is_windows: bool,
         is_wasm: bool,
+        use_comdat: bool,
         file_path: &'a str,
         source: &str,
         debug_info: bool,
@@ -2355,6 +2384,7 @@ impl<'a> ModuleEmitter<'a> {
             layouts,
             is_windows,
             is_wasm,
+            use_comdat,
             file_path,
             line_starts,
             dbg,
@@ -2950,6 +2980,14 @@ impl<'a> ModuleEmitter<'a> {
         // （`emit_typeinfos`）与函数体 / `__sinit` 发射阶段，须待全部完成后
         // 在模块末尾统一输出（LLVM 允许前向引用）。
         out.push_str(&self.emit_external_aggregate_decls());
+
+        // MachO：剥离全部 COMDAT（`$name = comdat any` / `comdat` 属性）。
+        // 发射路径仍统一生成 COFF/ELF 所需的 comdat，Darwin 在此单点门控，
+        // 避免数十处 format! 分支；linkonce_odr 在 MachO 上由 LLVM 映射为
+        // coalesced/weak，无需显式 comdat group。
+        if !self.use_comdat {
+            out = strip_llvm_comdat(&out);
+        }
 
         Ok((out, sinit_diags))
     }
@@ -5050,6 +5088,28 @@ fn emit_comdat_decls(names: &[String]) -> String {
         out.push_str(&format!("${name} = comdat any\n"));
     }
     out.push('\n');
+    out
+}
+
+/// MachO 门控：从 LLVM IR 文本剥离全部 COMDAT 语法。
+///
+/// - 删除 `$name = comdat any` 模块级声明行
+/// - 去掉 `define`/`global` 行上的 ` comdat` 属性与 `, comdat` 后缀
+///
+/// 保留 `linkonce_odr` linkage——Darwin 上由 LLVM 映射为 weak/coalesced。
+fn strip_llvm_comdat(ir: &str) -> String {
+    let mut out = String::with_capacity(ir.len());
+    for line in ir.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('$') && trimmed.contains("= comdat any") {
+            continue;
+        }
+        // 先去 `, comdat`（global 尾缀），再去属性位 ` comdat`（含 `comdat{` /
+        // `comdat !dbg` 形态）。
+        let line = line.replace(", comdat", "").replace(" comdat", "");
+        out.push_str(&line);
+        out.push('\n');
+    }
     out
 }
 
