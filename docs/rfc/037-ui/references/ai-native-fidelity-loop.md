@@ -81,3 +81,38 @@
 - 不引入第二套审批/门闩：批评与验收均走既有会话/工具回路。
 - 截图不无条件进上下文：渐进披露——先布局快照文本，必要时才截图（对齐 037 §10 感知成本原则）。
 - token 目录与 golden 的更新走资源链流程（对齐 builtin-theme-resources 编译期聚合），禁双源。
+
+## 7. 验收 checklist（DesignTokenCatalog + 无裸值 headless 硬门槛）
+
+> **宣称纪律**：下列仅关「DesignTokenCatalog 发布 + 无裸值 typeck 可测」；勾选后仍 **不** 宣称 G1/G2/G3、组件 Golden 全集、审视回路闭环或「保真闭环全部完成」。
+
+| 项 | 状态 | 证据 |
+|----|------|------|
+| DesignTokenCatalog 机器可读 schema（name/category/role/bareForbidden[/lightValue]） | ✅ | `arc_ui::DesignTokenCatalog` + `std/UI/Core/Themes/DesignTokenCatalog.json` |
+| 色值目录与 Light.arml 同源；几何/运动键与 BuiltInTheme 对齐 | ✅ | `build_from_repo` + `design_token_catalog_json_in_sync` |
+| arc-ui typeck：组件属性 / Style Setter 禁裸 `#hex` 与裸 Thickness | ✅ | `bare_value::diagnose_bare_literal` 接入 `TypeChecker` |
+| 资源定义面（`<Color>`/`<Thickness>`/`<Match>`）仍允许字面量权威源 | ✅ | `is_token_definition_element` + Light.arml typeck 绿 |
+| Controls `*.arml` 无裸 hex/Thickness（既有） | ✅ | `controls_arml_no_bare_thickness_or_hex` |
+| 契约测试：拒绝裸值 / 接受 StaticResource | ✅ | `crates/arc-ui/tests/fidelity_token_gate.rs` |
+| 组件 Golden 最小硬门槛（Button/TextBlock 布局结构） | ✅ | 见 §8 |
+| 控件×主题态 Golden 全集 / 审视回路 / 三层验收像素闸 | ☐ | 后置；本切片不宣称 |
+| G1 双宿主像素一致 / G2 属性补丁 / G3 VideoSurface | ☐ | 后置；本切片不宣称 |
+
+验证：`cargo test -p arc-ui --test fidelity_token_gate`；目录再生：`UPDATE_DESIGN_TOKEN_CATALOG=1 cargo test -p arc-ui --test fidelity_token_gate -- design_token_catalog_json_in_sync`。
+
+**本切片边界（§1 token）**：未强制 FontSize/Spacing/CornerRadius 字面量迁 token；未迁 ArmlDemo 元素 `Margin` 字面量（typeck 已拒，演示面另排）；未宣称审视回路。
+
+## 8. 验收 checklist（组件 Golden 最小硬门槛）
+
+> **宣称纪律**：下列仅关「一条固定 Button/TextBlock fixture 的布局结构 Golden 可 CI」；勾选后仍 **不** 宣称 G1/G2/G3、控件×主题态 Golden 全集、审视回路闭环、像素闸或「保真闭环全部完成」。
+
+| 项 | 状态 | 证据 |
+|----|------|------|
+| 固定 fixture：StackPanel + TextBlock(`Title`) + Button(`OkBtn`)，显式宽高 | ✅ | `l2_ui_component_golden_batch` 内嵌 ARML |
+| GetLayoutSnapshot → 结构骨架（Type/Name/整数几何；排除 Margin/TextLines/字体） | ✅ | `BuildCanonical` + `ARC_COMPONENT_GOLDEN:` |
+| 与仓库 golden 文件比对（可 UPDATE 再生） | ✅ | `crates/arc-tests/goldens/ui/button_textblock_layout.golden.json` |
+| headless / full-rt 可绿 | ✅ | `cargo test -p arc-tests --features full-rt --test l2_ui_component_golden_batch` |
+
+验证：`cargo test -p arc-tests --features full-rt --test l2_ui_component_golden_batch`；再生：`UPDATE_UI_COMPONENT_GOLDEN=1` 同命令。
+
+**本切片边界（§2 Golden）**：未铺 ui-goldens 控件×主题态矩阵；未接 CapturePng 像素指纹；未宣称审视回路 / G1–G3 / 保真闭环全部完成。不改动既有 `l2_ui_layout_snapshot_batch` / `l2_ui_render_capture_batch` 语义。

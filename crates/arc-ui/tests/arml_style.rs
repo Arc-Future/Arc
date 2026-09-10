@@ -129,15 +129,15 @@ fn parse_style_based_on_static_resource() {
 
 #[test]
 fn typecheck_style_document_ok() {
-    let src = r##"<Window>
+    let src = r#"<Window>
         <Window.Resources>
             <Style x:Key="PrimaryButton" TargetType="Button">
-                <Setter Property="Background" Value="#0044FF"/>
+                <Setter Property="Background" Value="{StaticResource Color.Primary}"/>
                 <Setter Property="Content" Value="OK"/>
             </Style>
         </Window.Resources>
         <Button Style="{StaticResource PrimaryButton}" Content="Save"/>
-    </Window>"##;
+    </Window>"#;
     let doc = Parser::parse(src).unwrap();
     let report = TypeChecker::new().check(&doc);
     assert!(report.is_ok(), "errors: {:?}", report.errors);

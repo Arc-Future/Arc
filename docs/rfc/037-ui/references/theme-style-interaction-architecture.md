@@ -125,7 +125,7 @@ Ant Design 6.x 相对 5.x：主线是 **CSS Variables 默认 / zeroRuntime / 语
 | 平台 Light 宏 | `rt_ui_design_tokens.h` = ARML 契约镜像 | 头文件单独改色 |
 | 应用覆盖 | `Application.Resources` / Themes | 与内置键冲突的 Fluent/Material 默认混搭 |
 
-生成链：`Light|Dark.arml` → Colors.g.as；`Controls.arml`+`Controls/*` → Styles.g.as；契约：`design_tokens_contract` / `theme_switch_contract`。
+生成链：`Light.arml`（Seed/Map）→ **`dark_map_derive`（构建期）** → `Dark.arml` → `Colors.g.as`；`Controls.arml`+`Controls/*` → Styles.g.as；契约：`design_tokens_contract`（含 `dark_arml_matches_light_seed_derivation`）/ `theme_switch_contract`。再生：`scripts/ui-theme/derive-dark-from-light.ps1`。
 
 ## 4. 组件响应链路
 
@@ -171,7 +171,7 @@ Win32 WM_MOUSE* / KEY
 | F6 | RenderTree 控件分支硬编码布局魔法数 | `WgpuRender.RenderTree.as` | 与 token 几何脱节 | **已收敛本刀**：Slider/ProgressBar/Combo/焦点环/滚动条拇指/chevron 微几何/Tab 栏高·字号·指示条→ControlMetrics；DataGrid 行高→ControlMetrics；余量按触点继续扫 |
 | F7 | 整树 `FramePump.Invalidate` | 无脏区矩形 | 大树交互掉帧 | **最小面已立**：`InvalidateRegion` + LoadOp_Load + 根 scissor；caret 区；控件级精确失效树后置 |
 | F8 | Button 变体（default/dashed/text/link）未立 | VSM 仅 Primary/Ghost | 难达 antd 控件族完备 | **本轮已立** keyed Style：`Button.Primary\|…` + 短键 `Primary, Small`；`AppliedStyleKeys`→VSM（**禁 Class/Appearance DP**） |
-| F9 | Dark 为预烘焙快照，无 `darkAlgorithm` 运行时 | `Dark.arml` 注释 | 改 Seed 不自动派生 Dark | 后置（非阻塞） |
+| F9 | Dark 曾为手写预烘焙快照，无 `darkAlgorithm` 运行时 | `Dark.arml` 注释 | 改 Seed 不自动派生 Dark | **本刀：构建期派生 ✅**（`arc-ui::dark_map_derive` + `scripts/ui-theme/derive-dark-from-light.ps1`：Light Seed → Dark.arml → Colors.g.as）；**完整 darkAlgorithm 运行时仍 P3（非阻塞）** |
 | F10 | 组件级 token 全家桶未立 | builtin-theme §5 非目标 | 深定制靠覆盖全局键 | 有边界后置 |
 | F11 | Motion 曲线未对 Ant ease | `Motion*Ms` 仅时长 | 手感差距 | **已立** `Motion.Easing.*` token + EaseProgress |
 
@@ -223,7 +223,7 @@ Win32 WM_MOUSE* / KEY
 ### P3 — 有边界增强（须单独立项）
 
 - 组件级 token 字典（Button 虚线/链接）——**非** antd 全家桶一次性移植
-- `darkAlgorithm` / `compactAlgorithm` 运行时派生
+- `darkAlgorithm` / `compactAlgorithm` **运行时**派生（构建期 Seed→Dark Map 快照派生已立，见 F9；运行时仍须单独立项）
 - 声明式 VisualStateGroup 全量（嵌 Template 内；与 internal VSM 禁双轨，须 RFC）
 - ARML `<ControlTemplate>` 字面发射（本轮代码工厂权威）
 - TabControl / DataGrid 专属 chrome 模板化（本轮诚实未迁：Panel 内容子树 / ApplyTo 清行）
@@ -247,7 +247,7 @@ Win32 WM_MOUSE* / KEY
 
 | 要改什么 | 路径 |
 |----------|------|
-| 色值 hex | `std/UI/Core/Themes/Light.arml` / `Dark.arml` → 再生 Colors.g |
+| 色值 hex | `Light.arml`（Seed/Map）→ `scripts/ui-theme/derive-dark-from-light.ps1` → `Dark.arml` → Colors.g；禁手改 Dark 为第二权威 |
 | 尺寸/圆角/字号数值 | `std/UI/Core/Layout/ControlMetrics.as`（`BuiltInTheme.FillNonColor` 镜像进字典） |
 | Button 隐式 + Shared 尺寸 | `Shared.arml` 全局 Primary/Small…（成套）+ `Button.arml` 隐式 `BasedOn Medium`；作者 `Style="{StaticResource Primary, Small}"`（§0.1.1；**禁 Class/Appearance/Size.SM**；无差异不设 `Button.Small`） |
 | Toggle/Check/Radio/TextBox/PasswordBox | 同文件内 `*.Size.SM\|MD\|LG` keyed Style（`Themes/Controls/{Control}.arml`） |

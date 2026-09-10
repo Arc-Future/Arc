@@ -6,11 +6,13 @@
 // 命中（C 写 HitTabIndex → SelectTab），禁为每页签新建 Button（槽位守恒）。
 //
 // **三轨**：布局自持（顶栏 HeaderBarHeight + 客户区）；平台镜像写 TabCount/
-// Header{i}/HeaderWidth{i}/SelectedIndex；渲染走专属 chrome + 子树递归
-// （wgpu 唯一后端）。HeaderWidth = 文案测宽 + 2×TabHeaderPaddingX（WPF 心智：
-// 内容尺寸左对齐，不均分拉满栏宽）。
+// Header{i}/HeaderWidth{i}/HeaderScrollOffset/SelectedIndex；渲染走专属 chrome
+// + 子树递归（wgpu 唯一后端）。HeaderWidth = 文案测宽 + 2×TabHeaderPaddingX
+// （WPF 心智：内容尺寸左对齐，不均分拉满栏宽）。
 //
-// **诚实边界**：无切换动画 / 关闭按钮 / 溢出滚动页签；Header 空串时画「Tab N」。
+// **溢出滚动（最小面）**：页签总宽 > 栏宽时 HeaderScrollOffset 水平裁剪可见区；
+// 命中 = 栏内 localX + offset；滚轮在顶栏调整偏移；选中切换保证选中页签入视。
+// **诚实边界**：无切换动画 / 关闭按钮 / 溢出左右箭头 chrome。
 
 namespace Arc.UI.Components;
 
@@ -28,6 +30,8 @@ public class TabControl : Panel {
         RegisterProperty<int>(nameof(SelectedIndex), typeof(TabControl), 0);
 
     long _mirrorHandle;
+    double _headerScrollOffset;
+    int _ensureSelectedVisible;
 
     /// <summary>构造并绑定 TypeName。</summary>
     public TabControl() {
@@ -40,10 +44,16 @@ public class TabControl : Panel {
         get { return this.GetValue<int>(SelectedIndexProperty); }
         set {
             this.SetValue<int>(SelectedIndexProperty, value);
+            _ensureSelectedVisible = 1;
             this.SyncMirrorSelection();
             // 页切换改可见子树几何 → 布局脏（SetValue 已标；显式保底防镜像-only 路径）。
             FramePump.InvalidateLayout();
         }
+    }
+
+    /// <summary>页签栏水平滚动偏移（内容坐标；渲染/命中同源）。</summary>
+    internal double HeaderScrollOffset {
+        get { return _headerScrollOffset; }
     }
 
     /// <summary>平台镜像句柄（PlatformTreeSync 登记；点击命中写回 HitTabIndex）。</summary>
@@ -51,6 +61,7 @@ public class TabControl : Panel {
         _mirrorHandle = handle;
         this.SyncMirrorHeaders();
         this.SyncMirrorSelection();
+        this.SyncMirrorScroll();
     }
 
     /// <summary>PointerRouter 入口：按 HitTabIndex 切换页（越界忽略）。</summary>
@@ -70,6 +81,104 @@ public class TabControl : Panel {
             return;
         }
         this.SelectedIndex = hit;
+    }
+
+    /// <summary>顶栏滚轮：竖直 delta 映射为水平偏移（与 ScrollView 同刻度）。</summary>
+    internal void ApplyHeaderWheelDelta(int deltaY) {
+        double step = (double)deltaY / 120.0 * 48.0;
+        // 滚轮向下 → 露出更右侧页签（增大偏移）。
+        this.SetHeaderScrollOffsetClamped(_headerScrollOffset - step);
+        this.SyncMirrorScroll();
+        FramePump.Invalidate();
+    }
+
+    /// <summary>布局同步后写回偏移（ScrollRouter Relayout 路径）。</summary>
+    internal void SyncMirrorScroll() {
+        if (_mirrorHandle == 0) {
+            return;
+        }
+        WindowHost.ElementSetNumber(_mirrorHandle, "HeaderScrollOffset", _headerScrollOffset);
+    }
+
+    void SetHeaderScrollOffsetClamped(double value) {
+        double barW = this.ResolveBarWidth();
+        double totalW = this.MeasureHeadersTotalWidth();
+        double max = totalW - barW;
+        if (max < 0.0) {
+            max = 0.0;
+        }
+        if (value < 0.0) {
+            value = 0.0;
+        }
+        if (value > max) {
+            value = max;
+        }
+        _headerScrollOffset = value;
+    }
+
+    double ResolveBarWidth() {
+        if (this.RenderWidth > 0.0) {
+            return this.RenderWidth;
+        }
+        if (_mirrorHandle != 0) {
+            double lw = WindowHost.ElementGetNumber(_mirrorHandle, "LayoutWidth", 0.0);
+            if (lw > 0.0) {
+                return lw;
+            }
+        }
+        return 0.0;
+    }
+
+    double MeasureHeadersTotalWidth() {
+        int tabCount = this.CountTabItems();
+        if (tabCount <= 0) {
+            return 0.0;
+        }
+        double total = 0.0;
+        int t = 0;
+        while (t < tabCount) {
+            double cellW = 0.0;
+            if (_mirrorHandle != 0) {
+                cellW = WindowHost.ElementGetNumber(_mirrorHandle, "HeaderWidth" + t, 0.0);
+            }
+            if (cellW <= 0.0) {
+                cellW = ControlMetrics.TabHeaderMinWidth;
+            }
+            total = total + cellW;
+            t++;
+        }
+        return total;
+    }
+
+    void EnsureSelectedTabVisible(double barW) {
+        if (barW <= 0.0 || _mirrorHandle == 0) {
+            return;
+        }
+        int selected = this.ResolveSelectedIndex();
+        int tabCount = this.CountTabItems();
+        if (tabCount <= 0) {
+            return;
+        }
+        double left = 0.0;
+        int t = 0;
+        while (t < selected) {
+            double cellW = WindowHost.ElementGetNumber(_mirrorHandle, "HeaderWidth" + t, 0.0);
+            if (cellW <= 0.0) {
+                cellW = ControlMetrics.TabHeaderMinWidth;
+            }
+            left = left + cellW;
+            t++;
+        }
+        double selW = WindowHost.ElementGetNumber(_mirrorHandle, "HeaderWidth" + selected, 0.0);
+        if (selW <= 0.0) {
+            selW = ControlMetrics.TabHeaderMinWidth;
+        }
+        double right = left + selW;
+        if (left < _headerScrollOffset) {
+            _headerScrollOffset = left;
+        } else if (right > _headerScrollOffset + barW) {
+            _headerScrollOffset = right - barW;
+        }
     }
 
     void SyncMirrorSelection() {
@@ -205,6 +314,12 @@ public class TabControl : Panel {
     protected override void ArrangeOverride(LayoutSize finalSize) {
         this.SyncMirrorHeaders();
         this.SyncMirrorSelection();
+        if (_ensureSelectedVisible != 0) {
+            this.EnsureSelectedTabVisible(finalSize.Width);
+            _ensureSelectedVisible = 0;
+        }
+        this.SetHeaderScrollOffsetClamped(_headerScrollOffset);
+        this.SyncMirrorScroll();
         int selected = this.ResolveSelectedIndex();
         int tabCount = this.CountTabItems();
         double offscreen = -1000000.0;

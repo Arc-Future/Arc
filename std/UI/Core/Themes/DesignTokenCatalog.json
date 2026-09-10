@@ -1,0 +1,397 @@
+{
+  "schema": "arc.ui.design-token-catalog/v1",
+  "tokens": [
+    {
+      "name": "Color.Background",
+      "category": "Color",
+      "role": "Background",
+      "bareForbidden": true,
+      "lightValue": "#FFF5F5F5"
+    },
+    {
+      "name": "Color.Border",
+      "category": "Color",
+      "role": "Border",
+      "bareForbidden": true,
+      "lightValue": "#FFD9D9D9"
+    },
+    {
+      "name": "Color.Border.Disabled",
+      "category": "Color",
+      "role": "Border.Disabled",
+      "bareForbidden": true,
+      "lightValue": "#FFD9D9D9"
+    },
+    {
+      "name": "Color.Danger",
+      "category": "Color",
+      "role": "Danger",
+      "bareForbidden": true,
+      "lightValue": "#FFFF4D4F"
+    },
+    {
+      "name": "Color.Danger.Hover",
+      "category": "Color",
+      "role": "Danger.Hover",
+      "bareForbidden": true,
+      "lightValue": "#FFFF7875"
+    },
+    {
+      "name": "Color.Danger.Pressed",
+      "category": "Color",
+      "role": "Danger.Pressed",
+      "bareForbidden": true,
+      "lightValue": "#FFD9363E"
+    },
+    {
+      "name": "Color.Disabled.Fill",
+      "category": "Color",
+      "role": "Disabled.Fill",
+      "bareForbidden": true,
+      "lightValue": "#FFF5F5F5"
+    },
+    {
+      "name": "Color.Disabled.Text",
+      "category": "Color",
+      "role": "Disabled.Text",
+      "bareForbidden": true,
+      "lightValue": "#FFBFBFBF"
+    },
+    {
+      "name": "Color.Focus.Ring",
+      "category": "Color",
+      "role": "Focus.Ring",
+      "bareForbidden": true,
+      "lightValue": "#661677FF"
+    },
+    {
+      "name": "Color.Image.Border",
+      "category": "Color",
+      "role": "Image.Border",
+      "bareForbidden": true,
+      "lightValue": "#FF606060"
+    },
+    {
+      "name": "Color.Image.Fill",
+      "category": "Color",
+      "role": "Image.Fill",
+      "bareForbidden": true,
+      "lightValue": "#FFD0D0D0"
+    },
+    {
+      "name": "Color.Overlay",
+      "category": "Color",
+      "role": "Overlay",
+      "bareForbidden": true,
+      "lightValue": "#73000000"
+    },
+    {
+      "name": "Color.Primary",
+      "category": "Color",
+      "role": "Primary",
+      "bareForbidden": true,
+      "lightValue": "#FF1677FF"
+    },
+    {
+      "name": "Color.Primary.Hover",
+      "category": "Color",
+      "role": "Primary.Hover",
+      "bareForbidden": true,
+      "lightValue": "#FF4096FF"
+    },
+    {
+      "name": "Color.Primary.Pressed",
+      "category": "Color",
+      "role": "Primary.Pressed",
+      "bareForbidden": true,
+      "lightValue": "#FF0958D9"
+    },
+    {
+      "name": "Color.Scroll.Thumb",
+      "category": "Color",
+      "role": "Scroll.Thumb",
+      "bareForbidden": true,
+      "lightValue": "#FFBFBFBF"
+    },
+    {
+      "name": "Color.Scroll.Thumb.Hover",
+      "category": "Color",
+      "role": "Scroll.Thumb.Hover",
+      "bareForbidden": true,
+      "lightValue": "#FF8C8C8C"
+    },
+    {
+      "name": "Color.Scroll.Thumb.Pressed",
+      "category": "Color",
+      "role": "Scroll.Thumb.Pressed",
+      "bareForbidden": true,
+      "lightValue": "#FF595959"
+    },
+    {
+      "name": "Color.Scroll.Track",
+      "category": "Color",
+      "role": "Scroll.Track",
+      "bareForbidden": true,
+      "lightValue": "#FFF5F5F5"
+    },
+    {
+      "name": "Color.Slider.Track",
+      "category": "Color",
+      "role": "Slider.Track",
+      "bareForbidden": true,
+      "lightValue": "#FFF0F0F0"
+    },
+    {
+      "name": "Color.Success",
+      "category": "Color",
+      "role": "Success",
+      "bareForbidden": true,
+      "lightValue": "#FF52C41A"
+    },
+    {
+      "name": "Color.Surface",
+      "category": "Color",
+      "role": "Surface",
+      "bareForbidden": true,
+      "lightValue": "#FFFFFFFF"
+    },
+    {
+      "name": "Color.Surface.Hover",
+      "category": "Color",
+      "role": "Surface.Hover",
+      "bareForbidden": true,
+      "lightValue": "#FFE6F4FF"
+    },
+    {
+      "name": "Color.Surface.Stripe",
+      "category": "Color",
+      "role": "Surface.Stripe",
+      "bareForbidden": true,
+      "lightValue": "#FFFAFAFA"
+    },
+    {
+      "name": "Color.Text.Highlight",
+      "category": "Color",
+      "role": "Text.Highlight",
+      "bareForbidden": true,
+      "lightValue": "#FFF4C2"
+    },
+    {
+      "name": "Color.Text.OnAccent",
+      "category": "Color",
+      "role": "Text.OnAccent",
+      "bareForbidden": true,
+      "lightValue": "#FFFFFFFF"
+    },
+    {
+      "name": "Color.Text.Placeholder",
+      "category": "Color",
+      "role": "Text.Placeholder",
+      "bareForbidden": true,
+      "lightValue": "#FFBFBFBF"
+    },
+    {
+      "name": "Color.Text.Primary",
+      "category": "Color",
+      "role": "Text.Primary",
+      "bareForbidden": true,
+      "lightValue": "#E0000000"
+    },
+    {
+      "name": "Color.Text.Secondary",
+      "category": "Color",
+      "role": "Text.Secondary",
+      "bareForbidden": true,
+      "lightValue": "#A6000000"
+    },
+    {
+      "name": "Color.Text.Selection",
+      "category": "Color",
+      "role": "Text.Selection",
+      "bareForbidden": true,
+      "lightValue": "#401677FF"
+    },
+    {
+      "name": "Color.Transparent",
+      "category": "Color",
+      "role": "Transparent",
+      "bareForbidden": true,
+      "lightValue": "#00000000"
+    },
+    {
+      "name": "Color.Warning",
+      "category": "Color",
+      "role": "Warning",
+      "bareForbidden": true,
+      "lightValue": "#FFFAAD14"
+    },
+    {
+      "name": "Font.Body.Family",
+      "category": "Font",
+      "role": "Body.Family",
+      "bareForbidden": true
+    },
+    {
+      "name": "Font.Body.Size",
+      "category": "Font",
+      "role": "Body.Size",
+      "bareForbidden": true
+    },
+    {
+      "name": "Font.Caption.Size",
+      "category": "Font",
+      "role": "Caption.Size",
+      "bareForbidden": true
+    },
+    {
+      "name": "Font.Heading.Size",
+      "category": "Font",
+      "role": "Heading.Size",
+      "bareForbidden": true
+    },
+    {
+      "name": "Motion.Duration.Fast",
+      "category": "Motion",
+      "role": "Duration.Fast",
+      "bareForbidden": true
+    },
+    {
+      "name": "Motion.Duration.Normal",
+      "category": "Motion",
+      "role": "Duration.Normal",
+      "bareForbidden": true
+    },
+    {
+      "name": "Motion.Easing.In",
+      "category": "Motion",
+      "role": "Easing.In",
+      "bareForbidden": true
+    },
+    {
+      "name": "Motion.Easing.InOut",
+      "category": "Motion",
+      "role": "Easing.InOut",
+      "bareForbidden": true
+    },
+    {
+      "name": "Motion.Easing.Linear",
+      "category": "Motion",
+      "role": "Easing.Linear",
+      "bareForbidden": true
+    },
+    {
+      "name": "Motion.Easing.Standard",
+      "category": "Motion",
+      "role": "Easing.Standard",
+      "bareForbidden": true
+    },
+    {
+      "name": "Radius.Control",
+      "category": "Radius",
+      "role": "Control",
+      "bareForbidden": true
+    },
+    {
+      "name": "Radius.Pill",
+      "category": "Radius",
+      "role": "Pill",
+      "bareForbidden": true
+    },
+    {
+      "name": "Radius.Surface",
+      "category": "Radius",
+      "role": "Surface",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Border.Padding",
+      "category": "Size",
+      "role": "Border.Padding",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Border.Thickness",
+      "category": "Size",
+      "role": "Border.Thickness",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Control.Height",
+      "category": "Size",
+      "role": "Control.Height",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Control.Height.LG",
+      "category": "Size",
+      "role": "Control.Height.LG",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Control.Height.SM",
+      "category": "Size",
+      "role": "Control.Height.SM",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Control.Padding",
+      "category": "Size",
+      "role": "Control.Padding",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Control.Padding.LG",
+      "category": "Size",
+      "role": "Control.Padding.LG",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Control.Padding.SM",
+      "category": "Size",
+      "role": "Control.Padding.SM",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Progress.Thickness",
+      "category": "Size",
+      "role": "Progress.Thickness",
+      "bareForbidden": true
+    },
+    {
+      "name": "Size.Slider.Height",
+      "category": "Size",
+      "role": "Slider.Height",
+      "bareForbidden": true
+    },
+    {
+      "name": "Spacing.LG",
+      "category": "Spacing",
+      "role": "LG",
+      "bareForbidden": true
+    },
+    {
+      "name": "Spacing.MD",
+      "category": "Spacing",
+      "role": "MD",
+      "bareForbidden": true
+    },
+    {
+      "name": "Spacing.SM",
+      "category": "Spacing",
+      "role": "SM",
+      "bareForbidden": true
+    },
+    {
+      "name": "Spacing.XL",
+      "category": "Spacing",
+      "role": "XL",
+      "bareForbidden": true
+    },
+    {
+      "name": "Spacing.XS",
+      "category": "Spacing",
+      "role": "XS",
+      "bareForbidden": true
+    }
+  ]
+}

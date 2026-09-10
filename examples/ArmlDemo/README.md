@@ -20,8 +20,10 @@
 | 6 IME | 双 TextBox + IME/caret + **Ctrl+C/V/X** + **双击词选** | ✅ | 三击行选后置 |
 | 7 Style | 显式 keyed DangerButtonStyle vs 短键 `Danger` / `Primary, Large`（亦可限定键）vs VisualHost | ✅ 非全局污染；禁 Class/Appearance | — |
 | 8 Data | CodeEditor + DataGrid ItemsSource | ✅ 选中/虚拟化 | Observable 行增量 + 多实例并发 ✅ |
+| 9 Tree | TreeView ItemsSource + **FlatIndex 视口（M-VZ4 最小面）** + 键盘 | ✅ 可点 + Tab + 视口池 | 非完整层级路径虚拟化 |
+| 10–12 Overflow | 长 Header 挤栏 → **顶栏滚轮水平滚** + 点击命中跟偏移 | ✅ 溢出冒烟 | 无箭头 chrome / 无切换动画 |
 
-**浮层**：Controls 页「Open demo Popup」与 ComboBox 下拉均走 Popup M1（`Open(owner)` / 蒙层轻关闭 / Esc）。**MessageBox**：「OK」/「OKCancel」/「YesNo」/「YesNoCancel」→ `ShowAsync` + `MessageBoxImage` 自绘色块图标（Popup `IsLightDismissEnabled=false`；Esc 自管；禁原生对话框）。
+**浮层**：Controls 页「Open demo Popup」/「Open stacked Popup」与 ComboBox 下拉均走 Popup（`Open(owner)` / 蒙层轻关闭 / Esc LIFO · **后开在上**）。**MessageBox**：「OK」/「OKCancel」/「YesNo」/「YesNoCancel」→ `ShowAsync` + `MessageBoxImage` 自绘色块图标（Popup `IsLightDismissEnabled=false`；Esc 自管；禁原生对话框）。
 
 ## 运行
 
@@ -30,7 +32,7 @@ cargo run -p arc -- build examples/ArmlDemo
 examples/ArmlDemo/bin/Debug/ArmlDemo.exe
 ```
 
-Win32 上应弹出 720×640 窗口：顶栏 8 个内置页签（**按文案测宽左对齐**，选中 Accent 底线）。Esc：若有 Popup 轻关闭则关下拉，否则关主窗。
+Win32 上应弹出 720×640 窗口：顶栏多页签（**按文案测宽左对齐**，选中 Accent 底线；总宽超出时顶栏滚轮水平滚）。Esc：若有 Popup 轻关闭则关下拉，否则关主窗。
 
 ## 样式演示口径（P1）
 
@@ -38,10 +40,11 @@ Win32 上应弹出 720×640 窗口：顶栏 8 个内置页签（**按文案测�
 
 ## 已知挂账
 
-- TabControl：无切换动画 / 溢出滚动页签 / 关闭按钮。
+- TabControl：无切换动画 / 关闭按钮 / 溢出左右箭头；**溢出滚动最小面 ✅**（HeaderScrollOffset + 裁剪 + 顶栏滚轮）。
 - 独立 ScrollBar 控件延后（竖条嵌于 ScrollView；命中在 C `rt_ui_vscroll_*`）。
 - ProgressBar `IsIndeterminate` 扫掠 ✅；PasswordBox 掩码 ✅（禁 Copy/Cut；允许 Paste）；Border ✅（非均匀描边绘制取 max）；TextBox/PasswordBox **剪贴板** ✅；**双击词选** ✅。
-- ComboBox 下拉 **钳高 ScrollView 外壳** ✅；多弹层 Z 序后置。
+- ComboBox 下拉 **钳高 ScrollView 外壳** ✅；**多弹层 Z 序 ✅**（后开在上 · Esc/蒙层严格 LIFO）。
 - `ComboBox<T>`：`SetOptions` + `Enum.GetOptions&lt;DemoThemeKind&gt;()` 烘焙 count=3 冒烟；ARML 控件仍 `ComboBoxBase`+ItemsSource。
 - `IsFocusVisible`：Tab/方向键显示焦点环；点击 TextBox 等指针聚焦清环（caret 仍跟 `IsFocused`）。
 - ListView：**键盘导航**（↑↓/Home/End/Enter → Selector）✅。
+- TreeView：**M-VZ4 FlatIndex 视口最小面** ✅（可见行窗口 + 回收池；ArmlDemo Bulk≥80）；诚实：非完整层级路径虚拟化。

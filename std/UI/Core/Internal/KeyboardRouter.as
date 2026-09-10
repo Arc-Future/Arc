@@ -40,7 +40,8 @@ internal class KeyboardRouter {
 
     /// <summary>平台 WM_KEYDOWN：vk + mods → 弹层 Esc / 编辑 / 焦点导航。</summary>
     internal static void OnKey(int virtualKey, int mods) {
-        // Esc 优先：轻关闭顶层 Popup → MessageBox 模态自管 → 有活跃弹层则勿退窗 → 否则关主窗。
+        // Esc 优先：轻关闭顶层 Popup（严格 LIFO，不穿透非轻关闭顶层）
+        // → MessageBox 模态自管 → 有活跃弹层则勿退窗 → 否则关主窗。
         if (virtualKey == FocusManager.VirtualKeyEscape()) {
             if (Popup.TryDismissTopOnEscape()) {
                 return;

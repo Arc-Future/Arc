@@ -5,13 +5,19 @@
 //   Arc:  Primitives.Selector → Primitives.MultiSelector → DataGrid
 //
 // 职责：多选语义通用封装——SelectionMode DP（Single/Multiple/Extended）+ SelectedItems
-// 选中集合 + 增量选中 API（SelectItem/SelectAll/ClearSelection）。单选语义（四 DP +
-// SelectIndex 模板方法 + 五钩子 + 镜像/Signal）由基类 Selector 承载；多选态下
-// SelectedIndex/SelectedItem 反映主选中（最后选中项），平台镜像高亮跟随主选中。
+// 选中集合 + 增量选中 API（SelectItem/SelectAll/ClearSelection）+ 指针修饰键手势
+// （SelectIndexWithMods）。单选语义（四 DP + SelectIndex 模板方法 + 五钩子 + 镜像/
+// Signal）由基类 Selector 承载；多选态下 SelectedIndex/SelectedItem 反映主选中
+// （最后选中项），平台镜像高亮跟随主选中。
 //
-// 诚实边界：SelectedItems 集合不参与镜像同步（PlatformTreeSync 契约为单值
-// SelectedIndex number，多选镜像语义属平台渲染端后续面）；SelectedItems 条目为
-// object 项数据本体（数据面 object 管道，WPF SelectedItems object 集合同构）。
+// 诚实边界：
+//   - SelectedItems 集合不参与镜像同步（PlatformTreeSync 契约为单值 SelectedIndex
+//     number，多选镜像语义属平台渲染端后续面）
+//   - SelectedItems 条目为 object 项数据本体（数据面 object 管道，WPF object 集合同构）
+//   - 成员判定以逻辑下标表为准（避开 List<object> 对 DataGrid 单元格串 Contains 不可靠）
+//   - 程序化多选 ✅；Ctrl/Shift 修饰键手势最小面 ✅（SelectionMode=Multiple/Extended；
+//     mods bit0=Shift bit1=Ctrl，同 RFC 037 §8；PointerRouter DataGrid 槽读 HitMods）
+//   - SelectionChanged 仍走基类 Signal<string> 直挂 Subscribe（禁包装 lambda 逃逸）
 
 namespace Arc.UI.Components.Primitives;
 
@@ -33,15 +39,18 @@ public class MultiSelector : Selector {
         this.Type = typeof(MultiSelector);
         this.TypeName = "MultiSelector";
         _selectedItems = new List<object>();
+        _selectedIndices = new List<int>();
+        _selectionAnchor = -1;
     }
 
     private List<object> _selectedItems;
 
-    // ===== 静态依赖属性元数据（RFC 037 D1 WPF 同构）=====
+    /// <summary>与 SelectedItems 平行的逻辑下标表——成员判定唯一权威。</summary>
+    private List<int> _selectedIndices;
 
-    /// <summary>SelectionMode 属性元数据——选择模式，默认 "Single"（从单选层上移：
-    /// 模式是多选语义载体，单选层 Selector 不感知）。</summary>
-    /// <value>"Single" / "Multiple" / "Extended"</value>
+    /// <summary>Shift 范围选锚点（WPF 心智：普通/Ctrl 点击更新；Shift 点击不改锚）。</summary>
+    private int _selectionAnchor;
+
     public static DependencyProperty<string> SelectionModeProperty =
         RegisterProperty<string>(nameof(SelectionMode), typeof(MultiSelector), "Single");
 
@@ -51,20 +60,17 @@ public class MultiSelector : Selector {
         set { this.SetValue<string>(SelectionModeProperty, value); }
     }
 
-    /// <summary>是否允许多选（WPF CanSelectMultiple 对标，以 protected virtual 方法
-    /// 承载——与选择钩子同惯用法）。Multiple/Extended 返回 true，派生控件可覆写扩展判定。</summary>
+    /// <summary>是否允许多选（Multiple/Extended）。</summary>
     protected virtual bool CanSelectMultiple() {
         return this.SelectionMode != "Single";
     }
 
-    /// <summary>当前选中项集合（只读面：条目单一来源归一，不暴露可变写面——写入选
-    /// 经 SelectItem/SelectAll/ClearSelection）。条目为数据项本体（WPF object 集合同构）。</summary>
+    /// <summary>当前选中项集合（只读面；写入经 SelectItem/SelectAll/ClearSelection/SelectIndexWithMods）。</summary>
     public List<object> SelectedItems {
         get { return _selectedItems; }
     }
 
-    /// <summary>按索引定位项数据本体（默认数据源视图 ItemAt，不受虚拟化物化窗口
-    /// 限制；DataGrid 覆写为行首列单元格）。无数据/越界返回 null。</summary>
+    /// <summary>按索引定位项数据本体；DataGrid 覆写为行首列单元格。</summary>
     protected virtual object ItemDataAt(int index) {
         ItemSourceView view = this.View;
         if (view == null || index < 0 || index >= view.Count) {
@@ -73,9 +79,41 @@ public class MultiSelector : Selector {
         return view.ItemAt(index);
     }
 
-    /// <summary>增量选中指定项：单选模式回落 SelectIndex（单选链完整流程）；多选模式
-    /// 累加 SelectedItems 并将主选中（SelectedIndex/SelectedItem，镜像高亮跟随）指向
-    /// 该项，SelectionChanged 触发。越界忽略。</summary>
+    /// <summary>SelectIndex 主选中路径：替换 SelectedItems；-1 清空。</summary>
+    protected override void SyncSelectionCollection(int index) {
+        this.ClearSelectionSets();
+        _selectionAnchor = index;
+        if (index < 0) {
+            return;
+        }
+        this.AddSelectedIndex(index);
+    }
+
+    /// <summary>指针点击入口：mods bit0=Shift bit1=Ctrl（RFC 037 §8）。
+    /// Multiple：Shift 范围 / Ctrl 切换 / 无修饰替换。SelectionChanged 直挂。</summary>
+    public void SelectIndexWithMods(int index, int mods) {
+        int count = this.SelectionItemCount();
+        if (index < -1 || index >= count) {
+            return;
+        }
+        if (!this.CanSelectMultiple() || index < 0) {
+            this.SelectIndex(index);
+            return;
+        }
+        bool shift = (mods & 1) != 0;
+        bool ctrl = (mods & 2) != 0;
+        if (shift) {
+            this.SelectRangeFromAnchor(index);
+            return;
+        }
+        if (ctrl) {
+            this.ToggleItemSelection(index);
+            return;
+        }
+        this.SelectIndex(index);
+    }
+
+    /// <summary>增量选中；单选回落 SelectIndex；多选累加并触发 SelectionChanged。</summary>
     public void SelectItem(int index) {
         int count = this.SelectionItemCount();
         if (index < 0 || index >= count) {
@@ -85,36 +123,28 @@ public class MultiSelector : Selector {
             this.SelectIndex(index);
             return;
         }
-        object item = this.ItemDataAt(index);
-        if (item == null) {
-            return;
-        }
-        if (!this.SelectedItems.Contains(item)) {
-            this.SelectedItems.Add(item);
-        }
+        this.AddSelectedIndex(index);
+        _selectionAnchor = index;
         this.ApplySelectedIndexCore(index);
         this.SyncMirrorSelection();
         this.OnSelectionApplied();
         this.RaiseSelectionChanged();
     }
 
-    /// <summary>全选（仅多选模式，单选模式忽略）：SelectedItems 清空后全量采集，
-    /// 主选中指向最后一项，SelectionChanged 单次触发。</summary>
+    /// <summary>全选（仅多选）；SelectionChanged 单次触发。</summary>
     public void SelectAll() {
         if (!this.CanSelectMultiple()) {
             return;
         }
         int count = this.SelectionItemCount();
-        this.SelectedItems.Clear();
+        this.ClearSelectionSets();
         int i = 0;
         while (i < count) {
-            object item = this.ItemDataAt(i);
-            if (item != null) {
-                this.SelectedItems.Add(item);
-            }
+            this.AddSelectedIndex(i);
             i++;
         }
         if (count > 0) {
+            _selectionAnchor = count - 1;
             this.ApplySelectedIndexCore(count - 1);
         }
         this.SyncMirrorSelection();
@@ -122,10 +152,84 @@ public class MultiSelector : Selector {
         this.RaiseSelectionChanged();
     }
 
-    /// <summary>清空选中：SelectedItems 清空 + 主选中回 -1（复用单选链完整流程：
-    /// 镜像高亮复位 + 附加同步 + SelectionChanged）。</summary>
+    /// <summary>清空选中。</summary>
     public void ClearSelection() {
-        this.SelectedItems.Clear();
+        this.ClearSelectionSets();
         this.SelectIndex(-1);
+    }
+
+    void ToggleItemSelection(int index) {
+        int slot = this.IndexOfSelectedIndex(index);
+        if (slot >= 0) {
+            this.RemoveSelectedAt(slot);
+            if (_selectedIndices.Count == 0) {
+                this.ApplySelectedIndexCore(-1);
+            } else if (this.SelectedIndex == index) {
+                this.ApplySelectedIndexCore(_selectedIndices[0]);
+            }
+        } else {
+            this.AddSelectedIndex(index);
+            this.ApplySelectedIndexCore(index);
+        }
+        _selectionAnchor = index;
+        this.SyncMirrorSelection();
+        this.OnSelectionApplied();
+        this.RaiseSelectionChanged();
+    }
+
+    void SelectRangeFromAnchor(int index) {
+        int anchor = _selectionAnchor;
+        if (anchor < 0 || anchor >= this.SelectionItemCount()) {
+            anchor = index;
+        }
+        int lo = anchor;
+        int hi = index;
+        if (lo > hi) {
+            lo = index;
+            hi = anchor;
+        }
+        this.ClearSelectionSets();
+        int i = lo;
+        while (i <= hi) {
+            this.AddSelectedIndex(i);
+            i++;
+        }
+        this.ApplySelectedIndexCore(index);
+        this.SyncMirrorSelection();
+        this.OnSelectionApplied();
+        this.RaiseSelectionChanged();
+    }
+
+    void ClearSelectionSets() {
+        this.SelectedItems.Clear();
+        _selectedIndices.Clear();
+    }
+
+    void AddSelectedIndex(int index) {
+        if (this.IndexOfSelectedIndex(index) >= 0) {
+            return;
+        }
+        object item = this.ItemDataAt(index);
+        if (item == null) {
+            return;
+        }
+        this.SelectedItems.Add(item);
+        _selectedIndices.Add(index);
+    }
+
+    void RemoveSelectedAt(int slot) {
+        this.SelectedItems.RemoveAt(slot);
+        _selectedIndices.RemoveAt(slot);
+    }
+
+    int IndexOfSelectedIndex(int index) {
+        int i = 0;
+        while (i < _selectedIndices.Count) {
+            if (_selectedIndices[i] == index) {
+                return i;
+            }
+            i++;
+        }
+        return -1;
     }
 }

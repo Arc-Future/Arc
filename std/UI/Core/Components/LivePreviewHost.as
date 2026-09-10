@@ -26,6 +26,7 @@ namespace Arc.UI.Components;
 using Arc.Collections;
 using Arc.Drawing;
 using Arc.UI;
+using Arc.UI.Layout;
 using Arc.UI.Markup;
 using Arc.UI.Media;
 using Arc.UI.Rendering;
@@ -248,16 +249,16 @@ public class LivePreviewHost : VisualHost {
             ch = vh;
         }
 
-        // 2. 全帧直接保存
+        // 2. 全帧：经 PngEncoder（渲染域门面；与 Bitmap.Save 同 ABI，禁双轨）
         bool fullFrame = (x <= 0.0 && y <= 0.0 &&
                         cw >= vw && ch >= vh);
         if (fullFrame) {
-            frameBitmap.Save(filePath);
+            bool encoded = PngEncoder.Encode(filePath, pixels, vw, vh);
             frameBitmap.Dispose();
-            return true;
+            return encoded;
         }
 
-        // 3. 裁剪：创建目标位图并逐像素拷贝
+        // 3. 裁剪：创建目标位图并逐像素拷贝，再经 PngEncoder 落盘
         Bitmap cropped = new Bitmap(cw, ch);
         int ix = (int)x;
         int iy = (int)y;
@@ -274,22 +275,38 @@ public class LivePreviewHost : VisualHost {
                 cropped.SetPixel(px, py, color);
             }
         }
-        cropped.Save(filePath);
+        bool croppedOk = PngEncoder.Encode(filePath, cropped.GetPixels(), cw, ch);
         cropped.Dispose();
         frameBitmap.Dispose();
-        return true;
+        return croppedOk;
     }
 
     /// <summary>
-    /// 获取布局快照——遍历元素树，收集结构化布局信息。
-    /// AI 可通过此方法理解 UI 结构（元素类型、位置、尺寸、属性）。
+    /// 获取布局快照——与引擎 Measure/Arrange 同源，收集结构化布局树。
+    /// 未加载或布局未完成时返回 null（显式错误，不返回半成品）。
     /// </summary>
-    /// <returns>布局快照（根节点，含子树）。</returns>
-    public LayoutSnapshotNode GetLayoutSnapshot() {
+    /// <returns>布局快照（视口 + 根树）；不可用时 null。</returns>
+    public LayoutSnapshot GetLayoutSnapshot() {
         if (_rootElement == null) {
             return null;
         }
-        return this.BuildSnapshotRecursive(_rootElement);
+
+        // 快照前强制同源布局（与 TreeDrawListBuilder.PerformLayout 同契约）。
+        this.EnsureLayoutForSnapshot();
+
+        FrameworkElement rootFe = null;
+        if (_rootElement is FrameworkElement) {
+            rootFe = (FrameworkElement)_rootElement;
+        }
+        if (rootFe != null && !rootFe.IsMeasured) {
+            return null;
+        }
+
+        LayoutSnapshot snap = new LayoutSnapshot();
+        snap.ViewportWidth = _viewportWidth;
+        snap.ViewportHeight = _viewportHeight;
+        snap.Root = this.BuildSnapshotRecursive(_rootElement, 0);
+        return snap;
     }
 
     /// <summary>
@@ -412,16 +429,44 @@ public class LivePreviewHost : VisualHost {
     }
 
     /// <summary>
-    /// 构建布局快照（递归）。
+    /// 与 TreeDrawListBuilder 同源：对根执行 Measure/Arrange。
     /// </summary>
-    private LayoutSnapshotNode BuildSnapshotRecursive(Element element) {
+    private void EnsureLayoutForSnapshot() {
+        if (_rootElement == null) {
+            return;
+        }
+        FrameworkElement rootFe = null;
+        if (_rootElement is FrameworkElement) {
+            rootFe = (FrameworkElement)_rootElement;
+        }
+        if (rootFe == null) {
+            return;
+        }
+        LayoutSize available = new LayoutSize(_viewportWidth, _viewportHeight);
+        rootFe.Measure(available);
+        rootFe.Arrange(new LayoutSize(_viewportWidth, _viewportHeight));
+    }
+
+    /// <summary>
+    /// 构建布局快照节点（递归；zOrder = 兄弟序）。
+    /// </summary>
+    private LayoutNode BuildSnapshotRecursive(Element element, int zOrder) {
         if (element == null) {
             return null;
         }
 
-        LayoutSnapshotNode node = new LayoutSnapshotNode();
+        LayoutNode node = new LayoutNode();
         node.TypeName = element.TypeName;
         node.Name = element.Name;
+        node.ZOrder = zOrder;
+        node.Visible = true;
+        node.Margin = new Thickness(0.0);
+        node.Padding = new Thickness(0.0);
+        node.FontFamily = null;
+        node.FontSize = 0.0;
+        node.FontWeight = 400;
+        node.HAlignment = HorizontalAlignment.Stretch;
+        node.VAlignment = VerticalAlignment.Stretch;
 
         FrameworkElement fe = null;
         if (element is FrameworkElement) {
@@ -432,16 +477,41 @@ public class LivePreviewHost : VisualHost {
             node.Y = fe.LayoutY;
             node.Width = fe.RenderWidth;
             node.Height = fe.RenderHeight;
+            node.HAlignment = fe.HorizontalAlignment;
+            node.VAlignment = fe.VerticalAlignment;
+            node.Margin = Thickness.Parse(fe.Margin).Sanitized();
         }
 
-        // 收集关键属性
-        node.Properties = this.CollectKeyProperties(element);
+        Border border = null;
+        if (element is Border) {
+            border = (Border)element;
+        }
+        if (border != null) {
+            node.Padding = Thickness.Parse(border.Padding).Sanitized();
+        }
 
-        // 递归子元素
+        Control ctrl = null;
+        if (element is Control) {
+            ctrl = (Control)element;
+        }
+        if (ctrl != null) {
+            node.FontFamily = ctrl.FontFamily;
+            node.FontSize = ctrl.FontSize;
+            node.FontWeight = this.ParseFontWeight(ctrl.FontWeight);
+        }
+
+        TextBlock tb = null;
+        if (element is TextBlock) {
+            tb = (TextBlock)element;
+        }
+        if (tb != null) {
+            node.TextLines = this.BuildTextLineBoxes(tb, fe);
+        }
+
         if (element.Children != null) {
-            node.Children = new List<LayoutSnapshotNode>();
+            node.Children = new List<LayoutNode>();
             for (int i = 0; i < element.Children.Count; i++) {
-                LayoutSnapshotNode child = this.BuildSnapshotRecursive(element.Children[i]);
+                LayoutNode child = this.BuildSnapshotRecursive(element.Children[i], i);
                 if (child != null) {
                     node.Children.Add(child);
                 }
@@ -451,117 +521,77 @@ public class LivePreviewHost : VisualHost {
         return node;
     }
 
-    private Dictionary<string, string> CollectKeyProperties(Element element) {
-        Dictionary<string, string> props = new Dictionary<string, string>();
-
-        // Background
-        string bg = this.TryGetBgSimple(element);
-        if (bg != null) {
-            props["Background"] = bg;
+    /// <summary>
+    /// 文本行盒：与 MeasureOverride / EstimateTextSize 同源（禁字符数估算）。
+    /// 当前 TextBlock 为单行度量面——产出一行盒。
+    /// </summary>
+    private List<TextLineBox> BuildTextLineBoxes(TextBlock tb, FrameworkElement fe) {
+        List<TextLineBox> lines = new List<TextLineBox>();
+        if (tb == null) {
+            return lines;
         }
-
-        // Foreground
-        string fg = this.TryGetFgSimple(element);
-        if (fg != null) {
-            props["Foreground"] = fg;
+        string text = tb.Text;
+        if (text == null) {
+            text = "";
         }
-
-        // Text / Content
-        string text = this.TryGetTextSimple(element);
-        if (text != null && text.Length > 0) {
-            props["Text"] = text;
+        double fs = tb.FontSize;
+        if (fs <= 0.0) {
+            fs = 14.0;
         }
-
-        // FontSize
-        double fs = this.TryGetFontSizeSimple(element);
-        if (fs > 0.0) {
-            props["FontSize"] = fs.ToString();
-        }
-
-        // Width / Height (if explicitly set)
-        FrameworkElement fe = null;
-        if (element is FrameworkElement) {
-            fe = (FrameworkElement)element;
-        }
+        // pad=0：行盒为字形度量本身；元素 Padding/Margin 已在节点级字段。
+        LayoutSize sz = LayoutHelper.EstimateTextSize(
+            text, fs, 0.0, 0.0, tb.FontFamily, tb.FontWeight);
+        TextLineBox box = new TextLineBox();
         if (fe != null) {
-            if (fe.Width > 0.0) {
-                props["Width"] = fe.Width.ToString();
+            box.X = fe.LayoutX;
+            box.Y = fe.LayoutY;
+        }
+        box.Width = sz.Width;
+        box.Height = sz.Height;
+        // 基线近似：行高内偏下（与常见西文基线比例；精确 glyph baseline 后置）。
+        box.Baseline = box.Y + (sz.Height * 0.8);
+        box.PrefixWidth = 0.0;
+        lines.Add(box);
+        return lines;
+    }
+
+    private int ParseFontWeight(string weight) {
+        if (weight == null || weight.Length == 0) {
+            return 400;
+        }
+        if (weight == "Bold" || weight == "700") {
+            return 700;
+        }
+        if (weight == "Normal" || weight == "400") {
+            return 400;
+        }
+        if (weight == "Light" || weight == "300") {
+            return 300;
+        }
+        if (weight == "Medium" || weight == "500") {
+            return 500;
+        }
+        if (weight == "SemiBold" || weight == "600") {
+            return 600;
+        }
+        if (weight == "Black" || weight == "900") {
+            return 900;
+        }
+        // 数字字面量
+        int n = 0;
+        bool ok = true;
+        for (int i = 0; i < weight.Length; i++) {
+            char c = weight[i];
+            if (c < '0' || c > '9') {
+                ok = false;
+                break;
             }
-            if (fe.Height > 0.0) {
-                props["Height"] = fe.Height.ToString();
-            }
+            n = n * 10 + (int)(c - '0');
         }
-
-        return props;
-    }
-
-    private string TryGetBgSimple(Element element) {
-        Control ctrl = null;
-        if (element is Control) {
-            ctrl = (Control)element;
+        if (ok && n > 0) {
+            return n;
         }
-        if (ctrl != null) {
-            return ctrl.Background;
-        }
-        return null;
-    }
-
-    private string TryGetFgSimple(Element element) {
-        Control ctrl = null;
-        if (element is Control) {
-            ctrl = (Control)element;
-        }
-        if (ctrl != null) {
-            return ctrl.Foreground;
-        }
-        return null;
-    }
-
-    private string TryGetTextSimple(Element element) {
-        TextBlock tb = null;
-        if (element is TextBlock) {
-            tb = (TextBlock)element;
-        }
-        if (tb != null) {
-            return tb.Text;
-        }
-        TextBox txb = null;
-        if (element is TextBox) {
-            txb = (TextBox)element;
-        }
-        if (txb != null) {
-            return txb.Text;
-        }
-        ContentControl cc = null;
-        if (element is ContentControl) {
-            cc = (ContentControl)element;
-        }
-        if (cc != null) {
-            Content content = cc.Content;
-            switch (content)
-            {
-                case Content.Text(s):
-                {
-                    return s;
-                }
-                default:
-                {
-                    break;
-                }
-            }
-        }
-        return null;
-    }
-
-    private double TryGetFontSizeSimple(Element element) {
-        Control ctrl = null;
-        if (element is Control) {
-            ctrl = (Control)element;
-        }
-        if (ctrl != null) {
-            return ctrl.FontSize;
-        }
-        return 0.0;
+        return 400;
     }
 
 }
@@ -578,33 +608,4 @@ public class PropertyPatch {
 
     /// <summary>新值（字符串形式）。</summary>
     public string Value;
-}
-
-/// <summary>
-/// 布局快照节点——结构化 UI 布局信息（供 AI 理解 UI）。
-/// </summary>
-public class LayoutSnapshotNode {
-    /// <summary>元素类型名（如 "Button"、"StackPanel"）。</summary>
-    public string TypeName;
-
-    /// <summary>元素标识名（x:Name 属性）。</summary>
-    public string Name;
-
-    /// <summary>绝对 X 坐标（布局后）。</summary>
-    public double X;
-
-    /// <summary>绝对 Y 坐标（布局后）。</summary>
-    public double Y;
-
-    /// <summary>渲染宽度。</summary>
-    public double Width;
-
-    /// <summary>渲染高度。</summary>
-    public double Height;
-
-    /// <summary>关键属性字典。</summary>
-    public Dictionary<string, string> Properties;
-
-    /// <summary>子元素列表。</summary>
-    public List<LayoutSnapshotNode> Children;
 }

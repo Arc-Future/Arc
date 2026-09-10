@@ -209,6 +209,7 @@ public partial class WgpuRender {
             || type == ElWrapPanel
             || type == ElCanvas
             || type == ElListView
+            || type == ElTreeView
             || type == "TabControl"
             || type == "TabItem";
     }

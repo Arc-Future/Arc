@@ -16,7 +16,8 @@ internal class PlatformTreeSync {
     /// <summary>
     /// 窗口主树代际计数：Window 重建平台主树时自增。弹层等附加层据
     /// 「builtEpoch != RootEpoch」判定旧镜像句柄悬空（跨会话句柄号可被新树
-    /// 回收复用）并重走建树路径，见 Popup 文件头诚实边界。
+    /// 回收复用）并重走建树路径。Popup 多开 Z 序不在此同步——由 Popup.Open
+    /// 对层根 ElementAddChild（同父移末尾）与窗口根 children 序闭合。
     /// </summary>
     internal static int RootEpoch = 0;
 
@@ -120,6 +121,22 @@ internal class PlatformTreeSync {
             TabItem tab = (TabItem)arcRoot;
             SyncOwnBrush(handle, "Background", tab, Panel.BackgroundProperty);
             WindowHost.ElementSetString(handle, "Header", tab.Header);
+        } else if (typeName == "TreeView") {
+            TreeView tree = (TreeView)arcRoot;
+            SyncOwnBrush(handle, "Background", tree, Control.BackgroundProperty);
+            // M-VZ4：VerticalOffset/ExtentHeight/VisibleRowCount 由 BindPlatformMirror 写入；
+            // 此处先落 SelectedIndex，再绑镜像（virt 窗会刷新 Extent/命中 FlatIndex）。
+            WindowHost.ElementSetNumber(handle, "SelectedIndex", (double)tree.SelectedIndex);
+            WindowHost.ElementSetNumber(handle, "VerticalOffset", tree.VerticalOffset);
+            WindowHost.ElementSetNumber(handle, "ExtentHeight", tree.ContentExtentHeight);
+            tree.BindPlatformMirror(handle);
+            PointerRouter.RegisterTreeView(handle, tree);
+            // TreeView 非 InputElement：显式 Tab 停靠，供 ↑↓/←→/Home/End/Enter。
+            FocusManager.RegisterTabStop(tree, handle);
+        } else if (typeName == "TreeViewItem") {
+            TreeViewItem node = (TreeViewItem)arcRoot;
+            SyncOwnBrush(handle, "Background", node, Panel.BackgroundProperty);
+            node.BindPlatformMirror(handle);
         } else if (typeName == "TextBlock") {
             TextBlock text = (TextBlock)arcRoot;
             WindowHost.ElementSetString(handle, "Text", text.Text);
@@ -458,6 +475,9 @@ internal class PlatformTreeSync {
             WindowHost.ElementSetNumber(platformHandle, "ExtentHeight", scroll.ExtentHeight);
             WindowHost.ElementSetNumber(platformHandle, "ViewportWidth", scroll.ViewportWidth);
             WindowHost.ElementSetNumber(platformHandle, "ViewportHeight", scroll.ViewportHeight);
+        } else if (typeName == "TabControl") {
+            TabControl tabs = (TabControl)arcRoot;
+            tabs.SyncMirrorScroll();
         }
 
         if (arcRoot.Children == null) {

@@ -9,6 +9,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 /* Arc 委托/lambda 调用 ABI：所有非 env 参数按「指向槽位的指针」传递
  * （codegen emit_closure_indirect_call 对每个实参 alloca+store 后传 ptr；
@@ -210,6 +213,53 @@ static int rt_ui_datagrid_hit_row(RtUiElement* elem, int32_t py) {
     return -1;
 }
 
+/* TreeView 节点命中：递归 TreeViewItem；仅 Header 条（HeaderHeight）可点；
+ * 折叠子节点 layout 在屏外，自然不会命中。返回 FlatIndex；命中展开区写 *out_expand。 */
+static int rt_ui_treeview_hit_node(RtUiElement* node, int32_t px, int32_t py, int* out_expand) {
+    if (!node || !node->type_name) return -1;
+    if (strcmp(node->type_name, "TreeViewItem") == 0) {
+        double header_h = rt_ui_get_number(node, "HeaderHeight", 28.0);
+        if (header_h <= 0.0) header_h = 28.0;
+        if ((double)py >= node->layout_y
+            && (double)py < node->layout_y + header_h
+            && (double)px >= node->layout_x
+            && (double)px < node->layout_x + node->layout_w) {
+            int has_items = (int)rt_ui_get_number(node, "HasItems", 0.0);
+            /* HasItems 经 ElementSetBool 写入；部分路径可能 number——双读兜底。 */
+            if (!has_items) {
+                for (size_t bi = 0; bi < node->bool_count; bi++) {
+                    if (strcmp(node->bool_names[bi], "HasItems") == 0) {
+                        has_items = node->bool_values[bi] ? 1 : 0;
+                        break;
+                    }
+                }
+            }
+            double expander_w = rt_ui_get_number(node, "ExpanderWidth", 16.0);
+            if (expander_w <= 0.0) expander_w = 16.0;
+            if (out_expand) {
+                *out_expand = 0;
+                if (has_items
+                    && (double)px >= node->layout_x
+                    && (double)px < node->layout_x + expander_w) {
+                    *out_expand = 1;
+                }
+            }
+            return (int)rt_ui_get_number(node, "FlatIndex", -1.0);
+        }
+    }
+    for (size_t i = 0; i < node->child_count; i++) {
+        int hit = rt_ui_treeview_hit_node(node->children[i], px, py, out_expand);
+        if (hit >= 0) return hit;
+    }
+    return -1;
+}
+
+static int rt_ui_treeview_hit_row(RtUiElement* elem, int32_t px, int32_t py, int* out_expand) {
+    if (out_expand) *out_expand = 0;
+    if (!elem) return -1;
+    return rt_ui_treeview_hit_node(elem, px, py, out_expand);
+}
+
 int rt_ui_dispatch_control_click_at(RtUiElement* elem, int32_t px, int32_t py) {
     if (!elem || !elem->type_name) return 0;
     RtUiControlHandlerEntry* e = rt_ui_control_handler_lookup(elem->type_name);
@@ -221,16 +271,38 @@ int rt_ui_dispatch_control_click_at(RtUiElement* elem, int32_t px, int32_t py) {
                                   (double)rt_ui_listview_hit_row(elem, py));
     }
     /* DataGrid：同契约——直接子行命中（DataGridRow 无中间层）；
-     * Arc 侧 RouteDataGridClick 读取后 SelectIndex。 */
+     * Arc 侧 RouteDataGridClick 读取 HitItemIndex + HitMods → SelectIndexWithMods。
+     * HitMods：bit0=Shift bit1=Ctrl（RFC 037 §8；与 KeyboardRouter 对齐）。 */
     if (strcmp(elem->type_name, "DataGrid") == 0) {
         rt_ui_element_set_number(elem, "HitItemIndex",
                                   (double)rt_ui_datagrid_hit_row(elem, py));
+        {
+            int32_t mods = 0;
+#if defined(_WIN32)
+            if (GetKeyState(VK_SHIFT) & 0x8000) mods |= 1;
+            if (GetKeyState(VK_CONTROL) & 0x8000) mods |= 2;
+#endif
+            rt_ui_element_set_number(elem, "HitMods", (double)mods);
+        }
     }
-    /* TabControl：页签栏内容测宽左对齐——py 落在顶栏、px 落在 HeaderWidth 累进区间 → HitTabIndex。
-     * 无 HeaderWidth{i} 时回退均分（旧镜像 / 度量未就绪）。栏外点击保持 HitTabIndex=-1。 */
+    /* TreeView：递归命中 Header 条 → HitItemIndex；展开三角区 → HitExpand=1。 */
+    if (strcmp(elem->type_name, "TreeView") == 0) {
+        int hit_expand = 0;
+        int hit_idx = rt_ui_treeview_hit_row(elem, px, py, &hit_expand);
+        rt_ui_element_set_number(elem, "HitItemIndex", (double)hit_idx);
+        rt_ui_element_set_number(elem, "HitExpand", (double)hit_expand);
+    }
+    /* TabControl：页签栏内容测宽左对齐——py 落在顶栏、内容坐标
+     * content_x = local_x + HeaderScrollOffset 落在 HeaderWidth 累进区间 → HitTabIndex。
+     * 与渲染 PushClip + cursorX=lx-offset 同源。无 HeaderWidth{i} 时回退均分。
+     * 栏外点击保持 HitTabIndex=-1。 */
     if (strcmp(elem->type_name, "TabControl") == 0) {
         double bar_h = rt_ui_get_number(elem, "HeaderBarHeight", 36.0);
         double tab_count = rt_ui_get_number(elem, "TabCount", 0.0);
+        double scroll_off = rt_ui_get_number(elem, "HeaderScrollOffset", 0.0);
+        if (scroll_off < 0.0) {
+            scroll_off = 0.0;
+        }
         int hit = -1;
         int n = (int)tab_count;
         if (n > 0 && (double)py >= elem->layout_y
@@ -238,6 +310,7 @@ int rt_ui_dispatch_control_click_at(RtUiElement* elem, int32_t px, int32_t py) {
             && elem->layout_w > 0.0) {
             double local_x = (double)px - elem->layout_x;
             if (local_x >= 0.0 && local_x < elem->layout_w) {
+                double content_x = local_x + scroll_off;
                 int have_widths = 0;
                 for (int i = 0; i < n; i++) {
                     char key[32];
@@ -256,7 +329,7 @@ int rt_ui_dispatch_control_click_at(RtUiElement* elem, int32_t px, int32_t py) {
                         if (cell_w <= 0.0) {
                             cell_w = 1.0;
                         }
-                        if (local_x >= cursor && local_x < cursor + cell_w) {
+                        if (content_x >= cursor && content_x < cursor + cell_w) {
                             hit = i;
                             break;
                         }

@@ -72,3 +72,18 @@ LLM 与工具需要**真实度量**而非猜测：元素最终矩形、对齐、
 - 只读快照，不承载变更（改布局走属性/补丁通道，见 [live-preview](ai-native-live-preview.md) ApplyPatch）。
 - 不承诺渲染像素（那是 render-capture 的职责）；快照是几何真值，像素是视觉真值，二者正交。
 - 文本度量以引擎实际解析为准（含字体回退结果），禁止伪度量（如按字符数估算）。
+
+## 6. 验收 checklist（布局快照 headless 硬门槛）
+
+> **宣称纪律**：下列仅关「布局快照 headless 可测」；勾选后仍 **不** 宣称 G1/G2/G3、渲染回读或保真闭环完成。
+
+| 项 | 状态 | 证据 |
+|----|------|------|
+| LayoutNode / TextLineBox / LayoutSnapshot（Arc.UI.Layout） | ✅ | std/UI/Core/Layout/LayoutSnapshot.as |
+| LivePreviewHost.GetLayoutSnapshot（同源 Measure/Arrange；未布局 → null） | ✅ | LivePreviewHost.as |
+| 文本行盒经 TextMeasuring / EstimateTextSize（禁字符数估算） | ✅ | BuildTextLineBoxes |
+| 确定性 JSON（LayoutSnapshot.ToJson）可断言 | ✅ | ToJson + 批测断言 |
+| headless e2e：树结构 / 行盒 / JSON / 未加载 null / 同 spec 确定性 | ✅ | l2_ui_layout_snapshot_batch |
+| G1 双宿主像素一致 / G2 属性补丁 / G3 VideoSurface / 保真闭环 | ☐ | 后置；本切片不宣称 |
+
+验证：`cargo test -p arc-tests --features full-rt --test l2_ui_layout_snapshot_batch`。

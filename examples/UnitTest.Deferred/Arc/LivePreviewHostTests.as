@@ -28,6 +28,7 @@ using Arc.IO;
 using Arc.Collections;
 using Arc.UI;
 using Arc.UI.Components;
+using Arc.UI.Layout;
 using Arc.UI.Markup;
 using Arc.UI.Media;
 
@@ -422,15 +423,20 @@ public class LivePreviewHostTests
         }
         host.LoadSpec(
             "<StackPanel><TextBlock x:Name=\"Title\">Hello</TextBlock></StackPanel>");
-        LayoutSnapshotNode root = host.GetLayoutSnapshot();
-        Assert.NotNull(root);
-        Assert.Equal("StackPanel", root.TypeName);
-        Assert.Equal(1, root.Children.Count);
-        LayoutSnapshotNode child = root.Children[0];
+        LayoutSnapshot snap = host.GetLayoutSnapshot();
+        Assert.NotNull(snap);
+        Assert.NotNull(snap.Root);
+        Assert.Equal("StackPanel", snap.Root.TypeName);
+        Assert.Equal(1, snap.Root.Children.Count);
+        LayoutNode child = snap.Root.Children[0];
         Assert.Equal("TextBlock", child.TypeName);
         Assert.Equal("Title", child.Name);
-        Assert.True(child.Properties.ContainsKey("Text"));
-        Assert.Equal("Hello", child.Properties["Text"]);
+        Assert.NotNull(child.TextLines);
+        Assert.Equal(1, child.TextLines.Count);
+        Assert.True(child.TextLines[0].Width > 0.0);
+        string json = snap.ToJson();
+        Assert.True(json.IndexOf("\"TypeName\":\"StackPanel\"") >= 0);
+        Assert.True(json.IndexOf("\"Name\":\"Title\"") >= 0);
     }
 
     [Fact]

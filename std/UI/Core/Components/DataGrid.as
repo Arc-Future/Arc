@@ -28,8 +28,13 @@
 //   // 可观察：ObservableCollection<List<string>>（多列）/
 //   // ObservableCollection<string>（单列）→ 集合变更增量改 _cells，勿全量重建
 //   grid.SelectIndex(0);                   // → SelectionChanged（载荷=选中行首列文本）
+//   grid.SelectionMode = "Multiple";       // 程序化多选
+//   grid.SelectItem(0); grid.SelectItem(2); // 累加 SelectedItems + SelectionChanged
+//   grid.SelectIndexWithMods(2, 2);         // Ctrl+点击切换；Shift=1 范围选
 //
 // 禁 AddRow(string…) 字符串重载双轨——行数据一律经 ItemsSource。
+// 多选：程序化 SelectItem/SelectAll ✅；Ctrl/Shift 修饰键手势最小面 ✅
+// （PointerRouter HitMods → SelectIndexWithMods；GUI 手测后置）。
 // 虚拟化纪律（RFC 037 §4 · M-VZ4）：只物化可见窗口行（ItemViewport 算术），
 // 窗口外行回收进池复用（滚动零新建）；Extent = rowCount × stride 纯算术。
 //
@@ -39,8 +44,8 @@
 //
 // 镜像契约：grid 镜像携带 ColumnCount/Header{i}/Width{i}/RowHeight/HeaderHeight/
 // SelectedIndex；行镜像（DataGridRow 子元素）携带 ItemIndex + C{i} 单元格串 +
-// Layout*。C 命中（rt_ui_datagrid_hit_row）按行镜像 layout_y 命中写 HitItemIndex，
-// Arc 侧 RouteDataGridClick 读取后 SelectIndex。
+// Layout*。C 命中（rt_ui_datagrid_hit_row）写 HitItemIndex + HitMods，
+// Arc 侧 RouteDataGridClick → SelectIndexWithMods。
 //
 // Signal 通道：SelectionChanged（Signal&lt;string&gt;，载荷=选中行首列文本，
 // 同 ListView SelectionChanged 载荷语义）。

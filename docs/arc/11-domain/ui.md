@@ -11,7 +11,7 @@
 | 命名空间 | 内容 |
 |----------|------|
 | `Arc.UI` | 基类根命名空间（`Element`、`Application`、`ResourceDictionary`、绑定/通知原语） |
-| `Arc.UI.Components` | 派生组件（`Window`、`Button`、`TextBlock`、`ListView`、`CodeEditor` 等控件） |
+| `Arc.UI.Components` | 派生组件（`Window`、`Button`、`TextBlock`、`ListView`、`TreeView`、`CodeEditor` 等控件） |
 | `Arc.UI.Components.Layout` | 布局组件（`StackPanel`、`Grid`、`DockPanel`、`Canvas`、`ScrollView`） |
 | `Arc.UI.Rendering` | `IRender`（渲染后端抽象） |
 | `Arc.UI.Rendering.Wgpu` | `WgpuRender`（唯一渲染后端） |

@@ -4,6 +4,8 @@
 // Install before Show maps handle back to Arc control (Button / ToggleButton /
 // CheckBox / Slider / ListView / DataGrid / ComboBox)——按 TypeName 的全局回调
 // 注册亦集中于此（含 Popup 蒙层 PopupBackdrop），每 Show 会话重注册。
+// 多弹层：命中逆序优先顶层 PopupBackdrop（Z 序 = 窗口根 children 末尾）；
+// RoutePopupBackdropClick → Popup.RouteBackdropClick 按句柄关匹配实例。
 //
 // 句柄表：`Dictionary<long, T>`（无固定槽上限；ArmlDemo 多页签交互控件可并存）。
 
@@ -21,6 +23,7 @@ internal class PointerRouter {
     static Dictionary<long, DataGrid> _dataGrids;
     static Dictionary<long, ComboBoxBase> _combos;
     static Dictionary<long, TabControl> _tabs;
+    static Dictionary<long, TreeView> _treeViews;
     static int _installed;
 
     private PointerRouter() {
@@ -48,6 +51,9 @@ internal class PointerRouter {
         }
         if (_tabs != null) {
             _tabs.Clear();
+        }
+        if (_treeViews != null) {
+            _treeViews.Clear();
         }
         WindowHost.ClearControlHandlers();
         _installed = 0;
@@ -130,6 +136,22 @@ internal class PointerRouter {
         _tabs[platformHandle] = tabs;
     }
 
+    /// <summary>ScrollRouter 顶栏滚轮：按平台句柄取 TabControl。</summary>
+    internal static TabControl FindTabControl(long platformHandle) {
+        return LookupTabControl(platformHandle);
+    }
+
+    /// <summary>Register mapping for TreeView (row/expander click routing).</summary>
+    internal static void RegisterTreeView(long platformHandle, TreeView tree) {
+        if (tree == null || platformHandle == 0) {
+            return;
+        }
+        if (_treeViews == null) {
+            _treeViews = new Dictionary<long, TreeView>();
+        }
+        _treeViews[platformHandle] = tree;
+    }
+
     /// <summary>Install C->Arc callbacks (Window.Show before message loop).</summary>
     internal static void Install() {
         Action<long> clickHandler = PointerRouter.RouteClick;
@@ -158,6 +180,8 @@ internal class PointerRouter {
         WindowHost.SetControlClickHandler("DataGrid", dataGridClick);
         Action<long> tabClick = PointerRouter.RouteTabControlClick;
         WindowHost.SetControlClickHandler("TabControl", tabClick);
+        Action<long> treeClick = PointerRouter.RouteTreeViewClick;
+        WindowHost.SetControlClickHandler("TreeView", treeClick);
         Action<long> comboClick = PointerRouter.RouteComboBoxClick;
         WindowHost.SetControlClickHandler("ComboBox", comboClick);
         Action<long> backdropClick = PointerRouter.RoutePopupBackdropClick;
@@ -238,13 +262,15 @@ internal class PointerRouter {
         }
     }
 
-    /// <summary>C callback entry (type "DataGrid"): 命中行 index（C 侧按像素算好写入
-    /// 镜像 "HitItemIndex"）→ SelectIndex（SelectedIndex DP + 视觉高亮 + SelectionChanged）。</summary>
+    /// <summary>C callback entry (type "DataGrid"): 命中行 index（镜像 HitItemIndex）+
+    /// 修饰键（镜像 HitMods，bit0=Shift bit1=Ctrl）→ SelectIndexWithMods（多选手势 /
+    /// 无修饰替换单行；SelectionChanged 直挂）。</summary>
     internal static void RouteDataGridClick(long platformHandle) {
         DataGrid dataGrid = LookupDataGrid(platformHandle);
         if (dataGrid != null) {
             double hitIndex = WindowHost.ElementGetNumber(platformHandle, "HitItemIndex", -1.0);
-            dataGrid.SelectIndex((int)hitIndex);
+            int mods = (int)WindowHost.ElementGetNumber(platformHandle, "HitMods", 0.0);
+            dataGrid.SelectIndexWithMods((int)hitIndex, mods);
         }
     }
 
@@ -253,6 +279,15 @@ internal class PointerRouter {
         TabControl tabs = LookupTabControl(platformHandle);
         if (tabs != null) {
             tabs.SelectHitTab();
+        }
+    }
+
+    /// <summary>C callback entry (type "TreeView"): 点击聚焦 + HitItemIndex/HitExpand → RouteHit。</summary>
+    internal static void RouteTreeViewClick(long platformHandle) {
+        TreeView tree = LookupTreeView(platformHandle);
+        if (tree != null) {
+            FocusManager.FocusPlatformHandle(platformHandle);
+            tree.RouteHit();
         }
     }
 
@@ -338,6 +373,17 @@ internal class PointerRouter {
         TabControl tabs = null;
         if (_tabs.TryGetValue(platformHandle, out tabs)) {
             return tabs;
+        }
+        return null;
+    }
+
+    static TreeView LookupTreeView(long platformHandle) {
+        if (_installed == 0 || platformHandle == 0 || _treeViews == null) {
+            return null;
+        }
+        TreeView tree = null;
+        if (_treeViews.TryGetValue(platformHandle, out tree)) {
+            return tree;
         }
         return null;
     }

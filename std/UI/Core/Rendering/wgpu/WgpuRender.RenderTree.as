@@ -760,7 +760,7 @@ public partial class WgpuRender {
             return;
         }
 
-        // ---- TabControl（内置页签栏 chrome：内容测宽左对齐 + 选中 Accent 底线）----
+        // ---- TabControl（内置页签栏：测宽左对齐 + 溢出裁剪滚动 + 选中 Accent 底线）----
         if (type == "TabControl") {
             Color bg = this.ElementColor(handle, "Background", Color.Transparent());
             this.DrawBackground(bg, lx, ly, lw, lh);
@@ -771,6 +771,10 @@ public partial class WgpuRender {
                 barH = ControlMetrics.TabHeaderBarHeight;
             }
             int selected = (int)WindowHost.ElementGetNumber(handle, "SelectedIndex", 0.0);
+            double scrollOff = WindowHost.ElementGetNumber(handle, "HeaderScrollOffset", 0.0);
+            if (scrollOff < 0.0) {
+                scrollOff = 0.0;
+            }
             if (tabCount > 0 && lw > 0.0) {
                 Color barBg = this.ResolveThemeKey(BuiltInTheme.SurfaceStripe);
                 Color border = this.ResolveThemeKey(BuiltInTheme.Border);
@@ -783,7 +787,8 @@ public partial class WgpuRender {
                 double fontSize = ControlMetrics.TabHeaderFontSize;
                 int family = this.ResolveFontFamily("");
                 int weight = this.ResolveFontWeight("Normal");
-                double cursorX = lx;
+                this.PushClip(lx, ly, lw, barH);
+                double cursorX = lx - scrollOff;
                 double fallbackCell = lw / (double)tabCount;
                 int ti = 0;
                 while (ti < tabCount) {
@@ -816,11 +821,79 @@ public partial class WgpuRender {
                     cursorX = cursorX + cellW;
                     ti++;
                 }
+                this.PopClip();
             }
             int childCountTabs = WindowHost.ElementGetChildCount(handle);
             for (int ci = 0; ci < childCountTabs; ci++) {
                 long child = WindowHost.ElementGetChild(handle, ci);
                 this.RenderElementNode(child);
+            }
+            return;
+        }
+
+        // ---- TreeViewItem（Header 条 chrome：选中高亮 + 展开三角 + 标题；子树递归）----
+        if (type == ElTreeViewItem) {
+            double headerH = WindowHost.ElementGetNumber(handle, "HeaderHeight", ControlMetrics.TreeRowHeight);
+            if (headerH <= 0.0) {
+                headerH = ControlMetrics.TreeRowHeight;
+            }
+            int isSelected = WindowHost.ElementGetBool(handle, "IsSelected", 0);
+            int isExpanded = WindowHost.ElementGetBool(handle, "IsExpanded", 0);
+            int hasItems = WindowHost.ElementGetBool(handle, "HasItems", 0);
+            string header = WindowHost.ElementGetString(handle, "Header", "");
+            if (header == null) {
+                header = "";
+            }
+            ControlVisual pal = VisualStateManager.ListBoxItem(
+                ControlState.Of(1, 0, 0, 0, 0, isSelected));
+            Color rowBg = this.ResolveThemeKey(pal.Background);
+            Color fg = this.ResolveThemeKey(pal.Foreground);
+            Color accent = this.ResolveThemeKey(pal.Accent);
+            double rowW = lw;
+            if (rowW <= 0.0) {
+                rowW = 1.0;
+            }
+            if (rowBg.A > 0.001) {
+                this.DrawRoundedRect(lx, ly, rowW, headerH, pal.Radius.Max, rowBg);
+            }
+            if (isSelected != 0 && accent.A > 0.001) {
+                this.DrawRect(lx, ly, ControlMetrics.SpacingXS, headerH, accent);
+            }
+            double expanderW = WindowHost.ElementGetNumber(handle, "ExpanderWidth",
+                ControlMetrics.TreeExpanderWidth);
+            if (expanderW <= 0.0) {
+                expanderW = ControlMetrics.TreeExpanderWidth;
+            }
+            if (hasItems != 0) {
+                Color chevron = this.ResolveThemeKey(BuiltInTheme.TextSecondary);
+                double cx = lx + expanderW * 0.5;
+                double cy = ly + headerH * 0.5;
+                if (isExpanded != 0) {
+                    // 展开：朝下三角（三横线近似）
+                    this.DrawRect(cx - 4.0, cy - 1.0, 8.0, 2.0, chevron);
+                    this.DrawRect(cx - 2.5, cy + 1.5, 5.0, 2.0, chevron);
+                    this.DrawRect(cx - 1.0, cy + 4.0, 2.0, 2.0, chevron);
+                } else {
+                    // 折叠：朝右三角
+                    this.DrawRect(cx - 1.0, cy - 4.0, 2.0, 8.0, chevron);
+                    this.DrawRect(cx + 1.5, cy - 2.5, 2.0, 5.0, chevron);
+                    this.DrawRect(cx + 4.0, cy - 1.0, 2.0, 2.0, chevron);
+                }
+            }
+            double fontSize = ControlMetrics.FontBodySize;
+            int family = this.ResolveFontFamily("");
+            int weight = this.ResolveFontWeight("Normal");
+            double textX = lx + expanderW + ControlMetrics.SpacingSM;
+            double textH = this.EstTextHeight("Ag", 0.0, fontSize, family);
+            if (textH <= 0.0) {
+                textH = fontSize;
+            }
+            double textY = ly + (headerH - textH) / 2.0;
+            this.DrawText(header, textX, textY, fontSize, this.ColorTransparent(), fg, family, weight);
+            int tvChildCount = WindowHost.ElementGetChildCount(handle);
+            for (int tvi = 0; tvi < tvChildCount; tvi++) {
+                long tvChild = WindowHost.ElementGetChild(handle, tvi);
+                this.RenderElementNode(tvChild);
             }
             return;
         }
@@ -851,8 +924,8 @@ public partial class WgpuRender {
             double cw = lw;
             double ch = lh;
             this.DrawBackground(bg, lx, ly, cw, ch);
-            // ListView：裁剪项宿主，防错位行画出视口（视觉重叠/叠层）。
-            if (type == ElListView && lw > 0.0 && lh > 0.0) {
+            // ListView / TreeView：裁剪项宿主，防错位行画出视口。
+            if ((type == ElListView || type == ElTreeView) && lw > 0.0 && lh > 0.0) {
                 this.PushClip(lx, ly, lw, lh);
                 int lvChildCount = WindowHost.ElementGetChildCount(handle);
                 for (int lvi = 0; lvi < lvChildCount; lvi++) {
@@ -871,9 +944,9 @@ public partial class WgpuRender {
         }
 
         // ---- Popup 层根 / 蒙层（RFC 037 Popup 轨）：仅背景，子树走通用递归。
-        //      渲染顺序即置顶依据：层根挂窗口平台根 children 末尾，painter's
-        //      algorithm 后画在上；蒙层背景由 Popup.Open 直写平台镜像
-        //      （PlatformTreeSync 公共尾部不识 Panel.Background，无法走同步轨）。----
+        //      多弹层 Z 序：层根经 Open→ElementAddChild 挂/移至窗口平台根
+        //      children 末尾；painter's algorithm 后画在上，与 hit_test 逆序同源。
+        //      蒙层背景由 Popup.Open 直写平台镜像（公共尾部不识 Panel.Background）。----
         if (type == ElPopupLayer || type == ElPopupBackdrop) {
             Color bg = this.ElementColor(handle, "Background", Color.Transparent());
             this.DrawBackground(bg, lx, ly, lw, lh);

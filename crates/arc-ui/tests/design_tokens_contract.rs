@@ -62,6 +62,29 @@ fn builtin_theme_colors_g_as_in_sync() {
     );
 }
 
+/// Dark.arml 须可由 Light Seed 经 `dark_map_derive` 可重复再生（非第二套手写硬编码权威）。
+#[test]
+fn dark_arml_matches_light_seed_derivation() {
+    let root = repo_root();
+    let expected = arc_ui::generate_dark_arml_from_light(&root).expect("derive Dark from Light Seed");
+    let path = root.join(arc_ui::DARK_ARML_REL);
+    if std::env::var("UPDATE_DARK_THEME").is_ok() {
+        std::fs::write(&path, &expected).expect("write Dark.arml");
+        return;
+    }
+    let actual = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "missing {}: {e}; regenerate with scripts/ui-theme/derive-dark-from-light.ps1 \
+             (or UPDATE_DARK_THEME=1 cargo test -p arc-ui --test design_tokens_contract -- dark_arml_matches_light_seed_derivation)",
+            path.display()
+        )
+    });
+    assert_eq!(
+        actual, expected,
+        "Dark.arml out of sync with Light Seed derivation; run scripts/ui-theme/derive-dark-from-light.ps1"
+    );
+}
+
 #[test]
 fn builtin_theme_as_has_no_color_brush_literals() {
     let tokens = read_file("std/UI/Core/Styling/BuiltInTheme.as");

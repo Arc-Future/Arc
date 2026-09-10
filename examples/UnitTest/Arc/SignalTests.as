@@ -93,4 +93,35 @@ public class SignalTests
         Assert.True(age.TrySet(30));
         Assert.Equal(30, age.Value);
     }
+
+    /// <summary>
+    /// M-D0：Subscribe 直挂 Action&lt;T&gt;——注册函数返回后 Set 仍须触发回调
+    /// （旧实现经 OnChanged 包装 lambda 捕获形参槽，逃逸后 UB）。
+    /// </summary>
+    [Fact]
+    public void Subscribe_FiresAfterRegisterReturns()
+    {
+        Signal<string> sig = new Signal<string>("");
+        _subHits = 0;
+        _subLast = "";
+        WireSubscribe(sig);
+        sig.Set("ok");
+        Assert.Equal(1, _subHits);
+        Assert.Equal("ok", _subLast);
+        Assert.Equal("ok", sig.Value);
+    }
+
+    static void WireSubscribe(Signal<string> sig)
+    {
+        sig.Subscribe(SignalTests.OnSubscribeStatic);
+    }
+
+    static int _subHits;
+    static string _subLast;
+
+    static void OnSubscribeStatic(string v)
+    {
+        _subHits = _subHits + 1;
+        _subLast = v;
+    }
 }

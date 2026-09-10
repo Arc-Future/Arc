@@ -1190,13 +1190,59 @@ impl<'a> ModuleEmitter<'a> {
             if needs_arc {
                 out.push_str(&format!("  call void @rt_arc_inc(ptr {val})\n"));
             }
+            // struct payload：与 MIR `emit_variant_construct` 同构堆化。
+            let store_val = if self.layouts.structs.contains_key(payload_ident.as_str())
+                && (val_ty == "ptr" || val_ty.is_empty())
+            {
+                let null_cmp = format!("%.sinit.{n}", n = *temp_counter);
+                *temp_counter += 1;
+                let null_label = format!("sinit.vsp.null.{n}", n = *temp_counter);
+                *temp_counter += 1;
+                let copy_label = format!("sinit.vsp.copy.{n}", n = *temp_counter);
+                *temp_counter += 1;
+                let join_label = format!("sinit.vsp.join.{n}", n = *temp_counter);
+                *temp_counter += 1;
+                let heap = format!("%.sinit.{n}", n = *temp_counter);
+                *temp_counter += 1;
+                let size = format!("%.sinit.{n}", n = *temp_counter);
+                *temp_counter += 1;
+                let loaded = format!("%.sinit.{n}", n = *temp_counter);
+                *temp_counter += 1;
+                let result = format!("%.sinit.{n}", n = *temp_counter);
+                *temp_counter += 1;
+                out.push_str(&format!("  {null_cmp} = icmp eq ptr {val}, null\n"));
+                out.push_str(&format!(
+                    "  br i1 {null_cmp}, label %{null_label}, label %{copy_label}\n"
+                ));
+                out.push_str(&format!("{copy_label}:\n"));
+                out.push_str(&format!(
+                    "  {size} = ptrtoint ptr getelementptr (%struct.{payload_ident}, ptr null, i32 1) to i64\n"
+                ));
+                out.push_str(&format!("  {heap} = call ptr @calloc(i64 1, i64 {size})\n"));
+                out.push_str(&format!(
+                    "  {loaded} = load %struct.{payload_ident}, ptr {val}\n"
+                ));
+                out.push_str(&format!(
+                    "  store %struct.{payload_ident} {loaded}, ptr {heap}\n"
+                ));
+                out.push_str(&format!("  br label %{join_label}\n"));
+                out.push_str(&format!("{null_label}:\n"));
+                out.push_str(&format!("  br label %{join_label}\n"));
+                out.push_str(&format!("{join_label}:\n"));
+                out.push_str(&format!(
+                    "  {result} = phi ptr [ {heap}, %{copy_label} ], [ null, %{null_label} ]\n"
+                ));
+                result
+            } else {
+                val
+            };
             // val_ty 与 payload_ty_str 在基元场景应一致；命名类型均为 ptr。
             let store_ty = if val_ty == "ptr" || val_ty.is_empty() {
                 payload_ty_str.clone()
             } else {
                 val_ty.clone()
             };
-            out.push_str(&format!("  store {store_ty} {val}, ptr {body_ptr}\n"));
+            out.push_str(&format!("  store {store_ty} {store_val}, ptr {body_ptr}\n"));
         }
 
         ("ptr".to_string(), slot)

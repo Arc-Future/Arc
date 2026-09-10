@@ -102,7 +102,34 @@ void rt_ui_element_set_bool(RtUiElement* elem, const char* name, int32_t value) 
 }
 
 void rt_ui_element_add_child(RtUiElement* parent, RtUiElement* child) {
-    if (!parent || !child || child->parent) return;
+    if (!parent || !child) {
+        return;
+    }
+    /* 已是本父之子：移到 children 末尾（后开 Popup 置顶 / 命中逆序同源）。
+     * 异父已挂载仍拒绝（禁静默换父）。 */
+    if (child->parent == parent) {
+        size_t i;
+        for (i = 0; i < parent->child_count; i++) {
+            if (parent->children[i] == child) {
+                break;
+            }
+        }
+        if (i >= parent->child_count) {
+            return;
+        }
+        if (i + 1 == parent->child_count) {
+            return;
+        }
+        size_t j;
+        for (j = i; j + 1 < parent->child_count; j++) {
+            parent->children[j] = parent->children[j + 1];
+        }
+        parent->children[parent->child_count - 1] = child;
+        return;
+    }
+    if (child->parent) {
+        return;
+    }
     if (parent->child_count == parent->child_cap) {
         size_t new_cap = parent->child_cap ? parent->child_cap * 2 : 4;
         parent->children = (RtUiElement**)realloc(parent->children, new_cap * sizeof(RtUiElement*));

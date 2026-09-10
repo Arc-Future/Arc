@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Built-in Dark theme — Ant Design 6.x darkAlgorithm map tokens (seed colorPrimary=#1677ff).
-     Neutrals: generateNeutralColorPalettes(bgBase=#000, textBase=#fff) per antd dark/colors.
-     Primary map: dark generate(#1677ff) → #1668dc / hover #3c89e8 / active #1554ad.
-     Honest: full darkAlgorithm runtime not ported; token alignment only — not pixel DOM clone.
-     Naming: same key set as Light.arml (Color.*); see builtin-theme-resources. -->
+<!-- Built-in Dark theme — derived from Light Seed via arc-ui::dark_map_derive
+     (Ant Design 6.x darkAlgorithm map token snapshot; seed colorPrimary=#1677ff).
+     Neutrals: generateNeutralColorPalettes(bgBase=#000, textBase=#fff).
+     Primary map: dark generate(#1677ff) -> #1668dc / hover #3c89e8 / active #1554ad.
+     Honest: build-time Seed->Map derivation only; full darkAlgorithm runtime = P3.
+     Token alignment only — not pixel DOM/CSS clone. Same key set as Light.arml.
+     Regenerate: scripts/ui-theme/derive-dark-from-light.ps1 -->
 <ResourceDictionary
     xmlns="http://schemas.arc.dev/winfx/2026"
     xmlns:x="http://schemas.arc.dev/xaml">
@@ -13,21 +15,29 @@
     <Color x:Key="Color.Surface" Value="#FF141414"/>
     <!-- colorBorder getSolidColor(#000, 26) -->
     <Color x:Key="Color.Border" Value="#FF424242"/>
-    <!-- colorBorderDisabled (Ant Design 6；Dark 与 colorBorder 同算法档) -->
+    <!-- colorBorderDisabled (Ant Design 6; Dark same band as colorBorder) -->
     <Color x:Key="Color.Border.Disabled" Value="#FF424242"/>
     <!-- colorText rgba(255,255,255,0.85) -->
     <Color x:Key="Color.Text.Primary" Value="#D9FFFFFF"/>
     <!-- colorTextSecondary rgba(255,255,255,0.65) -->
     <Color x:Key="Color.Text.Secondary" Value="#A6FFFFFF"/>
+    <!-- dark generate(colorPrimary) step-6 -->
     <Color x:Key="Color.Primary" Value="#FF1668DC"/>
+    <!-- dark generate(colorPrimary) hover -->
     <Color x:Key="Color.Primary.Hover" Value="#FF3C89E8"/>
+    <!-- dark generate(colorPrimary) active -->
     <Color x:Key="Color.Primary.Pressed" Value="#FF1554AD"/>
+    <!-- dark colorPrimary @ 40% (focus ring) -->
     <Color x:Key="Color.Focus.Ring" Value="#661668DC"/>
     <!-- colorFillQuaternary rgba(255,255,255,0.04) solid -->
     <Color x:Key="Color.Disabled.Fill" Value="#FF1F1F1F"/>
     <!-- colorTextQuaternary rgba(255,255,255,0.25) solid -->
     <Color x:Key="Color.Disabled.Text" Value="#FF595959"/>
+    <!-- colorTextLightSolid -->
     <Color x:Key="Color.Text.OnAccent" Value="#FFFFFFFF"/>
+    <!-- colorTextPlaceholder solid -->
+    <Color x:Key="Color.Text.Placeholder" Value="#FF595959"/>
+    <!-- transparent -->
     <Color x:Key="Color.Transparent" Value="#00000000"/>
     <!-- colorPrimaryBg (dark primary-1 approx) -->
     <Color x:Key="Color.Surface.Hover" Value="#FF111A2C"/>
@@ -35,21 +45,32 @@
     <Color x:Key="Color.Surface.Stripe" Value="#FF1F1F1F"/>
     <!-- colorFillSecondary rgba(255,255,255,0.12) solid -->
     <Color x:Key="Color.Slider.Track" Value="#FF303030"/>
+    <!-- colorFillQuaternary solid -->
     <Color x:Key="Color.Scroll.Track" Value="#FF1F1F1F"/>
+    <!-- neutral scroll thumb -->
     <Color x:Key="Color.Scroll.Thumb" Value="#FF595959"/>
+    <!-- neutral scroll thumb hover -->
     <Color x:Key="Color.Scroll.Thumb.Hover" Value="#FF8C8C8C"/>
+    <!-- neutral scroll thumb pressed -->
     <Color x:Key="Color.Scroll.Thumb.Pressed" Value="#FFBFBFBF"/>
-    <Color x:Key="Color.Text.Placeholder" Value="#FF595959"/>
+    <!-- colorBgMask rgba(0,0,0,0.45) -->
     <Color x:Key="Color.Overlay" Value="#73000000"/>
-    <!-- colorError (dark map) → Danger -->
+    <!-- colorError (dark map) -> Danger -->
     <Color x:Key="Color.Danger" Value="#FFDC4446"/>
+    <!-- colorErrorHover (dark) -->
     <Color x:Key="Color.Danger.Hover" Value="#FFE86E6B"/>
+    <!-- colorErrorActive (dark) -->
     <Color x:Key="Color.Danger.Pressed" Value="#FFAD3030"/>
+    <!-- colorSuccess (dark map) -->
     <Color x:Key="Color.Success" Value="#FF49AA19"/>
+    <!-- colorWarning (dark map) -->
     <Color x:Key="Color.Warning" Value="#FFD89614"/>
-    <!-- colorPrimary @ 25% (dark map primary) -->
+    <!-- dark colorPrimary @ 25% -->
     <Color x:Key="Color.Text.Selection" Value="#401668DC"/>
+    <!-- Image decode-fail / empty-source fill -->
     <Color x:Key="Color.Image.Fill" Value="#FF303030"/>
+    <!-- Image decode-fail / empty-source border -->
     <Color x:Key="Color.Image.Border" Value="#FF8C8C8C"/>
+    <!-- DrawText highlight backdrop -->
     <Color x:Key="Color.Text.Highlight" Value="#FF5C4B1F"/>
 </ResourceDictionary>

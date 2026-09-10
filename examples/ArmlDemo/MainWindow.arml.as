@@ -8,7 +8,8 @@
 //
 // 签名契约（与 ARML Click= 绑定一致）：
 //   - OnClickHello() / OnPrimaryClick() / OnSecondaryClick() / OnChangeMessage()
-//   - OnOpenDemoPopup() ← 分区 2 Popup M1 演示
+//   - OnOpenDemoPopup() ← 分区 2 Popup 演示
+//   - OnOpenStackedPopup() ← 多弹层 Z 序（后开在上 · Esc LIFO）
 //   - OnShowMessageBoxOk/OkCancel/YesNo/YesNoCancel ← MessageBox 按钮集 + 图标
 //   - OnLoaded() ← 分区 2 ComboBox ItemsSource / 4/5/8
 //
@@ -31,8 +32,21 @@ public partial class MainWindow : Window {
     /// <summary>Slider ValueChanged 静态路由锚点。</summary>
     static MainWindow _volumeHost;
 
+    /// <summary>ListView/DataGrid SelectionChanged 静态路由锚点（M-D0）。</summary>
+    static MainWindow _selectionHost;
+
+    /// <summary>ListView SelectionChanged 回调命中次数（OnLoaded 冒烟）。</summary>
+    static int _listSelHits;
+
+    /// <summary>DataGrid SelectionChanged 回调命中次数（OnLoaded 冒烟）。</summary>
+    static int _gridSelHits;
+
+    /// <summary>TreeView SelectionChanged 静态路由锚点。</summary>
+    static MainWindow _treeHost;
+
     /// <summary>演示弹层（复用；轻关闭）。</summary>
     Popup _demoPopup;
+    Popup _stackedPopup;
 
     /// <summary>x:Bind 绑定源（分区 3；勿与 Window.Title 同名）。</summary>
     [Observable] public string Message { get; set; }
@@ -100,9 +114,44 @@ public partial class MainWindow : Window {
         Console.WriteLine("DemoPopup open=" + _demoPopup.IsOpen.ToString());
     }
 
+    /// <summary>
+    /// 分区 2：叠第二层轻关闭 Popup（后开在上；Esc/蒙层先关本层，下层仍开）。
+    /// </summary>
+    protected void OnOpenStackedPopup() {
+        if (_stackedPopup != null && _stackedPopup.IsOpen) {
+            _stackedPopup.Close();
+            return;
+        }
+        if (_stackedPopup == null) {
+            _stackedPopup = new Popup();
+            _stackedPopup.IsLightDismissEnabled = true;
+            TextBlock body = new TextBlock();
+            body.Text = "Stacked Popup — on top; Esc/backdrop closes this first.";
+            body.FontSize = 14.0;
+            body.Width = 380.0;
+            body.Height = 72.0;
+            if (Application.Current != null) {
+                body.Background = Application.Current.ResolveColor(BuiltInTheme.Surface);
+                body.Foreground = Application.Current.ResolveColor(BuiltInTheme.TextPrimary);
+            }
+            _stackedPopup.Child = body;
+            Action<bool> closed = MainWindow.OnStackedPopupClosedStatic;
+            _stackedPopup.OnClosed(closed);
+        }
+        _stackedPopup.PlacementX = 220.0;
+        _stackedPopup.PlacementY = 240.0;
+        _stackedPopup.Open(this);
+        Console.WriteLine("StackedPopup open=" + _stackedPopup.IsOpen.ToString());
+    }
+
     /// <summary>演示弹层关闭静态路由（日志）。</summary>
     static void OnDemoPopupClosedStatic(bool isOpen) {
         Console.WriteLine("DemoPopup closed");
+    }
+
+    /// <summary>叠层弹层关闭静态路由（日志）。</summary>
+    static void OnStackedPopupClosedStatic(bool isOpen) {
+        Console.WriteLine("StackedPopup closed");
     }
 
     /// <summary>分区 2：MessageBox OK（ShowAsync 火忘；结果经静态续跑日志）。</summary>
@@ -177,6 +226,8 @@ public partial class MainWindow : Window {
     public override void OnLoaded() {
         this.WireThemeCombo();
         this.WireVolumeSlider();
+        this.WireSelectionSubscribe();
+        this.WireDemoTree();
 
         ObservableCollection<string> items = new ObservableCollection<string>();
         items.Add("Alpha");
@@ -189,6 +240,7 @@ public partial class MainWindow : Window {
         items.Add("Theta");
         this.ItemsList.ItemsSource = items;
         this.ItemsList.OnLoaded();
+        this.ItemsList.SelectIndex(1);
         double listExtent0 = this.ItemsList.ContentExtentHeight;
         // 多实例并发订阅：第二 ListView 独立集合；两源各自 Add 后两 Extent 均增长（破单活跃槽）。
         ListView peerList = new ListView();
@@ -207,7 +259,9 @@ public partial class MainWindow : Window {
             + " extent0=" + listExtent0.ToString()
             + " extent1=" + this.ItemsList.ContentExtentHeight.ToString()
             + " peer0=" + peerExtent0.ToString()
-            + " peer1=" + peerList.ContentExtentHeight.ToString());
+            + " peer1=" + peerList.ContentExtentHeight.ToString()
+            + " listSelHits=" + _listSelHits.ToString()
+            + " listSel=" + this.ItemsList.SelectionChanged.Value);
 
         if (!this.EditorView.OpenPath("Assets/fixture/sample.txt")) {
             this.EditorView.SetText("virtualized line 0\nvirtualized line 1\nvirtualized line 2\n");
@@ -239,6 +293,16 @@ public partial class MainWindow : Window {
         books.Add(MainWindow.BookRow("wgpu 渲染", "1.0", "Unique backend"));
         this.BooksGrid.ItemsSource = books;
         this.BooksGrid.SelectIndex(1);
+        // 程序化多选 + Ctrl/Shift 手势冒烟（SelectIndexWithMods 模拟 PointerRouter）。
+        this.BooksGrid.ClearSelection();
+        this.BooksGrid.SelectionMode = "Multiple";
+        this.BooksGrid.SelectItem(0);
+        this.BooksGrid.SelectItem(2);
+        int multiCount = this.BooksGrid.SelectedItems.Count;
+        this.BooksGrid.SelectIndexWithMods(0, 0);
+        this.BooksGrid.SelectIndexWithMods(2, 1);
+        this.BooksGrid.SelectIndexWithMods(1, 2);
+        int modsSel = this.BooksGrid.SelectedItems.Count;
         // Observable 行增量：Add 后 RowCount+1，禁全量重建路径（同绑定实例上变更）。
         books.Add(MainWindow.BookRow("Obs 增量行", "1.0", "Live"));
         // 多实例并发订阅：第二网格独立集合；两源各自 Add 后两 RowCount 均 +1（破单活跃槽）。
@@ -256,7 +320,10 @@ public partial class MainWindow : Window {
             + " peer=" + peerGrid.RowCount.ToString()
             + " first=" + this.BooksGrid.FirstMaterializedIndex.ToString()
             + " last=" + this.BooksGrid.LastMaterializedIndex.ToString()
-            + " sel=" + this.BooksGrid.SelectionChanged.Value);
+            + " sel=" + this.BooksGrid.SelectionChanged.Value
+            + " multiSel=" + multiCount.ToString()
+            + " modsSel=" + modsSel.ToString()
+            + " gridSelHits=" + _gridSelHits.ToString());
 
         // 程序化打开第 8 页（Data）——复现/验收崩溃；ARML_SELECT_DATA=1 时启用（禁鼠标坐标）。
         string selectData = Environment.GetEnvironmentVariable("ARML_SELECT_DATA");
@@ -308,6 +375,101 @@ public partial class MainWindow : Window {
         this.VolumeLabel.Text = "Volume: " + ((int)this.VolumeSlider.Value).ToString();
     }
 
+    /// <summary>Section 9: TreeView ItemsSource FlatIndex viewport (M-VZ4) smoke.</summary>
+    void WireDemoTree() {
+        if (this.DemoTree == null || this.TreeSelectionLabel == null) {
+            return;
+        }
+        _treeHost = this;
+        Action<string> handler = MainWindow.OnTreeSelectionChangedStatic;
+        this.DemoTree.OnSelectionChanged(handler);
+
+        List<TreeNode> roots = MainWindow.BuildDemoTreeNodes();
+        this.DemoTree.ItemsSource = roots;
+        this.DemoTree.EnsureViewportMaterialization();
+        int visibleRows = this.DemoTree.VisibleRowCount;
+        int childCount = 0;
+        if (this.DemoTree.Children != null) {
+            childCount = this.DemoTree.Children.Count;
+        }
+        this.DemoTree.SelectFlatIndex(0);
+        this.DemoTree.SelectFlatIndex(1);
+        string downSmoke = this.DemoTree.SelectionChanged.Value;
+        this.DemoTree.SelectFlatIndex(0);
+        double extent = this.DemoTree.ContentExtentHeight;
+        this.DemoTree.VerticalOffset = extent * 0.5;
+        this.DemoTree.EnsureViewportMaterialization();
+        int first = this.DemoTree.FirstMaterializedIndex;
+        int last = this.DemoTree.LastMaterializedIndex;
+        this.DemoTree.VerticalOffset = 0.0;
+        this.DemoTree.EnsureViewportMaterialization();
+        this.DemoTree.SelectFlatIndex(0);
+        string focusable = this.DemoTree.Focusable ? "1" : "0";
+        string tabStop = this.DemoTree.IsTabStop ? "1" : "0";
+        string tagOk = "0";
+        object sel = this.DemoTree.SelectedItem;
+        if (sel is TreeViewItem) {
+            TreeViewItem tvi = (TreeViewItem)sel;
+            if (tvi.Tag is TreeNode) {
+                tagOk = "1";
+            }
+        }
+        string virtOk = "0";
+        if (visibleRows > 40 && last < visibleRows - 1 && childCount < visibleRows) {
+            virtOk = "1";
+        }
+        Console.WriteLine(
+            "TreeView M-VZ4 visible=" + visibleRows.ToString()
+            + " kids=" + childCount.ToString()
+            + " first=" + first.ToString()
+            + " last=" + last.ToString()
+            + " extent=" + ((int)extent).ToString()
+            + " virt=" + virtOk
+            + " Focusable=" + focusable
+            + " IsTabStop=" + tabStop
+            + " downSmoke=" + downSmoke
+            + " tag=" + tagOk
+            + " sel=" + this.DemoTree.SelectionChanged.Value);
+    }
+
+    /// <summary>Demo tree: shallow roots + expanded Bulk (>=80 leaves) for FlatIndex viewport.</summary>
+    static List<TreeNode> BuildDemoTreeNodes() {
+        List<TreeNode> roots = new List<TreeNode>();
+        TreeNode docs = new TreeNode("Documents");
+        docs.IsExpanded = true;
+        docs.Children.Add(new TreeNode("Specs"));
+        TreeNode notes = new TreeNode("Notes");
+        notes.IsExpanded = true;
+        notes.Children.Add(new TreeNode("Draft"));
+        docs.Children.Add(notes);
+        roots.Add(docs);
+        TreeNode images = new TreeNode("Images");
+        images.Children.Add(new TreeNode("Logo"));
+        roots.Add(images);
+        roots.Add(new TreeNode("Readme"));
+        TreeNode bulk = new TreeNode("Bulk");
+        bulk.IsExpanded = true;
+        int i = 0;
+        while (i < 80) {
+            bulk.Children.Add(new TreeNode("Leaf-" + i.ToString()));
+            i++;
+        }
+        roots.Add(bulk);
+        return roots;
+    }
+
+    /// <summary>TreeView 选中静态路由：刷新标签。</summary>
+    static void OnTreeSelectionChangedStatic(string header) {
+        MainWindow host = _treeHost;
+        if (host != null && host.TreeSelectionLabel != null) {
+            string text = header;
+            if (text == null || text.Length == 0) {
+                text = "(none)";
+            }
+            host.TreeSelectionLabel.Text = "Selected: " + text;
+        }
+    }
+
     /// <summary>Slider 值变更静态路由：刷新 VolumeLabel。</summary>
     static void OnVolumeChangedStatic(double value) {
         MainWindow host = _volumeHost;
@@ -315,4 +477,36 @@ public partial class MainWindow : Window {
             host.VolumeLabel.Text = "Volume: " + ((int)value).ToString();
         }
     }
+
+    /// <summary>分区 4/8：ListView/DataGrid SelectionChanged Subscribe 冒烟（M-D0）。</summary>
+    void WireSelectionSubscribe() {
+        _selectionHost = this;
+        _listSelHits = 0;
+        _gridSelHits = 0;
+        if (this.ItemsList != null) {
+            this.ItemsList.OnSelectionChanged(MainWindow.OnListSelectionChangedStatic);
+        }
+        if (this.BooksGrid != null) {
+            this.BooksGrid.OnSelectionChanged(MainWindow.OnGridSelectionChangedStatic);
+        }
+    }
+
+    /// <summary>ListView 选择变更静态路由。</summary>
+    static void OnListSelectionChangedStatic(string item) {
+        _listSelHits = _listSelHits + 1;
+        MainWindow host = _selectionHost;
+        if (host != null) {
+            Console.WriteLine("ListView SelectionChanged item=" + item + " hits=" + _listSelHits.ToString());
+        }
+    }
+
+    /// <summary>DataGrid 选择变更静态路由。</summary>
+    static void OnGridSelectionChangedStatic(string item) {
+        _gridSelHits = _gridSelHits + 1;
+        MainWindow host = _selectionHost;
+        if (host != null) {
+            Console.WriteLine("DataGrid SelectionChanged item=" + item + " hits=" + _gridSelHits.ToString());
+        }
+    }
+
 }

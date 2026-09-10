@@ -1096,6 +1096,9 @@ fn is_bool_attr(name: &str) -> bool {
             | "Focusable"
             | "IsTabStop"
             | "IsIndeterminate"
+            | "IsExpanded"
+            | "IsSelected"
+            | "IsLightDismissEnabled"
     )
 }
 

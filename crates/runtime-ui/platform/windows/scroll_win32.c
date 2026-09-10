@@ -25,6 +25,34 @@ static void rt_ui_win32_phys_to_dip_xy(int32_t phys_x, int32_t phys_y,
     }
 }
 
+static RtUiElement* rt_ui_find_wheel_target_impl(RtUiElement* elem, int32_t px, int32_t py, int depth) {
+    if (!elem || !elem->layout_valid || depth <= 0) return NULL;
+    for (size_t i = elem->child_count; i > 0; i--) {
+        RtUiElement* hit = rt_ui_find_wheel_target_impl(elem->children[i - 1], px, py, depth - 1);
+        if (hit) return hit;
+    }
+    const char* type = elem->type_name ? elem->type_name : "Element";
+    if (strcmp(type, "ScrollView") == 0) {
+        if ((double)px >= elem->layout_x && (double)px < elem->layout_x + elem->layout_w &&
+            (double)py >= elem->layout_y && (double)py < elem->layout_y + elem->layout_h) {
+            return elem;
+        }
+        return NULL;
+    }
+    if (strcmp(type, "TabControl") == 0) {
+        double bar_h = rt_ui_get_number(elem, "HeaderBarHeight", 36.0);
+        if (bar_h <= 0.0) {
+            bar_h = 36.0;
+        }
+        if ((double)px >= elem->layout_x && (double)px < elem->layout_x + elem->layout_w &&
+            (double)py >= elem->layout_y && (double)py < elem->layout_y + bar_h) {
+            return elem;
+        }
+        return NULL;
+    }
+    return NULL;
+}
+
 static RtUiElement* rt_ui_find_scrollview_at_impl(RtUiElement* elem, int32_t px, int32_t py, int depth) {
     if (!elem || !elem->layout_valid || depth <= 0) return NULL;
     for (size_t i = elem->child_count; i > 0; i--) {
@@ -43,6 +71,10 @@ static RtUiElement* rt_ui_find_scrollview_at_impl(RtUiElement* elem, int32_t px,
 static RtUiElement* rt_ui_find_scrollview_at(RtUiElement* elem, int32_t px, int32_t py) {
     /* 深度上限 64：防御循环引用/异常深树导致的栈溢出（滚轮崩溃根因之一）。 */
     return rt_ui_find_scrollview_at_impl(elem, px, py, 64);
+}
+
+static RtUiElement* rt_ui_find_wheel_target(RtUiElement* elem, int32_t px, int32_t py) {
+    return rt_ui_find_wheel_target_impl(elem, px, py, 64);
 }
 
 static void rt_ui_vscroll_input_from_elem(RtUiElement* elem, RtUiVScrollInput* out) {
@@ -83,7 +115,7 @@ LRESULT rt_ui_win32_handle_scroll_wheel(HWND hwnd, RtUiElement* root, WPARAM wp,
     int32_t dip_x = 0;
     int32_t dip_y = 0;
     rt_ui_win32_phys_to_dip_xy((int32_t)pt.x, (int32_t)pt.y, &dip_x, &dip_y);
-    RtUiElement* hit = rt_ui_find_scrollview_at(root, dip_x, dip_y);
+    RtUiElement* hit = rt_ui_find_wheel_target(root, dip_x, dip_y);
     if (hit) {
         int16_t wheel_delta = (int16_t)HIWORD(wp);
         rt_ui_dispatch_scroll_wheel(hit, 0, (int32_t)wheel_delta);

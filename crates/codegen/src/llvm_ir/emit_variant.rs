@@ -13,7 +13,8 @@
 //!
 //! **M1 范围**：仅支持单字段 payload（基元/ptr）。多字段 struct payload
 //! 需先声明 struct 再作为 payload（与 `VariantCase.payload: Option<Ident>`
-//! 单一类型约束一致）。
+//! 单一类型约束一致）。struct payload 存堆副本（构造/深拷贝均
+//! `calloc`+聚合拷贝），禁止裸存创建帧 alloca 指针。
 
 use super::*;
 use ast::TypeId;
@@ -30,6 +31,7 @@ impl<'a> FnEmitter<'a> {
     /// 4. `store i8 discriminant` 到 tag 字段（GEP 0, 0）
     /// 5. 若 `payload` 为 `Some`：发射 payload 操作数，`store` 到 body 字段（GEP 0, 2）
     ///    - class/string payload（ptr）：额外发射 `rt_arc_inc` 维护引用计数
+    ///    - struct payload：先 `calloc` 堆化再存 ptr（防 List/字段跨帧悬垂）
     /// 6. 返回 `("%variant.{Name}", alloca_ptr)`
     pub(super) fn emit_variant_construct(
         &mut self,
@@ -100,13 +102,23 @@ impl<'a> FnEmitter<'a> {
             if needs_arc {
                 self.emit(&format!("call void @rt_arc_inc(ptr {val})"));
             }
+            // struct payload：构造帧 alloca 会随函数返回消亡；裸存栈 ptr 进
+            // List/字段后悬垂（DrawCommand.FillRect(FillRectPayload) → Color.Parse AV）。
+            // 与 FieldSet Copy-struct 同构：calloc + 聚合拷贝，variant 持堆副本。
+            let store_val = if self.layouts.structs.contains_key(payload_ident.as_str())
+                && (val_ty == "ptr" || val_ty.is_empty())
+            {
+                self.emit_struct_payload_heap_copy(payload_ident.as_str(), &val)
+            } else {
+                val
+            };
             // val_ty 与 payload_ty_str 在基元场景应一致；命名类型均为 ptr。
             let store_ty = if val_ty == "ptr" || val_ty.is_empty() {
                 payload_ty_str.clone()
             } else {
                 val_ty.clone()
             };
-            self.emit(&format!("store {store_ty} {val}, ptr {body_ptr}"));
+            self.emit(&format!("store {store_ty} {store_val}, ptr {body_ptr}"));
         }
 
         // variant 是栈上值类型，按引用传递（与 struct 一致）：
@@ -157,7 +169,9 @@ impl<'a> FnEmitter<'a> {
         let loaded = self.fresh_temp();
         self.emit(&format!("{loaded} = load {variant_ty}, ptr {src_ptr}"));
         self.emit(&format!("store {variant_ty} {loaded}, ptr {heap}"));
-        // class payload case：堆副本须持 +1（源 variant 所有权不变）。
+        // class payload：堆副本须持 +1（源 variant 所有权不变）。
+        // struct payload：再拷一份堆结构体，避免与源共享栈/堆块（List 存
+        // FillRect 后源帧消亡 / 二次深拷贝共享同一 Pay → 字段悬垂）。
         let class_cases: Vec<u32> = vlayout
             .cases
             .iter()
@@ -170,7 +184,19 @@ impl<'a> FnEmitter<'a> {
                 }
             })
             .collect();
-        if !class_cases.is_empty() {
+        let struct_cases: Vec<(u32, String)> = vlayout
+            .cases
+            .iter()
+            .filter_map(|c| {
+                let p = c.payload.as_ref()?;
+                if self.layouts.structs.contains_key(p.as_str()) {
+                    Some((c.discriminant, p.as_str().to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !class_cases.is_empty() || !struct_cases.is_empty() {
             let tag_ptr = self.fresh_temp();
             self.emit(&format!(
                 "{tag_ptr} = getelementptr inbounds {variant_ty}, ptr {heap}, i32 0, i32 0"
@@ -201,6 +227,28 @@ impl<'a> FnEmitter<'a> {
                 self.emit(&format!("call void @rt_arc_inc(ptr {payload_val})"));
                 self.emit(&format!("br label %{next_label}"));
             }
+            for (disc, struct_name) in &struct_cases {
+                let cur_label = next_label;
+                let clone_label = self.fresh_label();
+                next_label = self.fresh_label();
+                self.emit_label(&cur_label);
+                let cmp = self.fresh_temp();
+                self.emit(&format!("{cmp} = icmp eq i32 {tag}, {disc}"));
+                self.emit(&format!(
+                    "br i1 {cmp}, label %{clone_label}, label %{next_label}"
+                ));
+                self.emit_label(&clone_label);
+                let body_ptr = self.fresh_temp();
+                self.emit(&format!(
+                    "{body_ptr} = getelementptr inbounds {variant_ty}, ptr {heap}, i32 0, i32 2"
+                ));
+                let old_payload = self.fresh_temp();
+                self.emit(&format!("{old_payload} = load ptr, ptr {body_ptr}"));
+                let new_payload =
+                    self.emit_struct_payload_heap_copy(struct_name, &old_payload);
+                self.emit(&format!("store ptr {new_payload}, ptr {body_ptr}"));
+                self.emit(&format!("br label %{next_label}"));
+            }
             self.emit_label(&next_label);
             copy_join = next_label;
         }
@@ -213,6 +261,48 @@ impl<'a> FnEmitter<'a> {
         let result = self.fresh_temp();
         self.emit(&format!(
             "{result} = phi ptr [ {heap}, %{copy_join} ], [ null, %{null_label} ]"
+        ));
+        result
+    }
+
+    /// Copy-struct payload 堆化：`calloc(sizeof) + 聚合 load/store`。
+    ///
+    /// 源可为 null（未初始化 / Empty）：返回 null，避免 `load` 空指针。
+    /// 与 FieldSet Copy-struct 字段写同构；堆块按「结构体字段不 walk drop」
+    /// 模型视为泄漏（与 boxed struct / variant shell 一致）。
+    fn emit_struct_payload_heap_copy(&mut self, struct_name: &str, src_ptr: &str) -> String {
+        let null_cmp = self.fresh_temp();
+        self.emit(&format!("{null_cmp} = icmp eq ptr {src_ptr}, null"));
+        let null_label = self.fresh_label();
+        let copy_label = self.fresh_label();
+        let join_label = self.fresh_label();
+        self.emit(&format!(
+            "br i1 {null_cmp}, label %{null_label}, label %{copy_label}"
+        ));
+
+        let heap = self.fresh_temp();
+        self.emit_label(&copy_label);
+        let size = self.fresh_temp();
+        self.emit(&format!(
+            "{size} = ptrtoint ptr getelementptr (%struct.{struct_name}, ptr null, i32 1) to i64"
+        ));
+        self.emit(&format!("{heap} = call ptr @calloc(i64 1, i64 {size})"));
+        let loaded = self.fresh_temp();
+        self.emit(&format!(
+            "{loaded} = load %struct.{struct_name}, ptr {src_ptr}"
+        ));
+        self.emit(&format!(
+            "store %struct.{struct_name} {loaded}, ptr {heap}"
+        ));
+        self.emit(&format!("br label %{join_label}"));
+
+        self.emit_label(&null_label);
+        self.emit(&format!("br label %{join_label}"));
+
+        self.emit_label(&join_label);
+        let result = self.fresh_temp();
+        self.emit(&format!(
+            "{result} = phi ptr [ {heap}, %{copy_label} ], [ null, %{null_label} ]"
         ));
         result
     }

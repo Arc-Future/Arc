@@ -59,7 +59,7 @@ public static class WindowHost {
     }
 
     /// <summary>
-    /// 将子元素挂到父元素下。
+    /// 将子元素挂到父元素下。同父已挂载时移至 children 末尾（Popup 复开置顶）。
     /// </summary>
     [Builtin(ABI = "rt_ui_element_add_child")]
     internal static void ElementAddChild(long parentHandle, long childHandle) {

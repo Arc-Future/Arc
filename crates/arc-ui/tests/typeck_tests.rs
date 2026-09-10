@@ -38,6 +38,8 @@ fn registry_builtin_contains_core_components() {
         "VisualHost",
         "TabControl",
         "TabItem",
+        "TreeView",
+        "TreeViewItem",
         "DataGrid",
     ] {
         assert!(reg.contains(name), "expected builtin component `{name}`");
@@ -53,6 +55,17 @@ fn registry_window_has_title_property() {
     assert!(info.has_property("Height"));
     assert_eq!(info.property_type("Title"), Some(&PropType::String));
     assert_eq!(info.property_type("Width"), Some(&PropType::Double));
+}
+
+#[test]
+fn registry_treeview_has_items_source() {
+    let reg = ComponentRegistry::builtin();
+    let info = reg.get("TreeView").unwrap();
+    assert!(info.has_property("ItemsSource"));
+    assert_eq!(info.property_type("ItemsSource"), Some(&PropType::Object));
+    assert!(info.has_property("SelectedIndex"));
+    assert!(info.has_property("VerticalOffset"));
+    assert_eq!(info.property_type("VerticalOffset"), Some(&PropType::Double));
 }
 
 #[test]
@@ -196,9 +209,9 @@ fn typecheck_skips_x_directives() {
 
 #[test]
 fn typecheck_rectangle_fill_and_size() {
-    let src = r##"<Window>
-        <Rectangle Width="50" Height="50" Fill="#FF0000" Stroke="#000000" StrokeThickness="2"/>
-    </Window>"##;
+    let src = r#"<Window>
+        <Rectangle Width="50" Height="50" Fill="{StaticResource Color.Danger}" Stroke="{StaticResource Color.Border}" StrokeThickness="2"/>
+    </Window>"#;
     let doc = Parser::parse(src).unwrap();
     let checker = TypeChecker::new();
     let report = checker.check(&doc);
@@ -229,13 +242,14 @@ fn typecheck_listview_items_source_no_warnings() {
 
 #[test]
 fn typecheck_p0_visual_properties_no_warnings() {
-    let src = r##"<Window Background="#F0F0F0" Title="Demo" Width="400" Height="300">
-        <StackPanel Orientation="Vertical" Spacing="8" Background="#FFFFFF">
-            <TextBlock Text="Hello" FontSize="16" Foreground="#0044FF" Background="#FFF4C2"/>
-            <Button Content="OK" Background="#E0E0E0" Foreground="#404040" FontSize="14"/>
-            <Rectangle Width="80" Height="24" Fill="#00AA00"/>
+    // fidelity-loop §1.2：色值须 StaticResource；FontSize/Spacing 本切片仍允许字面量。
+    let src = r#"<Window Background="{StaticResource Color.Background}" Title="Demo" Width="400" Height="300">
+        <StackPanel Orientation="Vertical" Spacing="8" Background="{StaticResource Color.Surface}">
+            <TextBlock Text="Hello" FontSize="16" Foreground="{StaticResource Color.Primary}" Background="{StaticResource Color.Text.Highlight}"/>
+            <Button Content="OK" Background="{StaticResource Color.Disabled.Fill}" Foreground="{StaticResource Color.Text.Secondary}" FontSize="14"/>
+            <Rectangle Width="80" Height="24" Fill="{StaticResource Color.Success}"/>
         </StackPanel>
-    </Window>"##;
+    </Window>"#;
     let doc = Parser::parse(src).unwrap();
     let checker = TypeChecker::new();
     let report = checker.check(&doc);

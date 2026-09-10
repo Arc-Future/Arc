@@ -245,6 +245,23 @@ impl ComponentRegistry {
                 .with_panel_props()
                 .with_property("Header", PropType::String),
         );
+        // RFC 037 · TreeView ItemsSource FlatIndex 视口（M-VZ4 最小面；非 Selector）
+        reg.register(
+            ComponentInfo::new("TreeView")
+                .with_control_props()
+                .with_property("SelectedIndex", PropType::Int)
+                .with_property("SelectedItem", PropType::Object)
+                .with_property("ItemsSource", PropType::Object)
+                .with_property("VerticalOffset", PropType::Double)
+                .with_property("SelectionChanged", PropType::EventHandler),
+        );
+        reg.register(
+            ComponentInfo::new("TreeViewItem")
+                .with_panel_props()
+                .with_property("Header", PropType::String)
+                .with_property("IsExpanded", PropType::Bool)
+                .with_property("IsSelected", PropType::Bool),
+        );
         reg
     }
 
@@ -555,6 +572,16 @@ impl TypeChecker {
                     report.binding_count += 1;
                     self.check_markup_extension(ext, attr.span, report);
                 }
+                // fidelity-loop §1.2：色值/Thickness 禁裸值（资源定义元素除外）
+                if !crate::bare_value::is_token_definition_element(element.name.as_str()) {
+                    if let Some(err) = crate::bare_value::diagnose_bare_literal(
+                        attr.name.as_str(),
+                        &attr.value,
+                        attr.span,
+                    ) {
+                        report.errors.push(err);
+                    }
+                }
             }
         } else {
             report.errors.push(ArmlError::type_error(
@@ -754,6 +781,14 @@ impl TypeChecker {
         }
         if let AttributeValue::MarkupExtension(ext) = &setter.value {
             self.check_markup_extension(ext, setter.span, report);
+        }
+        // fidelity-loop §1.2：Style Setter 色值/Thickness 禁裸值
+        if let Some(err) = crate::bare_value::diagnose_bare_literal(
+            setter.property.as_str(),
+            &setter.value,
+            setter.span,
+        ) {
+            report.errors.push(err);
         }
         if let Some(target) = target_type {
             if target != "*" {

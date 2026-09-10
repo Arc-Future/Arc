@@ -16,9 +16,10 @@
 // 无需感知 Primitives。
 //
 // 模板方法模式（无属性变更回调机制的联动方案）：SelectIndex 是唯一选中流程入口
-// （校验 → 写点 → 镜像同步 → 附加同步 → 通知），差异点经 protected virtual 钩子插拔：
+// （校验 → 写点 → 镜像同步 → 选中集合同步 → 附加同步 → 通知），差异点经 protected virtual 钩子插拔：
 //   - SelectionItemCount：可选条目总数（校验上界；默认 ItemContainerGenerator.ItemCount）
 //   - ApplySelectedIndexCore：选中写点（默认 SelectedIndex DP；ComboBox<T> 附加 SelectedText）
+//   - SyncSelectionCollection：选中集合同步（默认无操作；MultiSelector 替换 SelectedItems）
 //   - OnSelectionApplied：选中后附加同步（ListView 经视图本体化 SelectedItem；
 //     ComboBoxBase 推 SelectedText 镜像串；BindPlatformMirror 复位时亦调用，绑定即同步）
 //   - SelectionPayload：string 载荷提取（默认选中项显示投影；DataGrid 行首列文本）
@@ -97,7 +98,7 @@ public class Selector : ItemsControl {
 
     /// <summary>PointerRouter 点击入口：选中指定项。index ∈ [-1, SelectionItemCount)；
     /// 越界正值忽略（保持现状），-1 取消选择。流程：校验 → 写点 → 平台镜像 →
-    /// 附加同步 → SelectionChanged。</summary>
+    /// 选中集合同步（MultiSelector）→ 附加同步 → SelectionChanged。</summary>
     public void SelectIndex(int index) {
         int count = this.SelectionItemCount();
         if (index < -1 || index >= count) {
@@ -105,6 +106,7 @@ public class Selector : ItemsControl {
         }
         this.ApplySelectedIndexCore(index);
         this.SyncMirrorSelection();
+        this.SyncSelectionCollection(index);
         this.OnSelectionApplied();
         this.RaiseSelectionChanged();
     }
@@ -171,6 +173,12 @@ public class Selector : ItemsControl {
     /// <summary>选中后附加同步。ListView 装箱 SelectedItem；ComboBoxBase 推
     /// SelectedText 镜像串；BindPlatformMirror 复位时亦调用（绑定即同步）。</summary>
     protected virtual void OnSelectionApplied() {
+    }
+
+    /// <summary>SelectIndex 主选中写点后同步选中集合。默认无操作；MultiSelector
+    /// 覆写为以当前 index 替换 SelectedItems（点击/程序化主选中路径；增量累加走
+    /// SelectItem，不经本钩子）。</summary>
+    protected virtual void SyncSelectionCollection(int index) {
     }
 
     /// <summary>SelectionChanged 载荷提取。默认选中项文本；DataGrid 覆写为行首列文本。</summary>
@@ -249,7 +257,8 @@ public class Selector : ItemsControl {
     /// </summary>
     public Signal<string> SelectionChanged;
 
-    /// <summary>订阅选择变更——SelectionChanged.Subscribe 的便捷封装（同 Button.OnClick 惯例）。</summary>
+    /// <summary>订阅选择变更——SelectionChanged.Subscribe 的便捷封装（同 Button.OnClick 惯例）。
+    /// M-D0：底层 Subscribe 直挂 Action&lt;string&gt;（无包装闭包）；应用侧优先静态方法组表达式直传。</summary>
     /// <param name="handler">变更回调（接收新选中项文本；-1/未物化行为 ""）。</param>
     public void OnSelectionChanged(Action<string> handler) {
         if (SelectionChanged != null && handler != null) {

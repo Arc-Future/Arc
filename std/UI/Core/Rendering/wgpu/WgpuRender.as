@@ -148,6 +148,8 @@ public partial class WgpuRender : IRender, ITextMetrics {
     private const string ElCanvas = "Canvas";
     private const string ElVisualHost = "VisualHost";
     private const string ElListView = "ListView";
+    private const string ElTreeView = "TreeView";
+    private const string ElTreeViewItem = "TreeViewItem";
     private const string ElDataGrid = "DataGrid";
     private const string ElDataGridRow = "DataGridRow";
     private const string ElCodeEditor = "CodeEditor";
@@ -640,13 +642,12 @@ public partial class WgpuRender : IRender, ITextMetrics {
 
         _uniformOffset = 0;
         _initialized = true;
-        if (_surface != null) {
-            // 布局同源度量：挂接 ITextMetrics（PrepareForShow 可能早于本初始化，
-            // FramePump 随后 RelayoutSynced 用 atlas 重测）。离屏模式无窗口布局，跳过。
-            TextMeasuring.Attach(this);
-        }
+        // 布局同源度量：窗口与离屏（LivePreviewHost / headless 快照）均挂接 ITextMetrics。
+        // PrepareForShow 可能早于窗口 Initialize；FramePump 随后 RelayoutSynced 用 atlas 重测。
+        TextMeasuring.Attach(this);
         return true;
     }
+
 
     // ===== RFC 037 references/texture-surface：动态纹理注册表（多槽）=====
     // CreateTexture / UploadTexture / DestroyTexture / GetTextureSize /

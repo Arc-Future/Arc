@@ -80,6 +80,8 @@ public class DefaultElementFactory : IElementFactory {
         this.Add("ContentControl", () => new ContentControl());
         this.Add("ItemsControl", () => new ItemsControl());
         this.Add("ListView", () => new ListView());
+        this.Add("TreeView", () => new TreeView());
+        this.Add("TreeViewItem", () => new TreeViewItem());
 
         // 数据网格
         this.Add("DataGrid", () => new DataGrid());

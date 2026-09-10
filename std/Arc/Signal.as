@@ -10,9 +10,11 @@
 //   - Subscribe(handler) 仅传新值的轻量订阅
 //
 // **实现状态**：M1 类型骨架 ✅ · M2-A Subscription 令牌（int）✅
-//   · M-D0 前置修复 ✅（统一 token 空间：全局递增 token + 并行登记表精确定位，
-//     跨双 handler 表（_changingHandlers/_changedHandlers 各自从 0 编号）的
-//     偏移误清空缺陷已修复；公开 API 签名与语义不变）
+//   · M-D0 token 空间 ✅（全局递增 token + 并行登记表精确定位，
+//     跨 handler 表各自从 0 编号的偏移误清空已修复）
+//   · M-D0 Subscribe 闭包链路 ✅（禁 `(old,new)=>handler(new)` 包装 lambda：
+//     其捕获 Subscribe 形参槽，跨函数逃逸后悬垂 → AV；Subscribe 直挂
+//     Action&lt;T&gt; 表，与 OnChanged 同 token 空间；公开 API 签名不变）
 
 namespace Arc;
 
@@ -24,11 +26,13 @@ using Arc.Collections;
 public class Signal<T> {
     public T Value;
 
-    // 双 handler 表（保持原有结构）：
+    // 三 handler 表：
     //   _changingHandlers：变更前校验（可拒绝），Func<T,T,bool>
     //   _changedHandlers：变更后通知（old, new 二元组），Action<T,T>
+    //   _subscribeHandlers：仅新值通知，Action<T>（Subscribe 直挂，无包装闭包）
     private List<Func<T, T, bool>> _changingHandlers;
     private List<Action<T, T>> _changedHandlers;
+    private List<Action<T>> _subscribeHandlers;
 
     // M-D0 统一 token 空间：
     //   _nextToken：全局递增计数器，每次订阅取 _nextToken++，token 全局唯一；
@@ -36,13 +40,14 @@ public class Signal<T> {
     //     记录该 token 对应的（handler 种类，在对应表中的下标），
     //     使 Unsubscribe(token) 能精确定位到唯一一个处理函数，杜绝跨表误清空。
     private int _nextToken;
-    private List<int> _tokenKind;    // 0 = _changingHandlers 表；1 = _changedHandlers 表
+    private List<int> _tokenKind;    // 0=changing；1=changed；2=subscribe
     private List<int> _tokenIndex;   // 在对应表中的下标
 
     public Signal() {
         this.Value = default(T);
         _changingHandlers = new List<Func<T, T, bool>>();
         _changedHandlers = new List<Action<T, T>>();
+        _subscribeHandlers = new List<Action<T>>();
         _nextToken = 0;
         _tokenKind = new List<int>();
         _tokenIndex = new List<int>();
@@ -52,6 +57,7 @@ public class Signal<T> {
         this.Value = initial;
         _changingHandlers = new List<Func<T, T, bool>>();
         _changedHandlers = new List<Action<T, T>>();
+        _subscribeHandlers = new List<Action<T>>();
         _nextToken = 0;
         _tokenKind = new List<int>();
         _tokenIndex = new List<int>();
@@ -90,8 +96,22 @@ public class Signal<T> {
         return token;
     }
 
+    /// <summary>
+    /// 轻量订阅：仅接收新值。直挂 <c>Action&lt;T&gt;</c> 表——禁止再包一层
+    /// <c>(old, new) =&gt; handler(new)</c>（形参槽逃逸 UB；见 ControlTemplate 同款纪律）。
+    /// </summary>
     public int Subscribe(Action<T> handler) {
-        return this.OnChanged((_, newValue) => handler(newValue));
+        if (_subscribeHandlers == null) {
+            _subscribeHandlers = new List<Action<T>>();
+        }
+        this.EnsureTokenRegistry();
+        int index = _subscribeHandlers.Count;
+        _subscribeHandlers.Add(handler);
+        int token = _nextToken;
+        _nextToken = _nextToken + 1;
+        _tokenKind.Add(2);
+        _tokenIndex.Add(index);
+        return token;
     }
 
     // M2-A：按令牌取消订阅（标记 null 以跳过）。
@@ -105,9 +125,13 @@ public class Signal<T> {
                 if (_changingHandlers != null && index < _changingHandlers.Count) {
                     _changingHandlers[index] = null;
                 }
-            } else {
+            } else if (kind == 1) {
                 if (_changedHandlers != null && index < _changedHandlers.Count) {
                     _changedHandlers[index] = null;
+                }
+            } else if (kind == 2) {
+                if (_subscribeHandlers != null && index < _subscribeHandlers.Count) {
+                    _subscribeHandlers[index] = null;
                 }
             }
         }
@@ -138,10 +162,18 @@ public class Signal<T> {
     }
 
     private void NotifyChanged(T oldValue, T newValue) {
-        if (_changedHandlers == null) { return; }
-        foreach (var handler in _changedHandlers) {
-            if (handler != null) {
-                handler(oldValue, newValue);
+        if (_changedHandlers != null) {
+            foreach (var handler in _changedHandlers) {
+                if (handler != null) {
+                    handler(oldValue, newValue);
+                }
+            }
+        }
+        if (_subscribeHandlers != null) {
+            foreach (var handler in _subscribeHandlers) {
+                if (handler != null) {
+                    handler(newValue);
+                }
             }
         }
     }

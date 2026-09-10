@@ -43,7 +43,7 @@ pub const CONTROL_STYLE_SOURCES: &[&str] = &[
 ];
 
 /// `x:Key` → `BuiltInTheme` 字段名（须与 `BuiltInTheme.as` const 一一对应）。
-const KEY_TO_FIELD: &[(&str, &str)] = &[
+pub(crate) const KEY_TO_FIELD: &[(&str, &str)] = &[
     ("Color.Background", "Background"),
     ("Color.Surface", "Surface"),
     ("Color.Border", "Border"),

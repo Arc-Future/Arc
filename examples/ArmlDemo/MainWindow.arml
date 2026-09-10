@@ -64,8 +64,9 @@
                         <ComboBox x:Name="ThemeCombo" Width="240"/>
                         <ComboBox Width="240" Style="{StaticResource Small}"/>
                         <ComboBox Width="240" Style="{StaticResource Large}"/>
-                        <TextBlock Text="Popup (light-dismiss: backdrop / Esc):" FontSize="12"/>
+                        <TextBlock Text="Popup (light-dismiss: backdrop / Esc · stacked Z LIFO):" FontSize="12"/>
                         <Button Content="Open demo Popup" Style="{StaticResource Default}" Click="OnOpenDemoPopup"/>
+                        <Button Content="Open stacked Popup" Style="{StaticResource Default}" Click="OnOpenStackedPopup"/>
                         <TextBlock Text="Focus ring: Tab/arrows = IsFocusVisible; click TextBox clears ring" FontSize="12"/>
                         <TextBlock Text="MessageBox (Popup modal · IsLightDismissEnabled=false):" FontSize="12"/>
                         <Button Content="MessageBox OK" Style="{StaticResource Primary}" Click="OnShowMessageBoxOk"/>
@@ -184,6 +185,35 @@
                         <DataGrid x:Name="BooksGrid" Width="640" Height="200"/>
                     </StackPanel>
                 </ScrollView>
+            </TabItem>
+
+            <TabItem Header="9 Tree">
+                <StackPanel Orientation="Vertical" Spacing="10" Margin="16,12,16,12">
+                    <TextBlock Text="9 - TreeView ItemsSource FlatIndex viewport (M-VZ4 min)" FontSize="15" Style="{StaticResource Demo.SectionTitle}"/>
+                    <TextBlock Text="ItemsSource=List&lt;TreeNode&gt;; FlatIndex window + recycle pool; Click/Tab + Up/Down Home/End; Left/Right expand. Honest: shallow FlatIndex virt (not full path virt)." FontSize="12"/>
+                    <TextBlock x:Name="TreeSelectionLabel" Text="Selected: (none)" FontSize="12"/>
+                    <TreeView x:Name="DemoTree" Width="640" Height="320"/>
+                </StackPanel>
+            </TabItem>
+
+            <!-- 溢出冒烟：长 Header 挤栏 → 顶栏滚轮水平滚 + 点击命中跟 HeaderScrollOffset -->
+            <TabItem Header="10 Overflow Alpha Long Title">
+                <StackPanel Orientation="Vertical" Spacing="10" Margin="16,12,16,12">
+                    <TextBlock Text="10 - Tab overflow scroll smoke" FontSize="15" Style="{StaticResource Demo.SectionTitle}"/>
+                    <TextBlock Text="Wheel over the tab bar to scroll headers; click still hits the correct tab." FontSize="12"/>
+                </StackPanel>
+            </TabItem>
+            <TabItem Header="11 Overflow Beta Extra Wide">
+                <StackPanel Orientation="Vertical" Spacing="10" Margin="16,12,16,12">
+                    <TextBlock Text="11 - Second overflow page" FontSize="15" Style="{StaticResource Demo.SectionTitle}"/>
+                    <TextBlock Text="Selecting this tab auto-scrolls it into the visible header strip." FontSize="12"/>
+                </StackPanel>
+            </TabItem>
+            <TabItem Header="12 Overflow Gamma Crowded">
+                <StackPanel Orientation="Vertical" Spacing="10" Margin="16,12,16,12">
+                    <TextBlock Text="12 - Third overflow page" FontSize="15" Style="{StaticResource Demo.SectionTitle}"/>
+                    <TextBlock Text="No switch animation / close button in this slice." FontSize="12"/>
+                </StackPanel>
             </TabItem>
 
         </TabControl>

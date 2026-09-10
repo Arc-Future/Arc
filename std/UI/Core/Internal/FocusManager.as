@@ -213,6 +213,13 @@ internal class FocusManager {
                     return;
                 }
             }
+            if (focused is TreeView) {
+                TreeView tree = (TreeView)focused;
+                if (tree.TryHandleKey(virtualKey)) {
+                    _focusVisible = true;
+                    return;
+                }
+            }
             if (focused is InputElement && !(focused is TextBox)) {
                 InputElement el = (InputElement)focused;
                 if (el.OnKeyDown(virtualKey, shiftDown)) {

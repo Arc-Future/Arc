@@ -8,7 +8,7 @@
 
 | 面 | 设计（最终形态） |
 |----|-----------------|
-| 色值 | `std/UI/Core/Themes/*.arml` 声明 `ResourceDictionary`，编译期扁平化：`Light.arml`/`Dark.arml` 为色值权威源（Light=`defaultAlgorithm` map；Dark=`darkAlgorithm` 预烘焙快照）；`BuiltInTheme.Colors.g.as` 由 arc-ui 生成；`CreateLight`/`CreateDark` 调 `BuiltInThemeColors` + `FillNonColor` + `AddImplicitStyles`（Controls） |
+| 色值 | `std/UI/Core/Themes/*.arml` 声明 `ResourceDictionary`，编译期扁平化：`Light.arml` 为 Seed/Map 权威；`Dark.arml` 由 `arc-ui::dark_map_derive` 从 Light Seed **构建期**派生（Ant 6 `darkAlgorithm` 默认 Seed 快照表；**非**运行时算法）；`BuiltInTheme.Colors.g.as` 由 arc-ui 生成；`CreateLight`/`CreateDark` 调 `BuiltInThemeColors` + `FillNonColor` + `AddImplicitStyles`（Controls） |
 | 几何/深度/时长 | 代码常量（`CornerRadius` / `Elevation` / motion ms）；在 `BuiltInTheme` 结构化常量；**保持 AS**（`borderRadius=6` / `borderRadiusLG=8` / `controlHeight=32`） |
 | 隐式控件 Style | `Themes/Controls.arml` + `Themes/Controls/*.arml`：每控件真实 chrome Setter（`{StaticResource Color.*}` / `Size.*`）；字体**不进**隐式 Style——FontFamily/FontSize/FontWeight/Foreground 为环境 DP（037 §4）；全局字体默认单一源 = `Control` DP 默认值；`Foreground` 未设时渲染/VSM 回落活动主题 `Color.Text.Primary`；运行时 `CreateLight`/`CreateDark` → `AddImplicitStyles` → `MergedDictionaries.Add(CreateControls())`；`Application.ApplyStyleTree` 启动与 `SwitchTheme` 重应用 |
 | 应用覆盖 | `<Application.Themes>` / `<Application.Resources>`：codegen 扁平化 Themes（`BasedOn` → `BuiltInTheme.Create*`） |
@@ -19,8 +19,8 @@
 
 ```
 std/UI/Core/Themes/
-  Light.arml                 # 色值权威（Ant 6 Map）
-  Dark.arml                  # 同 key 集，深色值
+  Light.arml                 # 色值权威（Ant 6 defaultAlgorithm Map；Seed 入口）
+  Dark.arml                  # 同 key 集；由 Light Seed 构建期派生（勿手改；见 derive 脚本）
   Controls.arml              # 聚合：MergedDictionaries → Shared + Controls/*
   Controls/
     Shared.arml              # 全局短键：Small/Medium/Large（MinHeight+Padding）+ Primary/Default/…
@@ -114,15 +114,15 @@ std/UI/Core/Styling/
 
 ## 4. 落地约束（单一源纪律）
 
-1. 新 token 必须先加 `BuiltInTheme` 键常量 + `Themes/*.arml` 条目，再 `UPDATE_BUILTIN_THEME=1` 再生 `BuiltInTheme.Colors.g.as`；**禁止**在 AS 内新增色值字面量。
-2. 契约测试断言 ARML 源与生成物同步，维护 SwitchTheme 全链一致。
-3. 默认色必须可追溯到 Ant Design **6.x** 公开 Seed/Map Token；改色须注明对应 Ant 键名。
+1. 新 token 必须先加 `BuiltInTheme` 键常量 + `Themes/Light.arml` 条目；改 Seed（Primary/Danger/Success/Warning）后跑 `scripts/ui-theme/derive-dark-from-light.ps1` 再生 `Dark.arml` + `BuiltInTheme.Colors.g.as`（或 `UPDATE_DARK_THEME=1` / `UPDATE_BUILTIN_THEME=1` 对应契约测试）。**禁止**在 AS 内新增色值字面量；**禁止**把 Dark 当第二套手写权威（须经 `dark_map_derive`）。
+2. 契约测试断言 ARML 源与生成物同步，维护 SwitchTheme 全链一致；`dark_arml_matches_light_seed_derivation` 断言 Dark ≡ Light Seed 派生。
+3. 默认色必须可追溯到 Ant Design **6.x** 公开 Seed/Map Token；改色须注明对应 Ant 键名。扩展非默认 Seed 须先扩展 `DEFAULT_SEED_DARK_MAP`（禁 silently fake palette）。
 
 ## 5. 非目标（本门禁）
 
 - 第三方主题市场 / 运行时下载主题包
 - 声明式 `VisualStateGroup` 全量（chrome 仍 VSM+RenderTree，见 [production-surface](production-surface.md)）
-- 完整 port Ant `darkAlgorithm` / `compactAlgorithm` 运行时（Dark 为预烘焙快照）
+- 完整 port Ant `darkAlgorithm` / `compactAlgorithm` **运行时**（构建期 Seed→Dark Map 快照派生已立：`dark_map_derive` + `scripts/ui-theme/derive-dark-from-light.ps1`）
 - Ant 组件级 token 全家桶（Button 实心/默认/虚线全变体）——有边界切片见 [theme-style-interaction-architecture](theme-style-interaction-architecture.md) P1–P3
 - **像素级复刻 antd DOM/CSS**（能力与产品定位均否；见同文 §1）
 - ARML 字面 `<ControlTemplate>` 发射进 Styles.g.as（默认模板本轮由 `DefaultControlTemplates` 代码工厂挂隐式 Style；字面发射后置）

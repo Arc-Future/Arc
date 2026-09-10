@@ -1,6 +1,6 @@
 # AI 原生 · 渲染回读契约（RenderCapture）
 
-> 本子项承载 [037 §10(../../037-ui.md) 感知基础设施的「眼睛」：离屏帧回读为 CPU 像素并编码 PNG。
+> 本子项承载 [037 §10](../../037-ui.md) 感知基础设施的「眼睛」：离屏帧回读为 CPU 像素并编码 PNG。
 > 配套：[live-preview](ai-native-live-preview.md)（消费方）· [layout-snapshot](ai-native-layout-snapshot.md)（尺子）· [fidelity-loop](ai-native-fidelity-loop.md)（审视回路）。
 
 ## 1. 目标
@@ -54,3 +54,19 @@ PNG 编码（std 层）：
 - 分辨率上限：评审分辨率（默认 ≤ 2048×2048），防无界显存/回读带宽；超限创建失败（显式错误，不静默降级）。
 - 回读失败（设备丢失/尺寸不符）→ 返回 false + 显式告警，禁止静默返回空帧。
 - 与窗口 surface 渲染互斥：RenderToOffscreen 与 EndFrame 不得交错（单帧语义，宿主负责调度）。
+
+## 5. 验收 checklist（AL-P0 headless 硬门槛）
+
+> **宣称纪律**：下列仅关「渲染回读 headless 可测」；勾选后仍 **不** 宣称 G1/G2/G3、布局快照或保真闭环完成。
+
+| 项 | 状态 | 证据 |
+|----|------|------|
+| 离屏 target（无 HWND）+ `RenderToOffscreen` + `ReadbackPixels` | ✅ | `WgpuRender.Capture.as` + `rt_wgpu_native.c` `wgpu_offscreen_*` |
+| `PngEncoder.Encode`（复用 `rt_image_*`，禁双实现） | ✅ | `std/UI/Core/Rendering/PngEncoder.as` |
+| `LivePreviewHost.CapturePng` 经 `PngEncoder` 落盘 | ✅ | `LivePreviewHost.as` |
+| headless e2e：文件存在 / PNG 魔数 / IHDR 尺寸 / 回读可读 | ✅ | `l2_ui_render_capture_batch`（`offscreen_png_magic`；空 DrawList + clear） |
+| 超限创建显式拒绝（≤2048） | ✅ | 同批 `offscreen_limit_reject` |
+| FillRect(hex) 着色回读 | ✅ | `offscreen_fillrect_color`：opaque red vs clear black 采样；根因=variant struct payload 栈悬垂，codegen 堆化 |
+| G1 双宿主像素一致 / G2 属性补丁 / G3 VideoSurface | ☐ | 后置；本切片不宣称 |
+
+验证：`cargo test -p arc-tests --features full-rt --test l2_ui_render_capture_batch`。

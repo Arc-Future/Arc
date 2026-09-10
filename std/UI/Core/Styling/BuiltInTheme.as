@@ -10,9 +10,11 @@
 //   - 禁止 Fluent/Material 混搭默认色；禁止「antd 像素克隆」第二口径
 //
 // 设计：
-//   - 色值唯一权威源：`std/UI/Core/Themes/{Light,Dark}.arml`（UI-P2）；经 arc-ui 生成
+//   - 色值唯一权威源：`std/UI/Core/Themes/Light.arml`（Seed/Map）；`Dark.arml` 由
+//     arc-ui `dark_map_derive` 构建期从 Light Seed 派生（勿手改）；经 arc-ui 生成
 //     `BuiltInTheme.Colors.g.as` → `BuiltInThemeColors.Fill*Colors`，本类仅保留键名
 //     常量 + 几何/motion + 薄工厂（CreateLight/CreateDark）。
+//     再生：`scripts/ui-theme/derive-dark-from-light.ps1`。
 //   - 隐式 Style 权威源：`Themes/Controls.arml` + `Themes/Controls/*.arml` →
 //     `BuiltInTheme.Styles.g.as` → `CreateControls()`；CreateLight/Dark 经
 //     `MergedDictionaries.Add` 并入（与 WPF 主题合并同构；切主题 O(1) 换整份 RD）。

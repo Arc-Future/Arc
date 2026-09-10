@@ -157,16 +157,27 @@ internal class ScrollRouter {
         _relayoutInProgress = 0;
     }
 
-    /// <summary>C 回调：platform handle + 滚轮 delta（Win32 GET_WHEEL_DELTA_WPARAM）。</summary>
+    /// <summary>C 回调：platform handle + 滚轮 delta（Win32 GET_WHEEL_DELTA_WPARAM）。
+    /// ScrollView 竖直滚；TabControl 顶栏水平滚（HeaderScrollOffset）。</summary>
     internal static void RouteWheel(long platformHandle, int deltaX, int deltaY) {
         Console.WriteLine("[SCROLL-DIAG] RouteWheel handle=" + (int)platformHandle + " dx=" + deltaX + " dy=" + deltaY);
         ScrollView scroll = ScrollRouter.Lookup(platformHandle);
-        if (scroll == null) {
+        if (scroll != null) {
+            double step = (double)deltaY / 120.0 * 48.0;
+            scroll.ApplyWheelDelta(0.0, 0.0 - step);
+            ScrollRouter.RelayoutAndDirty();
             return;
         }
-        double step = (double)deltaY / 120.0 * 48.0;
-        scroll.ApplyWheelDelta(0.0, 0.0 - step);
-        ScrollRouter.RelayoutAndDirty();
+        TabControl tabs = PointerRouter.FindTabControl(platformHandle);
+        if (tabs != null) {
+            tabs.ApplyHeaderWheelDelta(deltaY);
+            // 仅 chrome 偏移：写镜像 + 脏帧即可，不必整树 Relayout。
+            if (_windowElement != null && _platformRoot != 0) {
+                PlatformTreeSync.SyncLayoutFromArc(_windowElement, _platformRoot);
+            }
+            FramePump.Invalidate();
+            WindowHost.InvalidateActiveWindow();
+        }
     }
 
     /// <summary>C 回调：竖滚动条拖拽/轨道点击 → 更新 VerticalOffset。</summary>

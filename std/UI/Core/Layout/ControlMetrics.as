@@ -148,6 +148,15 @@ internal class ControlMetrics {
     /// <summary>MessageBox 自绘图标徽章边长。</summary>
     public const double MessageBoxIconSize = 36.0;
 
+    /// <summary>TreeView 行高（Header 条；与 ControlHeight 同档密度）。</summary>
+    public const double TreeRowHeight = 28.0;
+
+    /// <summary>TreeView 每级缩进。</summary>
+    public const double TreeIndentPerLevel = 16.0;
+
+    /// <summary>TreeView 展开三角命中/绘制宽。</summary>
+    public const double TreeExpanderWidth = 16.0;
+
     /// <summary>竖滚动条滑块圆角（VSM ScrollBar 配方）。</summary>
     public const double VScrollThumbRadius = 4.0;
 
