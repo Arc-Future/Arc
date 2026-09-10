@@ -2443,18 +2443,11 @@ impl<'a> FnEmitter<'a> {
                         "{cp} = getelementptr inbounds i8, ptr {obj}, i32 28"
                     ));
                     self.emit(&format!("store i32 {size}, ptr {cp}"));
-                    let fat = self.scratch_alloca("{ ptr, ptr }");
-                    let fat_obj = self.fresh_temp();
+                    // RFC 051 D2: 32B ARC iface box (matches emit_iface_method_call).
+                    // Old stack {{ptr,ptr}} fat mismatched + dangling after return.
+                    let fat = self.fresh_temp();
                     self.emit(&format!(
-                        "{fat_obj} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 0"
-                    ));
-                    self.emit(&format!("store ptr {obj}, ptr {fat_obj}"));
-                    let fat_vt = self.fresh_temp();
-                    self.emit(&format!(
-                        "{fat_vt} = getelementptr inbounds {{ ptr, ptr }}, ptr {fat}, i32 0, i32 1"
-                    ));
-                    self.emit(&format!(
-                        "store ptr @.itable.ListEnumerator_{elem_suf}_IEnumerator_{elem_suf}, ptr {fat_vt}"
+                        "{fat} = call ptr @rt_iface_box_create(ptr {obj}, ptr @.itable.ListEnumerator_{elem_suf}_IEnumerator_{elem_suf})"
                     ));
                     ("ptr".into(), fat)
                 }

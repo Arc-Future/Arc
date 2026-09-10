@@ -1977,10 +1977,10 @@ impl<'a> FnEmitter<'a> {
                      \x20 store i32 -1, ptr %ip\n\
                      \x20 %cp = getelementptr inbounds i8, ptr %obj, i32 28\n\
                      \x20 store i32 %cnt, ptr %cp\n\
-                     \x20 %fat = call ptr @malloc(i64 16)\n\
-                     \x20 store ptr %obj, ptr %fat\n\
-                     \x20 %fatvt = getelementptr inbounds i8, ptr %fat, i32 8\n\
-                     \x20 store ptr @.itable.ListEnumerator_{elem_suf}_IEnumerator_{elem_suf}, ptr %fatvt\n\
+                     \x20 ; RFC 051 D2: return 32B ARC iface box (obj@16/itable@24).\n\
+                     \x20 ; Old 16B {{obj,itable}} fat mismatched emit_iface_method_call\n\
+                     \x20 ; → XEXEC@0x1 in yield foreach MoveNext (UnitTest).\n\
+                     \x20 %fat = call ptr @rt_iface_box_create(ptr %obj, ptr @.itable.ListEnumerator_{elem_suf}_IEnumerator_{elem_suf})\n\
                      \x20 ret ptr %fat\n\
                      }}\n"
                 )
