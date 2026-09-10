@@ -101,6 +101,9 @@ jobs:
         run: cargo run -p arc -- build examples/CompilerSmoke/Program.as -o compiler_smoke${{ runner.os == 'Windows' && '.exe' || '' }}
 
       - name: Run UnitTest suite
+        env:
+          # Surface silent 0xC0000005 with module/RIP (rt_env + opt-in VEH).
+          ARC_CRASH_PROBE: "1"
         run: cargo run -p arc -- test examples/UnitTest
 
   unix-install-protocol:
