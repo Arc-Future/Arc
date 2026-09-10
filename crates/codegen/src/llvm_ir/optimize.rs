@@ -60,7 +60,10 @@ fn linker_gc_flags(target: Option<&str>) -> &'static [&'static str] {
     if mangle::is_wasm_triple(triple) {
         return &[];
     }
-    if triple.contains("darwin") || triple.contains("macos") {
+    // Host (`target=None`) on Darwin must use ld64 `-dead_strip` — GNU
+    // `--gc-sections` is rejected (`ld: unknown options: --gc-sections`).
+    // Mirror `mangle::is_macos_target` so arc-tests (no triple) stay correct.
+    if mangle::is_macos_target(target) {
         &["-Wl,-dead_strip"]
     } else if triple.contains("windows-msvc") {
         // lld-link (MSVC driver) uses /OPT:REF instead of --gc-sections.
@@ -445,6 +448,44 @@ mod tests {
             gnu.contains(&"-fuse-ld=lld".to_string()),
             "windows-gnu target missing -fuse-ld=lld: {gnu:?}"
         );
+    }
+
+    #[test]
+    fn link_uses_darwin_dead_strip_not_gc_sections() {
+        let args_of = |target: Option<&str>| -> Vec<String> {
+            let cmd = clang_link(
+                "clang",
+                &[Path::new("a.o")],
+                Path::new("out"),
+                target,
+                OptLevel::Debug,
+                &[],
+            );
+            cmd.get_args()
+                .map(|a| a.to_string_lossy().to_string())
+                .collect()
+        };
+        let mac = args_of(Some("aarch64-apple-darwin"));
+        assert!(
+            mac.contains(&"-Wl,-dead_strip".to_string()),
+            "darwin missing -dead_strip: {mac:?}"
+        );
+        assert!(
+            !mac.iter().any(|a| a.contains("gc-sections")),
+            "darwin must not pass --gc-sections: {mac:?}"
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let host = args_of(None);
+            assert!(
+                host.contains(&"-Wl,-dead_strip".to_string()),
+                "macos host (target=None) missing -dead_strip: {host:?}"
+            );
+            assert!(
+                !host.iter().any(|a| a.contains("gc-sections")),
+                "macos host must not pass --gc-sections: {host:?}"
+            );
+        }
     }
 
     #[test]

@@ -187,7 +187,8 @@ try {
             & $Clang -shared -O2 -o $Dll @($Objs) `
                 -install_name "@rpath/libcrypto_native.dylib" 2> $LinkLog
         } else {
-            & $Clang -shared -O2 -o $Dll @($Objs) -Wl,-soname,libcrypto_native.so 2> $LinkLog
+            # Quote -Wl,… — bare commas are PowerShell argument separators (ParserError).
+            & $Clang -shared -O2 -o $Dll @($Objs) '-Wl,-soname,libcrypto_native.so' 2> $LinkLog
         }
         $ExitCode = $LASTEXITCODE
         $ErrorActionPreference = "Stop"

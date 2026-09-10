@@ -64,8 +64,8 @@ use typeck::{ClassLayout, ProgramLayouts, StructLayout};
 
 use mangle::{
     clang_path, crypto_native_vendor_subdir, gui_subsystem_flags, mangle_fn_name, mangle_method,
-    supports_comdat,
-    platform_link_flags, platform_ui_link_flags, target_os, wgpu_native_vendor_subdir, TargetOs,
+    platform_link_flags, platform_ui_link_flags, supports_comdat, target_os,
+    wgpu_native_vendor_subdir, TargetOs,
 };
 use string_pool::{collect_string_literals, emit_string_globals, StringConstAccumulator};
 
@@ -1688,10 +1688,7 @@ entry:\n\
 @.typeinfo.Foo = linkonce_odr constant { i32 } { i32 1 }, comdat\n\
 ";
         let stripped = strip_llvm_comdat(ir);
-        assert!(
-            !stripped.contains("comdat"),
-            "residual comdat: {stripped}"
-        );
+        assert!(!stripped.contains("comdat"), "residual comdat: {stripped}");
         assert!(stripped.contains("define linkonce_odr void @__finalize_Span(ptr %self) {"));
         assert!(stripped.contains("@.typeinfo.Foo = linkonce_odr constant { i32 } { i32 1 }"));
     }
