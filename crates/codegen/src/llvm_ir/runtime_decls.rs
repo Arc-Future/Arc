@@ -1014,6 +1014,8 @@ pub fn emit_runtime_decls(is_windows: bool) -> String {
     out.push_str("declare double @llvm.fabs.f64(double)\n");
     out.push_str("declare double @llvm.floor.f64(double)\n");
     out.push_str("declare double @llvm.ceil.f64(double)\n");
+    // Math.Round → rint（银行家舍入）；round 为 away-from-zero，保留声明供其它用途。
+    out.push_str("declare double @llvm.rint.f64(double)\n");
     out.push_str("declare double @llvm.round.f64(double)\n");
     out.push_str("declare double @llvm.trunc.f64(double)\n");
     out.push_str("declare i32 @llvm.abs.i32(i32, i1)\n");

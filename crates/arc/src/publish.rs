@@ -206,7 +206,9 @@ pub fn run_publish(opts: &PublishOptions) -> Result<(), String> {
     let mut files = Vec::new();
     let mut entries = Vec::new();
     for rel in &rels {
-        let abs = root.join(rel.replace('/', "\\"));
+        // `rel` 已归一化为 `/` 分隔；`Path::join` 在 Unix/Windows 均认 `/`，
+        // 禁止再改写成 `\`（Unix 会把反斜杠当字面路径段 → No such file）。
+        let abs = root.join(rel);
         let bytes = std::fs::read(&abs).map_err(|e| format!("read {}: {e}", abs.display()))?;
         entries.push(FilesEntry {
             path: rel.clone(),

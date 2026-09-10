@@ -548,15 +548,16 @@ mod tests {
     #[test]
     fn locate_install_root_from_versioned_exe() {
         let root = temp_dir("locate");
+        let triple = resolve_triple();
         let exe = root
             .join("versions")
-            .join("arc-0.1.0-x86_64-pc-windows-msvc")
+            .join(pkg_dir_name("0.1.0", &triple))
             .join("bin")
             .join(exe_name());
         assert_eq!(locate_install_root(&exe), Some(root.clone()));
         // 非安装路径
         assert_eq!(
-            locate_install_root(&root.join("elsewhere").join("arc.exe")),
+            locate_install_root(&root.join("elsewhere").join(exe_name())),
             None
         );
         let _ = std::fs::remove_dir_all(&root);
@@ -606,8 +607,9 @@ mod tests {
         let root = temp_dir("commit");
         let versions = root.join("versions");
         std::fs::create_dir_all(&versions).unwrap();
-        let old = versions.join("arc-0.1.0-x86_64-pc-windows-msvc");
-        let new = versions.join("arc-0.2.0-x86_64-pc-windows-msvc");
+        let triple = resolve_triple();
+        let old = versions.join(pkg_dir_name("0.1.0", &triple));
+        let new = versions.join(pkg_dir_name("0.2.0", &triple));
         std::fs::create_dir_all(old.join("bin")).unwrap();
         std::fs::create_dir_all(new.join("bin")).unwrap();
         let old_exe = fake_arc_exe(&old.join("bin"), exe_name());
@@ -678,8 +680,9 @@ mod tests {
         let root = temp_dir("rollback");
         let versions = root.join("versions");
         std::fs::create_dir_all(&versions).unwrap();
-        let old = versions.join("arc-0.1.0-x86_64-pc-windows-msvc");
-        let new = versions.join("arc-0.2.0-x86_64-pc-windows-msvc");
+        let triple = resolve_triple();
+        let old = versions.join(pkg_dir_name("0.1.0", &triple));
+        let new = versions.join(pkg_dir_name("0.2.0", &triple));
         std::fs::create_dir_all(old.join("bin")).unwrap();
         std::fs::create_dir_all(new.join("bin")).unwrap();
         let old_exe = fake_arc_exe(&old.join("bin"), exe_name());

@@ -586,6 +586,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    #[cfg(windows)]
     #[test]
     fn install_then_list_then_uninstall() {
         let _env_guard = env_lock();
@@ -635,6 +636,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// `components.json` 现仅声明 Windows msvc；Unix 主机须硬拒绝（非静默跳过）。
+    #[cfg(not(windows))]
+    #[test]
+    fn install_refuses_unsupported_host_platform() {
+        let _env_guard = env_lock();
+        let home = temp_dir("home4-unix");
+        std::env::set_var(ARC_HOME_ENV, &home);
+        let zip = home.join("wgpu.zip");
+        make_wgpu_zip(&zip);
+        let err = run_install(&install_opts(&zip, "v29.0.1.1", false)).unwrap_err();
+        assert!(
+            err.contains("does not support host triple"),
+            "expected platform refusal, got: {err}"
+        );
+        assert_eq!(active_dir(COMPONENT_WGPU), None);
+        std::env::remove_var(ARC_HOME_ENV);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[cfg(windows)]
     #[test]
     fn install_refuses_sha256_mismatch() {
         let _env_guard = env_lock();
