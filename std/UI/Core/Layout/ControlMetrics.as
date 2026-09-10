@@ -151,6 +151,12 @@ internal class ControlMetrics {
     /// <summary>Tab 溢出箭头点击一次的水平滚步长（DIP）。</summary>
     public const double TabOverflowScrollStep = 96.0;
 
+    /// <summary>MessageBox 对话框外宽（含描边；内边距 = SpacingLG → Size.MessageBox.Padding）。</summary>
+    public const double MessageBoxWidth = 400.0;
+
+    /// <summary>MessageBox 主/次按钮固定宽。</summary>
+    public const double MessageBoxButtonWidth = 88.0;
+
     /// <summary>MessageBox 自绘图标徽章边长。</summary>
     public const double MessageBoxIconSize = 36.0;
 

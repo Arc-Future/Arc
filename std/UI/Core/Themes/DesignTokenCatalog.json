@@ -352,6 +352,12 @@
       "bareForbidden": true
     },
     {
+      "name": "Size.MessageBox.Padding",
+      "category": "Size",
+      "role": "MessageBox.Padding",
+      "bareForbidden": true
+    },
+    {
       "name": "Size.Progress.Thickness",
       "category": "Size",
       "role": "Progress.Thickness",

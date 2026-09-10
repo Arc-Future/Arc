@@ -92,7 +92,7 @@ public class MainViewModel {
 }
 ```
 
-`[Observable]` 由编译器合成属性变更通知（Signal 通道），`{x:Bind}` 编译期脱糖订阅刷新。集合变更用 `ObservableCollection<T>`。`Button.Command = new RelayCommand(...)` 经 `RaiseClick` 执行（CanExecute 同步查询）；**CanExecuteChanged→IsEnabled 自动同步**与 ARML 上 `Command="{x:Bind …}"` 标记扩展仍后置。
+`[Observable]` 由编译器合成属性变更通知（Signal 通道），`{x:Bind}` 编译期脱糖订阅刷新。集合变更用 `ObservableCollection<T>`。`Button.Command = new RelayCommand(...)` 经 `RaiseClick` 执行；可执行态变化时 `RaiseCanExecuteChanged()` → Button 同步 `IsEnabled`。ARML 上 `Command="{x:Bind …}"` 标记扩展仍后置。
 
 ### 4. 启动入口
 
@@ -144,9 +144,9 @@ void Main() {
 | `[Observable]` 特性 | 属性变更 → 合成 Signal；触发 `x:Bind` 刷新 |
 | `ObservableCollection<T>` | 集合变更通知，驱动列表增量（ItemsControl/DataGrid 等） |
 | `DataContext` | 元素树继承 + VisualHost 边界；**不**驱动 `{Binding}` 运行时解析 |
-| `ICommand` / `RelayCommand` | `Button.Command` + `RaiseClick`→Execute（CanExecute 同步查询） |
+| `ICommand` / `RelayCommand` | `Button.Command` + `RaiseClick`→Execute；`CanExecuteChanged`→`IsEnabled`（`RaiseCanExecuteChanged`） |
 
-绑定带生命周期管理：G2 `RegisterDetach` 退订；订阅回调只捕获绑定 id（逃逸闭包约束）。**不**宣称 Converter / ElementName / RelativeSource / UpdateSourceTrigger / CanExecuteChanged 推送。
+绑定带生命周期管理：G2 `RegisterDetach` 退订；订阅回调只捕获绑定 id（逃逸闭包约束）。**不**宣称 Converter / ElementName / RelativeSource / UpdateSourceTrigger / CommandManager.RequerySuggested / ARML Command 绑定。
 
 ### 渲染与虚拟化
 

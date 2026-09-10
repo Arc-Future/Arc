@@ -166,6 +166,11 @@ const NON_COLOR_TOKENS: &[(&str, TokenCategory, &str)] = &[
     ),
     ("Size.Border.Padding", TokenCategory::Size, "Border.Padding"),
     (
+        "Size.MessageBox.Padding",
+        TokenCategory::Size,
+        "MessageBox.Padding",
+    ),
+    (
         "Size.Progress.Thickness",
         TokenCategory::Size,
         "Progress.Thickness",

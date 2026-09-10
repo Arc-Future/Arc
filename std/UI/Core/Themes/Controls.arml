@@ -12,6 +12,7 @@
        尺寸/圆角/字号    → Layout/ControlMetrics.as + BuiltInTheme.FillNonColor
        全局短键复用      → Themes/Controls/Shared.arml（Small/Medium/Large 成套 + Primary…）
        控件专属 chrome   → Themes/Controls/{Control}.arml（BasedOn Medium；默认 Template 见 DefaultControlTemplates）
+       MessageBox 面板   → Themes/Controls/MessageBox.arml（短键 Panel · TargetType=Border；非 Control 隐式）
        默认 ControlTemplate → Styling/DefaultControlTemplates.as（AttachDefaultTemplates；PART_*；已迁含 Slider/Progress/Combo）
        交互态色          → Styling/VisualStateManager.as（经 PART ChromeHostHandle 上屏）
        TextBlock         → 无隐式 chrome（字体为环境 DP）
@@ -30,6 +31,7 @@
         <ResourceDictionary Source="Controls/TextBox.arml"/>
         <ResourceDictionary Source="Controls/PasswordBox.arml"/>
         <ResourceDictionary Source="Controls/Border.arml"/>
+        <ResourceDictionary Source="Controls/MessageBox.arml"/>
         <ResourceDictionary Source="Controls/ComboBox.arml"/>
         <ResourceDictionary Source="Controls/ProgressBar.arml"/>
         <ResourceDictionary Source="Controls/Slider.arml"/>

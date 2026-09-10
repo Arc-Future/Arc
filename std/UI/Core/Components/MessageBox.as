@@ -5,9 +5,11 @@
 //   - 按钮集：OK / OKCancel / YesNo / YesNoCancel
 //   - 图标：MessageBoxImage 自绘几何（色块 + 符号；None 无图标）
 //   - Popup.IsLightDismissEnabled = false（点蒙层不关；Esc 由本类自管）
+//   - 面板：Border Style="Panel"（Themes/Controls/MessageBox.arml · Radius.Surface +
+//     Size.MessageBox.Padding）；Open 前 StyleManager 刷隐式/显式（按钮 AppliedStyleKeys）
 //   - 回调一律静态方法组 + _active 锚点（实例方法组 ByRef 悬垂 UB）
 //
-// **后置**：主题 Style 多绑定面板 / 多实例队列 / Path 级矢量图标。
+// **后置**：Path 级矢量图标 / 多实例队列。
 
 namespace Arc.UI.Components;
 
@@ -82,7 +84,8 @@ public class MessageBox {
 
         Popup popup = new Popup();
         popup.IsLightDismissEnabled = false;
-        popup.Child = MessageBox.BuildContent(title, text, buttons, image);
+        FrameworkElement content = MessageBox.BuildContent(title, text, buttons, image);
+        popup.Child = content;
         _popup = popup;
 
         Window? host = owner;
@@ -108,10 +111,14 @@ public class MessageBox {
             winH = 480.0;
         }
 
-        double dialogW = 400.0;
-        double dialogH = 176.0;
-        if (image != MessageBoxImage.None) {
-            dialogH = 192.0;
+        content.Measure(new LayoutSize(winW, winH));
+        double dialogW = content.DesiredSize.Width;
+        double dialogH = content.DesiredSize.Height;
+        if (dialogW <= 0.0) {
+            dialogW = ControlMetrics.MessageBoxWidth;
+        }
+        if (dialogH <= 0.0) {
+            dialogH = ControlMetrics.ControlHeightLG * 4.0;
         }
         double placeX = (winW - dialogW) * 0.5;
         double placeY = (winH - dialogH) * 0.5;
@@ -166,34 +173,41 @@ public class MessageBox {
         MessageBoxButton buttons,
         MessageBoxImage image)
     {
-        string surface = "#00000000";
         string textPrimary = "#00000000";
         if (Application.Current != null) {
-            string s = Application.Current.ResolveColor(BuiltInTheme.Surface);
-            if (s != null && s.Length > 0) {
-                surface = s;
-            }
             string t = Application.Current.ResolveColor(BuiltInTheme.TextPrimary);
             if (t != null && t.Length > 0) {
                 textPrimary = t;
             }
         }
 
+        double pad = ControlMetrics.SpacingLG;
+        double border = ControlMetrics.BorderWidth;
+        double innerW = ControlMetrics.MessageBoxWidth - 2.0 * pad - 2.0 * border;
+        if (innerW < ControlMetrics.ControlHeightLG) {
+            innerW = ControlMetrics.ControlHeightLG;
+        }
+
+        Border panel = new Border();
+        panel.TypeName = "Border";
+        // 短键 Panel → MessageBox.arml（隐式 Border 后再显式趟；Radius.Surface 胜出）
+        panel.Style = "Panel";
+        panel.Width = ControlMetrics.MessageBoxWidth;
+
         StackPanel root = new StackPanel();
         root.TypeName = "StackPanel";
         root.Orientation = Orientation.Vertical;
         root.Spacing = ControlMetrics.SpacingMD;
-        root.Width = 400.0;
-        root.Background = surface;
+        root.Width = innerW;
 
         if (title.Length > 0) {
             TextBlock captionBlock = new TextBlock();
             captionBlock.TypeName = "TextBlock";
             captionBlock.Text = title;
-            captionBlock.FontSize = ControlMetrics.FontBodySize + 2.0;
+            captionBlock.FontSize = ControlMetrics.FontHeadingSize;
             captionBlock.FontWeight = "Bold";
             captionBlock.Foreground = textPrimary;
-            captionBlock.Width = 368.0;
+            captionBlock.Width = innerW;
             root.AddChild(captionBlock);
         }
 
@@ -212,9 +226,13 @@ public class MessageBox {
         body.FontSize = ControlMetrics.FontBodySize;
         body.Foreground = textPrimary;
         if (image != MessageBoxImage.None) {
-            body.Width = 320.0;
+            double bodyW = innerW - ControlMetrics.MessageBoxIconSize - ControlMetrics.SpacingMD;
+            if (bodyW < ControlMetrics.ControlHeightLG) {
+                bodyW = ControlMetrics.ControlHeightLG;
+            }
+            body.Width = bodyW;
         } else {
-            body.Width = 368.0;
+            body.Width = innerW;
         }
         bodyRow.AddChild(body);
         root.AddChild(bodyRow);
@@ -268,7 +286,21 @@ public class MessageBox {
         }
 
         root.AddChild(row);
-        return root;
+        panel.Child = root;
+        MessageBox.ApplyDialogStyles(panel);
+        return panel;
+    }
+
+    /// <summary>
+    /// Popup 层不在 MainWindow ApplyStyleTree 遍历内——Open 前对本面板刷隐式/显式 Style，
+    /// 使 Panel Setter 与按钮 Primary/Default AppliedStyleKeys 生效。
+    /// </summary>
+    static void ApplyDialogStyles(FrameworkElement root) {
+        if (root == null || Application.Current == null) {
+            return;
+        }
+        StyleManager sm = new StyleManager();
+        sm.ApplyAllStyles(root, null, Application.Current.Resources);
     }
 
     static FrameworkElement BuildIcon(MessageBoxImage image) {
@@ -290,6 +322,7 @@ public class MessageBox {
 
         string onAccent = MessageBox.ResolveThemeOr(BuiltInTheme.TextOnAccent);
 
+        // 图标徽章保持 StackPanel（禁 Border——隐式 Border Style 会冲徽章底色/内边距）
         StackPanel cell = new StackPanel();
         cell.TypeName = "StackPanel";
         cell.Orientation = Orientation.Vertical;
@@ -300,7 +333,7 @@ public class MessageBox {
         TextBlock mark = new TextBlock();
         mark.TypeName = "TextBlock";
         mark.Text = glyph;
-        mark.FontSize = ControlMetrics.FontBodySize + 4.0;
+        mark.FontSize = ControlMetrics.FontHeadingSize + 2.0;
         mark.FontWeight = "Bold";
         mark.Foreground = onAccent;
         mark.Width = ControlMetrics.MessageBoxIconSize;
@@ -325,7 +358,7 @@ public class MessageBox {
         btn.Content = Content.Text(label);
         // Style 键驱动变体（与 ARML 作者面同构短键；禁 Appearance DP）
         btn.Style = styleKey;
-        btn.Width = 88.0;
+        btn.Width = ControlMetrics.MessageBoxButtonWidth;
         btn.Height = ControlMetrics.ControlHeight;
         btn.FontSize = ControlMetrics.FontBodySize;
         return btn;

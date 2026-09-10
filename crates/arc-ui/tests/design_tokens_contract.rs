@@ -801,6 +801,8 @@ fn control_metrics_owns_geometry() {
         "TabHeaderMinWidth",
         "TabOverflowArrowWidth",
         "TabOverflowScrollStep",
+        "MessageBoxWidth",
+        "MessageBoxButtonWidth",
         "MessageBoxIconSize",
     ] {
         assert!(
@@ -864,8 +866,30 @@ fn control_metrics_owns_geometry() {
     );
     let msg = read_file("std/UI/Core/Components/MessageBox.as");
     assert!(
-        msg.contains("ControlMetrics.MessageBoxIconSize"),
-        "MessageBox icon badge must use ControlMetrics.MessageBoxIconSize"
+        msg.contains("ControlMetrics.MessageBoxIconSize")
+            && msg.contains("ControlMetrics.MessageBoxWidth")
+            && msg.contains("ControlMetrics.MessageBoxButtonWidth"),
+        "MessageBox geometry must use ControlMetrics MessageBox* tokens"
+    );
+    assert!(
+        msg.contains("ApplyDialogStyles")
+            && msg.contains("StyleManager")
+            && msg.contains("\"Panel\"")
+            && msg.contains("new Border()"),
+        "MessageBox must wrap theme Style Panel Border and ApplyDialogStyles before Open"
+    );
+    let msg_arml = read_file("std/UI/Core/Themes/Controls/MessageBox.arml");
+    assert!(
+        msg_arml.contains("x:Key=\"Panel\"")
+            && msg_arml.contains("Radius.Surface")
+            && msg_arml.contains("Size.MessageBox.Padding")
+            && msg_arml.contains("Color.Surface"),
+        "MessageBox.arml must define Panel Style with Surface radius/padding tokens"
+    );
+    let builtin = read_file("std/UI/Core/Styling/BuiltInTheme.as");
+    assert!(
+        builtin.contains("Size.MessageBox.Padding"),
+        "BuiltInTheme must declare Size.MessageBox.Padding"
     );
     let vsm = read_file("std/UI/Core/Styling/VisualStateManager.as");
     assert!(

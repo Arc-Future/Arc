@@ -152,6 +152,8 @@ internal class BuiltInTheme {
     public const string BorderThickness = "Size.Border.Thickness";
     /// <summary>Border 默认内边距 Thickness（= Spacing.MD 四边）。</summary>
     public const string BorderPadding = "Size.Border.Padding";
+    /// <summary>MessageBox 面板内边距 Thickness（= Spacing.LG 四边）。</summary>
+    public const string MessageBoxPadding = "Size.MessageBox.Padding";
     /// <summary>ProgressBar 轨高（Ant line；= ControlMetrics.ProgressBarThickness）。</summary>
     public const string ProgressThickness = "Size.Progress.Thickness";
     /// <summary>Slider 默认测高（= ControlMetrics.SliderDefaultHeight）。</summary>
@@ -206,6 +208,8 @@ internal class BuiltInTheme {
             ControlMetrics.BorderWidth, ControlMetrics.BorderWidth));
         d.Add(BuiltInTheme.BorderPadding, BuiltInTheme.FormatPaddingThickness(
             ControlMetrics.SpacingMD, ControlMetrics.SpacingMD));
+        d.Add(BuiltInTheme.MessageBoxPadding, BuiltInTheme.FormatPaddingThickness(
+            ControlMetrics.SpacingLG, ControlMetrics.SpacingLG));
         d.Add(BuiltInTheme.ProgressThickness, ControlMetrics.ProgressBarThickness);
         d.Add(BuiltInTheme.SliderHeight, ControlMetrics.SliderDefaultHeight);
         d.Add(BuiltInTheme.SpacingXS, ControlMetrics.SpacingXS);

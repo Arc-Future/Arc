@@ -35,6 +35,7 @@ pub const CONTROL_STYLE_SOURCES: &[&str] = &[
     "Controls/TextBox.arml",
     "Controls/PasswordBox.arml",
     "Controls/Border.arml",
+    "Controls/MessageBox.arml",
     "Controls/ComboBox.arml",
     "Controls/ProgressBar.arml",
     "Controls/Slider.arml",

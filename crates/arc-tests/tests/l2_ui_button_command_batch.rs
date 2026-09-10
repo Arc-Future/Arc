@@ -1,13 +1,14 @@
-//! L2 批量：Button.Command → ICommand.Execute（MVVM 命令最小面）。
+//! L2 批量：Button.Command → ICommand（Execute + CanExecuteChanged→IsEnabled）。
 //!
 //! 验收面（headless）：
 //! - `relay_execute_on_raise`：`RelayCommand` + `RaiseClick` 执行且传 CommandParameter
-//! - `can_execute_false_skips`：CanExecute=false 时不 Execute（Clicked 仍可发）
-//! - `disabled_skips_all`：IsEnabled=false 时既不 Clicked 也不 Execute
+//! - `can_execute_false_on_assign`：赋 Command 时 CanExecute=false → IsEnabled=false，点击全跳过
+//! - `can_execute_changed_syncs`：RaiseCanExecuteChanged 翻转 IsEnabled 并恢复可点
+//! - `disabled_after_command`：赋 Command 后再手写 IsEnabled=false 仍门控
 //!
-//! 宣称纪律：仅关 RaiseClick×ICommand 同步查询面；**不**宣称 CanExecuteChanged→
-//! IsEnabled 自动同步、`{x:Bind}`/`{Binding}` Command 标记扩展、RoutedCommand。
-//! 需 `--features full-rt`。
+//! 宣称纪律：关 CanExecuteChanged→IsEnabled 直写同步 + RaiseClick×Execute；
+//! **不**宣称 ARML `{x:Bind}`/`{Binding}` Command、RoutedCommand、CommandManager.RequerySuggested、
+//! WPF IsEnabledCore 合取语义。需 `--features full-rt`。
 
 #![cfg(feature = "full-rt")]
 
@@ -62,7 +63,7 @@ void Main() {
 "##,
             },
             BatchCase {
-                name: "can_execute_false_skips",
+                name: "can_execute_false_on_assign",
                 src: r##"using Arc;
 using Arc.UI.Components;
 
@@ -89,25 +90,84 @@ void Main() {
     CmdGate.ClickHits = 0;
     CmdGate.Allow = false;
     Button btn = new Button();
-    btn.Command = new RelayCommand(CmdGate.OnExec, CmdGate.OnCan);
     btn.OnClick(CmdGate.OnClick);
-    btn.RaiseClick();
-    if (CmdGate.Hits != 0 || CmdGate.ClickHits != 1) {
-        Console.WriteLine("ARC_CASE:can_execute_false_skips:FAIL:hits=" + CmdGate.Hits.ToString() + " clicks=" + CmdGate.ClickHits.ToString());
+    btn.Command = new RelayCommand(CmdGate.OnExec, CmdGate.OnCan);
+    if (btn.IsEnabled) {
+        Console.WriteLine("ARC_CASE:can_execute_false_on_assign:FAIL:still_enabled");
         return;
     }
-    CmdGate.Allow = true;
     btn.RaiseClick();
-    if (CmdGate.Hits != 1 || CmdGate.ClickHits != 2) {
-        Console.WriteLine("ARC_CASE:can_execute_false_skips:FAIL:after_allow hits=" + CmdGate.Hits.ToString() + " clicks=" + CmdGate.ClickHits.ToString());
+    if (CmdGate.Hits != 0 || CmdGate.ClickHits != 0) {
+        Console.WriteLine("ARC_CASE:can_execute_false_on_assign:FAIL:hits=" + CmdGate.Hits.ToString() + " clicks=" + CmdGate.ClickHits.ToString());
         return;
     }
-    Console.WriteLine("ARC_CASE:can_execute_false_skips:PASS");
+    Console.WriteLine("ARC_CASE:can_execute_false_on_assign:PASS");
 }
 "##,
             },
             BatchCase {
-                name: "disabled_skips_all",
+                name: "can_execute_changed_syncs",
+                src: r##"using Arc;
+using Arc.UI.Components;
+
+class CmdFlip {
+    public static int Hits;
+    public static int ClickHits;
+    public static bool Allow;
+
+    public static void OnExec(object p) {
+        Hits = Hits + 1;
+    }
+
+    public static bool OnCan(object p) {
+        return Allow;
+    }
+
+    public static void OnClick(bool v) {
+        ClickHits = ClickHits + 1;
+    }
+}
+
+void Main() {
+    CmdFlip.Hits = 0;
+    CmdFlip.ClickHits = 0;
+    CmdFlip.Allow = true;
+    Button btn = new Button();
+    btn.OnClick(CmdFlip.OnClick);
+    RelayCommand cmd = new RelayCommand(CmdFlip.OnExec, CmdFlip.OnCan);
+    btn.Command = cmd;
+    if (!btn.IsEnabled) {
+        Console.WriteLine("ARC_CASE:can_execute_changed_syncs:FAIL:initial_disabled");
+        return;
+    }
+    CmdFlip.Allow = false;
+    cmd.RaiseCanExecuteChanged();
+    if (btn.IsEnabled) {
+        Console.WriteLine("ARC_CASE:can_execute_changed_syncs:FAIL:not_disabled");
+        return;
+    }
+    btn.RaiseClick();
+    if (CmdFlip.Hits != 0 || CmdFlip.ClickHits != 0) {
+        Console.WriteLine("ARC_CASE:can_execute_changed_syncs:FAIL:while_disabled hits=" + CmdFlip.Hits.ToString());
+        return;
+    }
+    CmdFlip.Allow = true;
+    cmd.RaiseCanExecuteChanged();
+    if (!btn.IsEnabled) {
+        Console.WriteLine("ARC_CASE:can_execute_changed_syncs:FAIL:not_reenabled");
+        return;
+    }
+    btn.RaiseClick();
+    if (CmdFlip.Hits != 1 || CmdFlip.ClickHits != 1) {
+        Console.WriteLine("ARC_CASE:can_execute_changed_syncs:FAIL:after_reenable hits=" + CmdFlip.Hits.ToString() + " clicks=" + CmdFlip.ClickHits.ToString());
+        return;
+    }
+    Console.WriteLine("ARC_CASE:can_execute_changed_syncs:PASS");
+}
+"##,
+            },
+            BatchCase {
+                name: "disabled_after_command",
                 src: r##"using Arc;
 using Arc.UI.Components;
 
@@ -128,15 +188,15 @@ void Main() {
     CmdOff.Hits = 0;
     CmdOff.ClickHits = 0;
     Button btn = new Button();
-    btn.IsEnabled = false;
     btn.Command = new RelayCommand(CmdOff.OnExec);
     btn.OnClick(CmdOff.OnClick);
+    btn.IsEnabled = false;
     btn.RaiseClick();
     if (CmdOff.Hits != 0 || CmdOff.ClickHits != 0) {
-        Console.WriteLine("ARC_CASE:disabled_skips_all:FAIL:hits=" + CmdOff.Hits.ToString() + " clicks=" + CmdOff.ClickHits.ToString());
+        Console.WriteLine("ARC_CASE:disabled_after_command:FAIL:hits=" + CmdOff.Hits.ToString() + " clicks=" + CmdOff.ClickHits.ToString());
         return;
     }
-    Console.WriteLine("ARC_CASE:disabled_skips_all:PASS");
+    Console.WriteLine("ARC_CASE:disabled_after_command:PASS");
 }
 "##,
             },
@@ -144,6 +204,7 @@ void Main() {
         UI_DEPS,
     );
     assert!(batch_case_result(&results, "relay_execute_on_raise").passed);
-    assert!(batch_case_result(&results, "can_execute_false_skips").passed);
-    assert!(batch_case_result(&results, "disabled_skips_all").passed);
+    assert!(batch_case_result(&results, "can_execute_false_on_assign").passed);
+    assert!(batch_case_result(&results, "can_execute_changed_syncs").passed);
+    assert!(batch_case_result(&results, "disabled_after_command").passed);
 }
