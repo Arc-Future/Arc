@@ -1,4 +1,4 @@
-﻿# 07 对象模型
+# 07 对象模型
 
 Arc 对象模型支持 `class`、`interface`、单继承与接口多实现。实现分散在 `crates/oop`（类型注册与访问检查）与 `crates/codegen`（vtable 布局）。
 

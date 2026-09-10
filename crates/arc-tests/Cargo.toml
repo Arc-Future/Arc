@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "arc-tests"
 description = "In-process fast compiler tests for the Arc compiler"
 version.workspace = true

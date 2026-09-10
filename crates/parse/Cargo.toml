@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "parse"
 description = "Lexer and parser for Arc"
 version.workspace = true

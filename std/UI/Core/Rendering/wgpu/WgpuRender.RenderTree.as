@@ -760,7 +760,7 @@ public partial class WgpuRender {
             return;
         }
 
-        // ---- TabControl（内置页签栏：测宽左对齐 + 溢出裁剪滚动 + 选中 Accent 底线）----
+        // ---- TabControl（内置页签栏：测宽左对齐 + 溢出裁剪/箭头 + 选中 Accent 底线）----
         if (type == "TabControl") {
             Color bg = this.ElementColor(handle, "Background", Color.Transparent());
             this.DrawBackground(bg, lx, ly, lw, lh);
@@ -775,6 +775,12 @@ public partial class WgpuRender {
             if (scrollOff < 0.0) {
                 scrollOff = 0.0;
             }
+            int headerOverflow = (int)WindowHost.ElementGetNumber(handle, "HeaderOverflow", 0.0);
+            double arrowW = WindowHost.ElementGetNumber(handle, "OverflowArrowWidth",
+                ControlMetrics.TabOverflowArrowWidth);
+            if (arrowW <= 0.0) {
+                arrowW = ControlMetrics.TabOverflowArrowWidth;
+            }
             if (tabCount > 0 && lw > 0.0) {
                 Color barBg = this.ResolveThemeKey(BuiltInTheme.SurfaceStripe);
                 Color border = this.ResolveThemeKey(BuiltInTheme.Border);
@@ -787,9 +793,18 @@ public partial class WgpuRender {
                 double fontSize = ControlMetrics.TabHeaderFontSize;
                 int family = this.ResolveFontFamily("");
                 int weight = this.ResolveFontWeight("Normal");
-                this.PushClip(lx, ly, lw, barH);
-                double cursorX = lx - scrollOff;
-                double fallbackCell = lw / (double)tabCount;
+                bool showArrows = headerOverflow != 0 && lw > arrowW * 2.0;
+                double stripL = showArrows ? lx + arrowW : lx;
+                double stripW = showArrows ? lw - arrowW * 2.0 : lw;
+                if (stripW < 0.0) {
+                    stripW = 0.0;
+                }
+                this.PushClip(stripL, ly, stripW, barH);
+                double cursorX = stripL - scrollOff;
+                double fallbackCell = stripW / (double)tabCount;
+                if (fallbackCell <= 0.0) {
+                    fallbackCell = ControlMetrics.TabHeaderMinWidth;
+                }
                 int ti = 0;
                 while (ti < tabCount) {
                     string header = WindowHost.ElementGetString(handle, "Header" + ti, "");
@@ -822,6 +837,43 @@ public partial class WgpuRender {
                     ti++;
                 }
                 this.PopClip();
+                if (showArrows) {
+                    // 左右箭头：挤栏可发现滚动（与 TreeView expander 同三角近似）。
+                    double totalW = 0.0;
+                    int tw = 0;
+                    while (tw < tabCount) {
+                        double cw = WindowHost.ElementGetNumber(handle, "HeaderWidth" + tw, 0.0);
+                        if (cw <= 0.0) {
+                            cw = ControlMetrics.TabHeaderMinWidth;
+                        }
+                        totalW = totalW + cw;
+                        tw++;
+                    }
+                    double maxOff = totalW - stripW;
+                    if (maxOff < 0.0) {
+                        maxOff = 0.0;
+                    }
+                    bool canLeft = scrollOff > 0.5;
+                    bool canRight = scrollOff < maxOff - 0.5;
+                    Color leftFg = canLeft ? fg : fgMuted;
+                    Color rightFg = canRight ? fg : fgMuted;
+                    this.DrawRect(lx, ly, arrowW, barH, barBg);
+                    this.DrawRect(lx + lw - arrowW, ly, arrowW, barH, barBg);
+                    double cy = ly + barH * 0.5;
+                    double leftCx = lx + arrowW * 0.5;
+                    // 朝左三角
+                    this.DrawRect(leftCx + 1.0, cy - 4.0, 2.0, 8.0, leftFg);
+                    this.DrawRect(leftCx - 1.5, cy - 2.5, 2.0, 5.0, leftFg);
+                    this.DrawRect(leftCx - 4.0, cy - 1.0, 2.0, 2.0, leftFg);
+                    double rightCx = lx + lw - arrowW * 0.5;
+                    // 朝右三角
+                    this.DrawRect(rightCx - 3.0, cy - 4.0, 2.0, 8.0, rightFg);
+                    this.DrawRect(rightCx - 0.5, cy - 2.5, 2.0, 5.0, rightFg);
+                    this.DrawRect(rightCx + 2.0, cy - 1.0, 2.0, 2.0, rightFg);
+                    this.DrawRect(lx + arrowW, ly, ControlMetrics.BorderWidth, barH, border);
+                    this.DrawRect(lx + lw - arrowW - ControlMetrics.BorderWidth, ly,
+                        ControlMetrics.BorderWidth, barH, border);
+                }
             }
             int childCountTabs = WindowHost.ElementGetChildCount(handle);
             for (int ci = 0; ci < childCountTabs; ci++) {

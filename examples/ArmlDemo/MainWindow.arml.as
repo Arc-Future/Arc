@@ -26,6 +26,7 @@ using Arc.UI.Styling;
 
 public partial class MainWindow : Window {
     int _clickCount = 0;
+    int _helloCommandCount = 0;
     int _primaryCount = 0;
     int _secondaryCount = 0;
 
@@ -44,6 +45,9 @@ public partial class MainWindow : Window {
     /// <summary>TreeView SelectionChanged 静态路由锚点。</summary>
     static MainWindow _treeHost;
 
+    /// <summary>Hello RelayCommand 静态路由锚点。</summary>
+    static MainWindow _helloHost;
+
     /// <summary>演示弹层（复用；轻关闭）。</summary>
     Popup _demoPopup;
     Popup _stackedPopup;
@@ -58,7 +62,35 @@ public partial class MainWindow : Window {
     /// <summary>分区 1：Click="OnClickHello" 处理器。</summary>
     protected void OnClickHello() {
         _clickCount = _clickCount + 1;
+        this.SetHelloStatus("Click Me · count=" + _clickCount.ToString());
         Console.WriteLine("Button clicked! count=" + _clickCount.ToString());
+    }
+
+    /// <summary>分区 1：RelayCommand Execute（程序化接线；ARML Command 绑定后置）。</summary>
+    void WireHelloCommand() {
+        if (this.HelloCommandButton == null) {
+            return;
+        }
+        _helloHost = this;
+        this.HelloCommandButton.Command = new RelayCommand(MainWindow.OnHelloCommandStatic);
+    }
+
+    /// <summary>Hello RelayCommand 静态 Execute。</summary>
+    static void OnHelloCommandStatic(object parameter) {
+        MainWindow host = _helloHost;
+        if (host == null) {
+            return;
+        }
+        host._helloCommandCount = host._helloCommandCount + 1;
+        host.SetHelloStatus("RelayCommand · count=" + host._helloCommandCount.ToString());
+        Console.WriteLine("Hello RelayCommand count=" + host._helloCommandCount.ToString());
+    }
+
+    /// <summary>Hello 页状态行。</summary>
+    void SetHelloStatus(string text) {
+        if (this.HelloStatusLabel != null) {
+            this.HelloStatusLabel.Text = text;
+        }
     }
 
     /// <summary>分区 2：Primary action 按钮 Click 处理器。</summary>
@@ -224,6 +256,7 @@ public partial class MainWindow : Window {
 
     /// <summary>窗口加载后：分区 2 ComboBox / 5 Slider / 4·8 数据装载。</summary>
     public override void OnLoaded() {
+        this.WireHelloCommand();
         this.WireThemeCombo();
         this.WireVolumeSlider();
         this.WireSelectionSubscribe();
@@ -496,6 +529,13 @@ public partial class MainWindow : Window {
         _listSelHits = _listSelHits + 1;
         MainWindow host = _selectionHost;
         if (host != null) {
+            string text = item;
+            if (text == null || text.Length == 0) {
+                text = "(none)";
+            }
+            if (host.ListSelectionLabel != null) {
+                host.ListSelectionLabel.Text = "Selected: " + text;
+            }
             Console.WriteLine("ListView SelectionChanged item=" + item + " hits=" + _listSelHits.ToString());
         }
     }

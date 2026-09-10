@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "typeck"
 description = "Type checker for Arc"
 version.workspace = true

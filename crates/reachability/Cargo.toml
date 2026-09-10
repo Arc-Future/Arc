@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "reachability"
 description = "L2 entry-point reachability analysis pass (RFC 033 M2)"
 version.workspace = true

@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "hir"
 description = "High-level IR and name resolution for Arc"
 version.workspace = true

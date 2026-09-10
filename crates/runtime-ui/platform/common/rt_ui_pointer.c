@@ -292,61 +292,85 @@ int rt_ui_dispatch_control_click_at(RtUiElement* elem, int32_t px, int32_t py) {
         rt_ui_element_set_number(elem, "HitItemIndex", (double)hit_idx);
         rt_ui_element_set_number(elem, "HitExpand", (double)hit_expand);
     }
-    /* TabControl：页签栏内容测宽左对齐——py 落在顶栏、内容坐标
-     * content_x = local_x + HeaderScrollOffset 落在 HeaderWidth 累进区间 → HitTabIndex。
-     * 与渲染 PushClip + cursorX=lx-offset 同源。无 HeaderWidth{i} 时回退均分。
-     * 栏外点击保持 HitTabIndex=-1。 */
+    /* TabControl：页签栏内容测宽左对齐——py 落在顶栏。
+     * 溢出箭头（HeaderOverflow）：两端 HitTabOverflow=±1，中间 strip 命中页签。
+     * content_x = (local_x - arrow_w) + HeaderScrollOffset（挤栏）或 local_x + offset。
+     * 与渲染 PushClip + cursorX=stripL-offset 同源。无 HeaderWidth{i} 时回退均分。
+     * 栏外点击保持 HitTabIndex=-1、HitTabOverflow=0。 */
     if (strcmp(elem->type_name, "TabControl") == 0) {
         double bar_h = rt_ui_get_number(elem, "HeaderBarHeight", 36.0);
         double tab_count = rt_ui_get_number(elem, "TabCount", 0.0);
         double scroll_off = rt_ui_get_number(elem, "HeaderScrollOffset", 0.0);
+        double header_overflow = rt_ui_get_number(elem, "HeaderOverflow", 0.0);
+        double arrow_w = rt_ui_get_number(elem, "OverflowArrowWidth", 24.0);
         if (scroll_off < 0.0) {
             scroll_off = 0.0;
         }
+        if (arrow_w <= 0.0) {
+            arrow_w = 24.0;
+        }
         int hit = -1;
+        int hit_overflow = 0;
         int n = (int)tab_count;
         if (n > 0 && (double)py >= elem->layout_y
             && (double)py < elem->layout_y + bar_h
             && elem->layout_w > 0.0) {
             double local_x = (double)px - elem->layout_x;
             if (local_x >= 0.0 && local_x < elem->layout_w) {
-                double content_x = local_x + scroll_off;
-                int have_widths = 0;
-                for (int i = 0; i < n; i++) {
-                    char key[32];
-                    snprintf(key, sizeof(key), "HeaderWidth%d", i);
-                    if (rt_ui_get_number(elem, key, 0.0) > 0.0) {
-                        have_widths = 1;
-                        break;
+                int show_arrows = (header_overflow > 0.5)
+                    && (elem->layout_w > arrow_w * 2.0);
+                if (show_arrows && local_x < arrow_w) {
+                    hit_overflow = -1;
+                } else if (show_arrows
+                    && local_x >= elem->layout_w - arrow_w) {
+                    hit_overflow = 1;
+                } else {
+                    double strip_l = show_arrows ? arrow_w : 0.0;
+                    double strip_w = show_arrows
+                        ? (elem->layout_w - arrow_w * 2.0)
+                        : elem->layout_w;
+                    if (strip_w < 0.0) {
+                        strip_w = 0.0;
                     }
-                }
-                if (have_widths) {
-                    double cursor = 0.0;
+                    double content_x = (local_x - strip_l) + scroll_off;
+                    int have_widths = 0;
                     for (int i = 0; i < n; i++) {
                         char key[32];
                         snprintf(key, sizeof(key), "HeaderWidth%d", i);
-                        double cell_w = rt_ui_get_number(elem, key, 0.0);
-                        if (cell_w <= 0.0) {
-                            cell_w = 1.0;
-                        }
-                        if (content_x >= cursor && content_x < cursor + cell_w) {
-                            hit = i;
+                        if (rt_ui_get_number(elem, key, 0.0) > 0.0) {
+                            have_widths = 1;
                             break;
                         }
-                        cursor += cell_w;
                     }
-                } else {
-                    hit = (int)(local_x / (elem->layout_w / tab_count));
-                    if (hit < 0) {
-                        hit = 0;
-                    }
-                    if (hit >= n) {
-                        hit = n - 1;
+                    if (have_widths) {
+                        double cursor = 0.0;
+                        for (int i = 0; i < n; i++) {
+                            char key[32];
+                            snprintf(key, sizeof(key), "HeaderWidth%d", i);
+                            double cell_w = rt_ui_get_number(elem, key, 0.0);
+                            if (cell_w <= 0.0) {
+                                cell_w = 1.0;
+                            }
+                            if (content_x >= cursor && content_x < cursor + cell_w) {
+                                hit = i;
+                                break;
+                            }
+                            cursor += cell_w;
+                        }
+                    } else if (strip_w > 0.0) {
+                        hit = (int)((local_x - strip_l) / (strip_w / tab_count));
+                        if (hit < 0) {
+                            hit = 0;
+                        }
+                        if (hit >= n) {
+                            hit = n - 1;
+                        }
                     }
                 }
             }
         }
         rt_ui_element_set_number(elem, "HitTabIndex", (double)hit);
+        rt_ui_element_set_number(elem, "HitTabOverflow", (double)hit_overflow);
     }
     int64_t handle = (int64_t)(uintptr_t)elem;
     if (e->click_env) {

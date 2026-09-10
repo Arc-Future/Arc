@@ -16,6 +16,11 @@ fn read_file(rel: &str) -> String {
     std::fs::read_to_string(repo_root().join(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"))
 }
 
+/// Golden 文本比对：忽略 `core.autocrlf` 把 LF blob 检出成 CRLF 的平台差（Windows CI）。
+fn norm_nl(s: &str) -> String {
+    s.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 #[test]
 fn builtin_theme_arml_sources_exist() {
     let root = repo_root();
@@ -57,7 +62,8 @@ fn builtin_theme_colors_g_as_in_sync() {
         )
     });
     assert_eq!(
-        actual, expected,
+        norm_nl(&actual),
+        norm_nl(&expected),
         "BuiltInTheme.Colors.g.as out of sync with Themes/*.arml; regenerate with UPDATE_BUILTIN_THEME=1"
     );
 }
@@ -81,7 +87,8 @@ fn dark_arml_matches_light_seed_derivation() {
         )
     });
     assert_eq!(
-        actual, expected,
+        norm_nl(&actual),
+        norm_nl(&expected),
         "Dark.arml out of sync with Light Seed derivation; run scripts/ui-theme/derive-dark-from-light.ps1"
     );
 }
@@ -275,7 +282,8 @@ fn builtin_theme_styles_g_as_in_sync() {
         )
     });
     assert_eq!(
-        actual, expected,
+        norm_nl(&actual),
+        norm_nl(&expected),
         "BuiltInTheme.Styles.g.as out of sync with Themes/Controls.arml; regenerate with UPDATE_BUILTIN_THEME=1"
     );
 }
@@ -791,6 +799,8 @@ fn control_metrics_owns_geometry() {
         "TabHeaderFontSize",
         "TabHeaderPaddingX",
         "TabHeaderMinWidth",
+        "TabOverflowArrowWidth",
+        "TabOverflowScrollStep",
         "MessageBoxIconSize",
     ] {
         assert!(
@@ -840,8 +850,10 @@ fn control_metrics_owns_geometry() {
             || chrome.contains("ControlMetrics.ComboChevronStroke"))
             && (render.contains("ControlMetrics.ComboChevronStepY")
                 || chrome.contains("ControlMetrics.ComboChevronStepY"))
-            && render.contains("ControlMetrics.TabHeaderBarHeight"),
-        "RenderTree/TemplateChrome chevron/Tab micro-geometry must use ControlMetrics"
+            && render.contains("ControlMetrics.TabHeaderBarHeight")
+            && render.contains("ControlMetrics.TabOverflowArrowWidth")
+            && render.contains("HeaderOverflow"),
+        "RenderTree/TemplateChrome chevron/Tab micro-geometry must use ControlMetrics (incl. overflow arrows)"
     );
     assert!(
         !render.contains("chevronCy + 2.0")

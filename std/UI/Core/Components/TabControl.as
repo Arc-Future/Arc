@@ -10,9 +10,11 @@
 // + 子树递归（wgpu 唯一后端）。HeaderWidth = 文案测宽 + 2×TabHeaderPaddingX
 // （WPF 心智：内容尺寸左对齐，不均分拉满栏宽）。
 //
-// **溢出滚动（最小面）**：页签总宽 > 栏宽时 HeaderScrollOffset 水平裁剪可见区；
-// 命中 = 栏内 localX + offset；滚轮在顶栏调整偏移；选中切换保证选中页签入视。
-// **诚实边界**：无切换动画 / 关闭按钮 / 溢出左右箭头 chrome。
+// **溢出滚动**：页签总宽 > 栏宽时 HeaderScrollOffset 水平裁剪可见区；
+// 命中 = 栏内 strip localX + offset；滚轮在顶栏调整偏移；选中切换保证选中页签入视。
+// **溢出箭头最小面**：挤栏时两端箭头 chrome + HitTabOverflow（-1/1）步进滚动；
+// 条带宽 = 栏宽 − 2×TabOverflowArrowWidth（与渲染 PushClip / C 命中同源）。
+// **诚实边界**：无切换动画 / 关闭按钮。
 
 namespace Arc.UI.Components;
 
@@ -64,9 +66,14 @@ public class TabControl : Panel {
         this.SyncMirrorScroll();
     }
 
-    /// <summary>PointerRouter 入口：按 HitTabIndex 切换页（越界忽略）。</summary>
+    /// <summary>PointerRouter 入口：溢出箭头步进，或 HitTabIndex 切换页。</summary>
     internal void SelectHitTab() {
         if (_mirrorHandle == 0) {
+            return;
+        }
+        int overflowHit = (int)WindowHost.ElementGetNumber(_mirrorHandle, "HitTabOverflow", 0.0);
+        if (overflowHit != 0) {
+            this.ApplyOverflowArrow(overflowHit);
             return;
         }
         int hit = (int)WindowHost.ElementGetNumber(_mirrorHandle, "HitTabIndex", -1.0);
@@ -83,6 +90,21 @@ public class TabControl : Panel {
         this.SelectedIndex = hit;
     }
 
+    /// <summary>溢出箭头：dir&lt;0 向左露左侧页签，dir&gt;0 向右露右侧页签。</summary>
+    internal void ApplyOverflowArrow(int dir) {
+        if (dir == 0) {
+            return;
+        }
+        double step = ControlMetrics.TabOverflowScrollStep;
+        if (dir < 0) {
+            this.SetHeaderScrollOffsetClamped(_headerScrollOffset - step);
+        } else {
+            this.SetHeaderScrollOffsetClamped(_headerScrollOffset + step);
+        }
+        this.SyncMirrorScroll();
+        FramePump.Invalidate();
+    }
+
     /// <summary>顶栏滚轮：竖直 delta 映射为水平偏移（与 ScrollView 同刻度）。</summary>
     internal void ApplyHeaderWheelDelta(int deltaY) {
         double step = (double)deltaY / 120.0 * 48.0;
@@ -92,18 +114,28 @@ public class TabControl : Panel {
         FramePump.Invalidate();
     }
 
-    /// <summary>布局同步后写回偏移（ScrollRouter Relayout 路径）。</summary>
+    /// <summary>布局同步后写回偏移与溢出箭头镜像（ScrollRouter Relayout 路径）。</summary>
     internal void SyncMirrorScroll() {
         if (_mirrorHandle == 0) {
             return;
         }
         WindowHost.ElementSetNumber(_mirrorHandle, "HeaderScrollOffset", _headerScrollOffset);
+        double barW = this.ResolveBarWidth();
+        double totalW = this.MeasureHeadersTotalWidth();
+        int overflow = 0;
+        if (barW > 0.0 && totalW > barW) {
+            overflow = 1;
+        }
+        WindowHost.ElementSetNumber(_mirrorHandle, "HeaderOverflow", (double)overflow);
+        WindowHost.ElementSetNumber(
+            _mirrorHandle, "OverflowArrowWidth", ControlMetrics.TabOverflowArrowWidth);
     }
 
     void SetHeaderScrollOffsetClamped(double value) {
         double barW = this.ResolveBarWidth();
+        double stripW = this.ResolveStripWidth(barW);
         double totalW = this.MeasureHeadersTotalWidth();
-        double max = totalW - barW;
+        double max = totalW - stripW;
         if (max < 0.0) {
             max = 0.0;
         }
@@ -129,6 +161,22 @@ public class TabControl : Panel {
         return 0.0;
     }
 
+    /// <summary>挤栏时两端箭头预留后的页签条带宽；未溢出等于栏宽。</summary>
+    double ResolveStripWidth(double barW) {
+        if (barW <= 0.0) {
+            return 0.0;
+        }
+        double totalW = this.MeasureHeadersTotalWidth();
+        if (totalW <= barW) {
+            return barW;
+        }
+        double strip = barW - ControlMetrics.TabOverflowArrowWidth * 2.0;
+        if (strip < 0.0) {
+            strip = 0.0;
+        }
+        return strip;
+    }
+
     double MeasureHeadersTotalWidth() {
         int tabCount = this.CountTabItems();
         if (tabCount <= 0) {
@@ -150,8 +198,8 @@ public class TabControl : Panel {
         return total;
     }
 
-    void EnsureSelectedTabVisible(double barW) {
-        if (barW <= 0.0 || _mirrorHandle == 0) {
+    void EnsureSelectedTabVisible(double stripW) {
+        if (stripW <= 0.0 || _mirrorHandle == 0) {
             return;
         }
         int selected = this.ResolveSelectedIndex();
@@ -176,8 +224,8 @@ public class TabControl : Panel {
         double right = left + selW;
         if (left < _headerScrollOffset) {
             _headerScrollOffset = left;
-        } else if (right > _headerScrollOffset + barW) {
-            _headerScrollOffset = right - barW;
+        } else if (right > _headerScrollOffset + stripW) {
+            _headerScrollOffset = right - stripW;
         }
     }
 
@@ -314,8 +362,9 @@ public class TabControl : Panel {
     protected override void ArrangeOverride(LayoutSize finalSize) {
         this.SyncMirrorHeaders();
         this.SyncMirrorSelection();
+        double stripW = this.ResolveStripWidth(finalSize.Width);
         if (_ensureSelectedVisible != 0) {
-            this.EnsureSelectedTabVisible(finalSize.Width);
+            this.EnsureSelectedTabVisible(stripW);
             _ensureSelectedVisible = 0;
         }
         this.SetHeaderScrollOffsetClamped(_headerScrollOffset);

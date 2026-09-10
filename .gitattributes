@@ -6,3 +6,6 @@ std/UI/Core/Styling/BuiltInTheme.Styles.g.as text eol=lf
 *.rs text eol=lf
 rustfmt.toml text eol=lf
 rust-toolchain.toml text eol=lf
+# Theme goldens / ARML：生成物与契约测试按 LF 比对（generate() 输出 LF）
+*.arml text eol=lf
+std/UI/Core/Themes/*.json text eol=lf

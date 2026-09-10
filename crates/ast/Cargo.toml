@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "ast"
 description = "Abstract syntax tree for Arc"
 version.workspace = true

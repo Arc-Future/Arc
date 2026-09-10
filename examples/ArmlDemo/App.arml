@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- App.arml: RFC 026 Application entry (WPF App.xaml counterpart).
      P1: no global implicit Button colorError. Explicit keyed DangerButtonStyle
-     only for Style tab Rest vs VSM hover override demo. -->
+     only for Style tab Rest vs VSM hover override demo.
+     Demo.* keys: section title + secondary caption (theme tokens only). -->
 <Application
     xmlns="http://schemas.arc.dev/winfx/2026"
     xmlns:x="http://schemas.arc.dev/xaml"
@@ -10,6 +11,9 @@
     <Application.Resources>
         <Style x:Key="Demo.SectionTitle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource Color.Primary}"/>
+        </Style>
+        <Style x:Key="Demo.Caption" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource Color.Text.Secondary}"/>
         </Style>
         <Style x:Key="DangerButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="{StaticResource Color.Danger}"/>

@@ -1,4 +1,4 @@
-﻿# 08 异步与任务
+# 08 异步与任务
 
 Arc 异步模型基于 **`async`/`await`** 与 **`Task<T>`** 类型。编译器将异步函数 lowering 为状态机，运行时通过 `rt_task_*` ABI 驱动（见[运行时 ABI](../12-advanced/design-decisions.md)）。
 

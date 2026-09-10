@@ -50,18 +50,39 @@ cmd /c "git -C `"$SyncDir`" reset --hard origin/main >nul 2>&1"
 cmd /c "git -C `"$SyncDir`" clean -fd >nul 2>&1"
 git -C $SyncDir config user.name $AuthorName
 git -C $SyncDir config user.email $AuthorEmail
+# 公开仓一律 LF 入库，避免 Windows Copy-Item 工作区 CRLF 被原样提交后
+# 与 generate()/rustfmt（Unix）漂移；与仓库 .gitattributes eol=lf 对齐。
+git -C $SyncDir config core.autocrlf false
+git -C $SyncDir config core.eol lf
 
 # --- 2. materialize internal tracked files (minus exclusions) ---
 $wanted = @()
 foreach ($f in (git ls-files)) {
     if (-not (Test-Excluded $f)) { $wanted += $f }
 }
+$textExt = [System.Collections.Generic.HashSet[string]]::new(
+    [string[]]@('.rs','.as','.arml','.toml','.md','.yml','.yaml','.json','.cjs','.ps1','.sh','.c','.h','.cpp','.hpp','.wgsl','.txt','.gitignore','.gitattributes')
+)
 foreach ($f in $wanted) {
     $src = Join-Path $repoRoot $f
     $dst = Join-Path $SyncDir ($f -replace '/', '\')
     $dstDir = Split-Path $dst -Parent
     if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Force -Path $dstDir | Out-Null }
-    Copy-Item $src $dst -Force
+    $ext = [System.IO.Path]::GetExtension($f).ToLowerInvariant()
+    if ($textExt.Contains($ext) -or ($f -notmatch '\.')) {
+        # 读入后统一 LF 写出（UTF-8 无 BOM），杜绝 CRLF 金丝雀测试在公开仓红灯
+        $bytes = [System.IO.File]::ReadAllBytes($src)
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            $text = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+        } else {
+            $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+        }
+        $text = $text -replace "`r`n", "`n" -replace "`r", "`n"
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($dst, $text, $utf8NoBom)
+    } else {
+        Copy-Item $src $dst -Force
+    }
 }
 
 # --- 3. orphan removal: still tracked in the public clone but gone internally ---

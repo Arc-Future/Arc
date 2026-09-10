@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Arc 规范守卫门禁——AGENTS.md 与 .cursor/rules 编码契约的机器可执行门禁。
 

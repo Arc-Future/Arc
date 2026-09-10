@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "arcgr"
 description = ".arcgr semantic index binary format (RFC 034 / RFC 033 M2)"
 version.workspace = true

@@ -274,7 +274,7 @@ internal class PointerRouter {
         }
     }
 
-    /// <summary>C callback entry (type "TabControl"): 页签栏命中 HitTabIndex → SelectedIndex。</summary>
+    /// <summary>C callback entry (type "TabControl"): HitTabOverflow 步进 / HitTabIndex → SelectedIndex。</summary>
     internal static void RouteTabControlClick(long platformHandle) {
         TabControl tabs = LookupTabControl(platformHandle);
         if (tabs != null) {

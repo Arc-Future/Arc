@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "mir"
 description = "Mid-level IR for Arc"
 version.workspace = true

@@ -17,6 +17,11 @@ fn repo_root() -> PathBuf {
         .expect("repo root")
 }
 
+/// Golden 文本比对：忽略 `core.autocrlf` 把 LF blob 检出成 CRLF 的平台差（Windows CI）。
+fn norm_nl(s: &str) -> String {
+    s.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 #[test]
 fn design_token_catalog_covers_primary_keys() {
     let catalog = DesignTokenCatalog::build_from_repo(&repo_root()).expect("catalog");
@@ -52,7 +57,8 @@ fn design_token_catalog_json_in_sync() {
         )
     });
     assert_eq!(
-        actual, expected,
+        norm_nl(&actual),
+        norm_nl(&expected),
         "DesignTokenCatalog.json out of sync; UPDATE_DESIGN_TOKEN_CATALOG=1 to regenerate"
     );
 }

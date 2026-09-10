@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "codegen"
 description = "LLVM 22 native code generation for Arc"
 version.workspace = true

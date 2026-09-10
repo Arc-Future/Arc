@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "arc-ui"
 description = "Declarative UI framework for Arc (.arml parser, type checker, inspect/verify)"
 version.workspace = true

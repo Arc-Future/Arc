@@ -145,6 +145,12 @@ internal class ControlMetrics {
     /// <summary>页签标题相对栏中线的微调上偏。</summary>
     public const double TabLabelNudgeY = 1.0;
 
+    /// <summary>Tab 溢出左右箭头按钮宽（挤栏时顶栏两端预留；命中/裁剪同源）。</summary>
+    public const double TabOverflowArrowWidth = 24.0;
+
+    /// <summary>Tab 溢出箭头点击一次的水平滚步长（DIP）。</summary>
+    public const double TabOverflowScrollStep = 96.0;
+
     /// <summary>MessageBox 自绘图标徽章边长。</summary>
     public const double MessageBoxIconSize = 36.0;
 
