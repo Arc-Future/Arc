@@ -102,7 +102,10 @@ fn render_tree_resolves_state_colors_through_motion() {
             "WgpuRender must resolve {role} through MotionEngine"
         );
     }
-    assert!(render.contains("MotionEngine.ResolveColor(handle") || chrome.contains("MotionEngine.ResolveColor(handle"));
+    assert!(
+        render.contains("MotionEngine.ResolveColor(handle")
+            || chrome.contains("MotionEngine.ResolveColor(handle")
+    );
     assert!(
         chrome.contains("MotionEngine.ResolveLoop01(handle"),
         "ProgressBar IsIndeterminate must resolve loop phase through MotionEngine"

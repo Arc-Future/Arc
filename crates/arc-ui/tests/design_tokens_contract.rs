@@ -66,7 +66,8 @@ fn builtin_theme_colors_g_as_in_sync() {
 #[test]
 fn dark_arml_matches_light_seed_derivation() {
     let root = repo_root();
-    let expected = arc_ui::generate_dark_arml_from_light(&root).expect("derive Dark from Light Seed");
+    let expected =
+        arc_ui::generate_dark_arml_from_light(&root).expect("derive Dark from Light Seed");
     let path = root.join(arc_ui::DARK_ARML_REL);
     if std::env::var("UPDATE_DARK_THEME").is_ok() {
         std::fs::write(&path, &expected).expect("write Dark.arml");
@@ -316,7 +317,9 @@ fn theme_style_controls_exist_chrome_only() {
         "Button.Small must not exist when Shared Small already carries Padding (no duplicate override)"
     );
     assert!(
-        !styles.iter().any(|s| s.key.as_deref() == Some("Button.Size.SM")),
+        !styles
+            .iter()
+            .any(|s| s.key.as_deref() == Some("Button.Size.SM")),
         "Button.Size.SM dual-track key must not exist (use Small short key)"
     );
     for style in &styles {
@@ -327,7 +330,10 @@ fn theme_style_controls_exist_chrome_only() {
         for setter in &style.setters {
             let prop = setter.property.as_str();
             assert!(
-                !matches!(prop, "FontFamily" | "FontSize" | "FontWeight" | "Foreground"),
+                !matches!(
+                    prop,
+                    "FontFamily" | "FontSize" | "FontWeight" | "Foreground"
+                ),
                 "implicit Style TargetType={:?} must not carry {prop}",
                 style.target_type
             );
@@ -455,8 +461,7 @@ fn style_variant_docs_match_rfc037() {
         "COMPONENTS Button row must document short-key Style authoring"
     );
     assert!(
-        !components.contains("Appearance**(Primary")
-            && components.contains("无 Appearance DP"),
+        !components.contains("Appearance**(Primary") && components.contains("无 Appearance DP"),
         "COMPONENTS must not list Appearance DP"
     );
     assert!(
@@ -488,7 +493,9 @@ fn style_variant_docs_match_rfc037() {
         "production-surface F1 must not say fonts come from implicit Style"
     );
     assert!(
-        production.contains("环境 DP") || production.contains("禁**进隐式 Style") || production.contains("禁**烤进隐式 Style"),
+        production.contains("环境 DP")
+            || production.contains("禁**进隐式 Style")
+            || production.contains("禁**烤进隐式 Style"),
         "production-surface F1 must say ambient DP / ban fonts in implicit Style"
     );
 
@@ -500,8 +507,7 @@ fn style_variant_docs_match_rfc037() {
 
     let button = read_file("std/UI/Core/Components/Button.as");
     assert!(
-        button.contains("Style=\"{StaticResource Primary")
-            || button.contains("短键"),
+        button.contains("Style=\"{StaticResource Primary") || button.contains("短键"),
         "Button.as must document short-key Style authoring"
     );
     assert!(
@@ -575,14 +581,7 @@ fn style_variant_docs_match_rfc037() {
     );
 
     let styles = arc_ui::load_controls_styles(&repo_root()).expect("load controls styles");
-    for key in [
-        "Primary",
-        "Default",
-        "Danger",
-        "Small",
-        "Medium",
-        "Large",
-    ] {
+    for key in ["Primary", "Default", "Danger", "Small", "Medium", "Large"] {
         assert!(
             styles.iter().any(|s| s.key.as_deref() == Some(key)),
             "Controls merge must register Style `{key}`"
@@ -622,7 +621,10 @@ fn style_variant_docs_match_rfc037() {
     ] {
         let implicit = styles
             .iter()
-            .find(|s| s.key.as_deref().unwrap_or("").is_empty() && s.target_type.as_deref() == Some(target))
+            .find(|s| {
+                s.key.as_deref().unwrap_or("").is_empty()
+                    && s.target_type.as_deref() == Some(target)
+            })
             .unwrap_or_else(|| panic!("missing implicit Style for {target}"));
         assert!(
             implicit.based_on.is_some(),
@@ -672,7 +674,10 @@ fn controls_arml_no_bare_thickness_or_hex() {
             }
             // Setter Value="#…" 或任意属性裸 hex
             if trimmed.contains("Value=\"#") || trimmed.contains("=\"#") {
-                panic!("{name}:{} bare hex forbidden in Controls arml: {trimmed}", i + 1);
+                panic!(
+                    "{name}:{} bare hex forbidden in Controls arml: {trimmed}",
+                    i + 1
+                );
             }
             // Thickness 四元组数字：Value="1,1,1,1" / "16,8,16,8"
             if let Some(rest) = trimmed.strip_prefix("<Setter ") {
@@ -821,8 +826,7 @@ fn control_metrics_owns_geometry() {
     );
     let grid = read_file("std/UI/Core/Components/DataGrid.as");
     assert!(
-        grid.contains("ControlMetrics.ControlHeight")
-            && grid.contains("ControlMetrics.SpacingSM"),
+        grid.contains("ControlMetrics.ControlHeight") && grid.contains("ControlMetrics.SpacingSM"),
         "DataGrid ResolveRowStride must use ControlMetrics"
     );
     assert!(

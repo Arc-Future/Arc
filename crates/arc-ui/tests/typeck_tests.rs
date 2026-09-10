@@ -65,7 +65,10 @@ fn registry_treeview_has_items_source() {
     assert_eq!(info.property_type("ItemsSource"), Some(&PropType::Object));
     assert!(info.has_property("SelectedIndex"));
     assert!(info.has_property("VerticalOffset"));
-    assert_eq!(info.property_type("VerticalOffset"), Some(&PropType::Double));
+    assert_eq!(
+        info.property_type("VerticalOffset"),
+        Some(&PropType::Double)
+    );
 }
 
 #[test]

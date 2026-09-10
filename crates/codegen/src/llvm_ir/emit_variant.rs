@@ -244,8 +244,7 @@ impl<'a> FnEmitter<'a> {
                 ));
                 let old_payload = self.fresh_temp();
                 self.emit(&format!("{old_payload} = load ptr, ptr {body_ptr}"));
-                let new_payload =
-                    self.emit_struct_payload_heap_copy(struct_name, &old_payload);
+                let new_payload = self.emit_struct_payload_heap_copy(struct_name, &old_payload);
                 self.emit(&format!("store ptr {new_payload}, ptr {body_ptr}"));
                 self.emit(&format!("br label %{next_label}"));
             }
@@ -291,9 +290,7 @@ impl<'a> FnEmitter<'a> {
         self.emit(&format!(
             "{loaded} = load %struct.{struct_name}, ptr {src_ptr}"
         ));
-        self.emit(&format!(
-            "store %struct.{struct_name} {loaded}, ptr {heap}"
-        ));
+        self.emit(&format!("store %struct.{struct_name} {loaded}, ptr {heap}"));
         self.emit(&format!("br label %{join_label}"));
 
         self.emit_label(&null_label);

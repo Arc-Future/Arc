@@ -100,7 +100,10 @@ impl DesignTokenCatalog {
         for (i, t) in self.tokens.iter().enumerate() {
             out.push_str("    {\n");
             out.push_str(&format!("      \"name\": \"{}\",\n", escape_json(&t.name)));
-            out.push_str(&format!("      \"category\": \"{}\",\n", t.category.as_str()));
+            out.push_str(&format!(
+                "      \"category\": \"{}\",\n",
+                t.category.as_str()
+            ));
             out.push_str(&format!("      \"role\": \"{}\",\n", escape_json(&t.role)));
             out.push_str("      \"bareForbidden\": true");
             if let Some(v) = &t.light_value {
@@ -130,15 +133,43 @@ const NON_COLOR_TOKENS: &[(&str, TokenCategory, &str)] = &[
     ("Radius.Control", TokenCategory::Radius, "Control"),
     ("Radius.Surface", TokenCategory::Radius, "Surface"),
     ("Radius.Pill", TokenCategory::Radius, "Pill"),
-    ("Size.Control.Height.SM", TokenCategory::Size, "Control.Height.SM"),
+    (
+        "Size.Control.Height.SM",
+        TokenCategory::Size,
+        "Control.Height.SM",
+    ),
     ("Size.Control.Height", TokenCategory::Size, "Control.Height"),
-    ("Size.Control.Height.LG", TokenCategory::Size, "Control.Height.LG"),
-    ("Size.Control.Padding", TokenCategory::Size, "Control.Padding"),
-    ("Size.Control.Padding.SM", TokenCategory::Size, "Control.Padding.SM"),
-    ("Size.Control.Padding.LG", TokenCategory::Size, "Control.Padding.LG"),
-    ("Size.Border.Thickness", TokenCategory::Size, "Border.Thickness"),
+    (
+        "Size.Control.Height.LG",
+        TokenCategory::Size,
+        "Control.Height.LG",
+    ),
+    (
+        "Size.Control.Padding",
+        TokenCategory::Size,
+        "Control.Padding",
+    ),
+    (
+        "Size.Control.Padding.SM",
+        TokenCategory::Size,
+        "Control.Padding.SM",
+    ),
+    (
+        "Size.Control.Padding.LG",
+        TokenCategory::Size,
+        "Control.Padding.LG",
+    ),
+    (
+        "Size.Border.Thickness",
+        TokenCategory::Size,
+        "Border.Thickness",
+    ),
     ("Size.Border.Padding", TokenCategory::Size, "Border.Padding"),
-    ("Size.Progress.Thickness", TokenCategory::Size, "Progress.Thickness"),
+    (
+        "Size.Progress.Thickness",
+        TokenCategory::Size,
+        "Progress.Thickness",
+    ),
     ("Size.Slider.Height", TokenCategory::Size, "Slider.Height"),
     ("Spacing.XS", TokenCategory::Spacing, "XS"),
     ("Spacing.SM", TokenCategory::Spacing, "SM"),
@@ -149,10 +180,26 @@ const NON_COLOR_TOKENS: &[(&str, TokenCategory, &str)] = &[
     ("Font.Body.Family", TokenCategory::Font, "Body.Family"),
     ("Font.Caption.Size", TokenCategory::Font, "Caption.Size"),
     ("Font.Heading.Size", TokenCategory::Font, "Heading.Size"),
-    ("Motion.Duration.Fast", TokenCategory::Motion, "Duration.Fast"),
-    ("Motion.Duration.Normal", TokenCategory::Motion, "Duration.Normal"),
-    ("Motion.Easing.Standard", TokenCategory::Motion, "Easing.Standard"),
-    ("Motion.Easing.Linear", TokenCategory::Motion, "Easing.Linear"),
+    (
+        "Motion.Duration.Fast",
+        TokenCategory::Motion,
+        "Duration.Fast",
+    ),
+    (
+        "Motion.Duration.Normal",
+        TokenCategory::Motion,
+        "Duration.Normal",
+    ),
+    (
+        "Motion.Easing.Standard",
+        TokenCategory::Motion,
+        "Easing.Standard",
+    ),
+    (
+        "Motion.Easing.Linear",
+        TokenCategory::Motion,
+        "Easing.Linear",
+    ),
     ("Motion.Easing.In", TokenCategory::Motion, "Easing.In"),
     ("Motion.Easing.InOut", TokenCategory::Motion, "Easing.InOut"),
 ];

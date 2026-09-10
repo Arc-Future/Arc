@@ -179,8 +179,8 @@ pub(super) fn platform_link_flags(target: Option<&str>) -> Vec<&'static str> {
                 ]
             } else if cfg!(target_os = "linux") {
                 vec![
-                    "-ldl", // RFC 017: rt_library_load/sym/unload
-                    "-lstdc++", // RFC 010 Itanium personality
+                    "-ldl",      // RFC 017: rt_library_load/sym/unload
+                    "-lstdc++",  // RFC 010 Itanium personality
                     "-lpthread", // RFC 048 M2 pipe async
                 ]
             } else if cfg!(target_os = "macos") {

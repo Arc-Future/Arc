@@ -32,12 +32,9 @@ pub fn resolve_style_key(
     target_type: &str,
     known: &std::collections::BTreeMap<String, String>,
 ) -> Option<String> {
-    for cand in lookup_candidates(key, target_type) {
-        if known.contains_key(&cand) {
-            return Some(cand);
-        }
-    }
-    None
+    lookup_candidates(key, target_type)
+        .into_iter()
+        .find(|cand| known.contains_key(cand))
 }
 
 /// Format a readable miss diagnostic.
@@ -78,7 +75,10 @@ pub fn codegen_style_key_tokens<S: AsRef<str>>(
         return Err("`{StaticResource}` in `Style` requires a resource key".into());
     }
     // If any runtime key → whole binding must be string form (mixed typed+string not supported).
-    if out.iter().any(|r| matches!(r, CodegenStyleRef::RuntimeKey(_))) {
+    if out
+        .iter()
+        .any(|r| matches!(r, CodegenStyleRef::RuntimeKey(_)))
+    {
         let joined = keys
             .iter()
             .map(|k| k.as_ref().trim().to_string())

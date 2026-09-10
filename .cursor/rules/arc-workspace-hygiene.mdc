@@ -31,7 +31,7 @@ alwaysApply: true
 
 ## 脚本归属（2026-08-10 约束）
 
-- 所有 `.ps1`/`.cjs` 脚本**一律归入 `scripts/`**，按职责建子目录（如 `scripts/ui-debug/`）；**禁止散落在仓库根目录**。
-- 命名：`<域>-<用途>.ps1`（如 `arml-debug-shot.ps1`），kebab-case，语义清晰；禁止无描述性的裸名（`winscan.ps1` 等）。
+- 所有 `.ps1`/`.cjs` 脚本**一律归入 `scripts/`**，按职责建子目录（如 `scripts/packaging/`、`scripts/ui-theme/`）；**禁止散落在仓库根目录**。
+- 命名：`<域>-<用途>.ps1`（如 `derive-dark-from-light.ps1`），kebab-case，语义清晰；禁止无描述性的裸名。
 - 临时输出（截图/log/txt）一律落 `target/scratch/` 或 `$env:TEMP`，**禁止硬编码写入仓库根目录路径**（如 `d:\...\armhdemo_shot.png`）。
 - `.gitignore`：`*.ps1` 全局忽略，`!scripts/**/*.ps1` 白名单 `scripts/`（含子目录）；根目录散落脚本不被跟踪，且被 CI gate 标记为污染。

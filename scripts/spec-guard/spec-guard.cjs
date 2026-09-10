@@ -59,7 +59,22 @@ const EXEMPTIONS = [
   { id: 'as-c-style-const', file: 'std/Net/Core/Http/Http2/HuffmanCodec.as', reason: 'RFC 7541 静态 Huffman 码表（EOS 等标准终结符命名）' },
   { id: 'ui-stub-render', file: 'crates/runtime-ui/platform/common/rt_ui_image_stub.c', reason: '跨平台缺分支适配：Linux 无图像解码后端（真实实现 windows/rt_ui_image_win32.cpp 仅 Win32 编译），返回 failed 位图（loaded=0）为诚实失败路径，非渲染实现载体' },
   { id: 'ui-stub-render', file: 'crates/runtime-ui/platform/common/rt_ui_scrollbar_stub.c', reason: '跨平台缺分支适配：非 Win32（Linux/macOS/OHOS）竖滚动条仅布局、无滚动条 UI（真实实现 windows/rt_ui_scrollbar.cpp），几何/命中原语零值返回，绘制由 Arc 侧 WgpuRender 完成，无任何光栅绘制' },
-  { id: 'ui-stub-render', file: 'crates/runtime-ui/platform/ohos/window_stub.c', reason: '跨平台缺分支适配：OHOS 无窗口后端（RFC 037 M5-OHOS，桌面/OHOS/WASM 为后续目标），创建窗口返回 NULL、事件恒 CLOSE，无任何渲染上屏' }
+  { id: 'ui-stub-render', file: 'crates/runtime-ui/platform/ohos/window_stub.c', reason: '跨平台缺分支适配：OHOS 无窗口后端（RFC 037 M5-OHOS，桌面/OHOS/WASM 为后续目标），创建窗口返回 NULL、事件恒 CLOSE，无任何渲染上屏' },
+  // --- 公开仓 CI（github-sync）全库门禁：协议/外部标准命名与已登记专项债 ---
+  { id: 'as-enum-c-style', file: 'std/Net/P2P/MultiaddrProtocol.as', reason: 'multiaddr 协议表（IP4/IP6 等外部标准命名；与 Multiaddr.as 豁免同族）' },
+  { id: 'as-enum-c-style', file: 'std/Net/P2P/MultihashAlgorithm.as', reason: 'multihash 算法表（SHA256/SHA512 等外部标准命名；与 Cid.as 豁免同族）' },
+  { id: 'as-enum-c-style', file: 'std/Net/P2P/MessageType.as', reason: 'Kademlia 消息码（KADRPC 等外部标准命名；与 P2PMessage.as 豁免同族）' },
+  { id: 'as-async-suffix', file: 'std/Arc/Threading/Channels/ChannelCore.as', reason: '通道内核等待队列登记（WriteEnqueue/ReadEnqueue）：快路径可同步完成已完成 Task，命名对标内部 enqueue 语义而非对外 Async I/O API' },
+  { id: 'as-async-suffix', file: 'std/Arc/Threading/Channels/CoreChannelReader.as', reason: '.NET ChannelReader.Completion 兼容面（属性式完成信号，无 Async 后缀）' },
+  { id: 'rs-lib-rs-lines', file: 'crates/arc-tests/src/lib.rs', reason: 'arc-tests harness 门面拆分专项登记（非编译器核心 crate）；专项完成前不阻断 CI' },
+  { id: 'rs-lib-rs-facade', file: 'crates/arc-tests/src/lib.rs', reason: 'arc-tests harness 门面拆分专项登记（非编译器核心 crate）；专项完成前不阻断 CI' },
+  { id: 'rs-file-too-large', file: 'crates/arc/src/pipeline.rs', reason: '巨型文件拆分专项登记（>4000）；按概念拆、禁机械切；专项完成前不阻断 CI' },
+  { id: 'rs-file-too-large', file: 'crates/codegen/src/llvm_ir/emit_call.rs', reason: '巨型文件拆分专项登记（>4000）；按概念拆、禁机械切；专项完成前不阻断 CI' },
+  { id: 'rs-file-too-large', file: 'crates/codegen/src/llvm_ir/mod.rs', reason: '巨型文件拆分专项登记（>4000）；按概念拆、禁机械切；专项完成前不阻断 CI' },
+  { id: 'rs-file-too-large', file: 'crates/mir/src/lower.rs', reason: '巨型文件拆分专项登记（>4000）；按概念拆、禁机械切；专项完成前不阻断 CI' },
+  { id: 'rs-file-too-large', file: 'crates/typeck/src/check_expr.rs', reason: '巨型文件拆分专项登记（>4000）；按概念拆、禁机械切；专项完成前不阻断 CI' },
+  { id: 'rs-file-too-large', file: 'crates/parse/tests/parse_tests.rs', reason: '测试文件超长专项登记（>2000）；单主题多断言，拆分须按主题边界' },
+  { id: 'rs-file-too-large', file: 'crates/typeck/tests/macro_e2e.rs', reason: '测试文件超长专项登记（>2000）；单主题多断言，拆分须按主题边界' }
 ]
 const VALUE_TYPES = new Set(['void','int','long','short','byte','sbyte','uint','ulong','ushort','char','float','double','decimal','bool','nint','nuint'])
 // 缩写大小写规律（.NET 命名规范）：2 字母缩写全大写（UI/IO/IP/AI），3+ 字母缩写 PascalCase 化（Http/Xml/Tcp/Quic/Cid/Nat）。
@@ -189,9 +204,14 @@ const RULES = [
     fn: function (msk) {
       const out = []
       for (let i = 0; i < msk.length; i++) {
-        const re = /\b(?:let|mut)\s+[A-Za-z_$][A-Za-z0-9_$]*/g
+        // 仅拦声明位 `let`/`mut`（行首或语句分隔后）。Query 子句
+        // `from x in xs let y = …`（C#/RFC 002 LINQ `let`）是合法表面，不命中。
+        const re = /(?:^|[;{}])\s*(?:let|mut)\s+[A-Za-z_$][A-Za-z0-9_$]*/g
         let m
-        while ((m = re.exec(msk[i]))) out.push(V(i + 1, '`' + m[0] + '` 禁止 let/mut：声明用前导类型 `Type name` 或 `var`（无 let/mut，RFC 002）'))
+        while ((m = re.exec(msk[i]))) {
+          const tok = m[0].match(/(?:let|mut)\s+[A-Za-z_$][A-Za-z0-9_$]*/)[0]
+          out.push(V(i + 1, '`' + tok + '` 禁止 let/mut：声明用前导类型 `Type name` 或 `var`（无 let/mut，RFC 002）'))
+        }
       }
       return out
     } },
@@ -659,7 +679,12 @@ const RULES = [
     } },
   { id: 'ui-stub-render', rule: '渲染实现禁 *_stub 占位', severity: SEV_ERROR, scope: 'ui', category: CAT_UI,
     fn: function (msk, cmt, rel, fileName) {
-      return /_stub\.(?:c|rs)$/i.test(fileName) ? [V(1, '伪实现占位 stub 禁止作为渲染实现载体（跨平台缺分支可用 stub，但禁止冒充真实渲染实现）')] : []
+      // 跨平台缺分支 stub（clipboard/window/scrollbar/image 等 OS 适配）允许；
+      // 仅当文件名宣称渲染实现（render/raster/paint/draw/compositor/swapchain）时 error。
+      if (!/_stub\.(?:c|rs)$/i.test(fileName)) return []
+      const stem = fileName.replace(/_stub\.(?:c|rs)$/i, '')
+      if (!/(?:^|[_-])(?:render|raster|paint|draw|compositor|swapchain)(?:[_-]|$)/i.test(stem)) return []
+      return [V(1, '伪实现占位 stub 禁止作为渲染实现载体（跨平台缺分支可用 stub，但禁止冒充真实渲染实现）')]
     } },
   { id: 'docs-todo', rule: '文档无占位/待办表述', severity: SEV_WARNING, scope: 'docs', category: CAT_DOC,
     fn: function (msk) {

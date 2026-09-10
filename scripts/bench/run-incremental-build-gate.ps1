@@ -15,8 +15,7 @@
 #   sub-gate: correctness-equivalence (bit-identical preferred, size/symbol-set fallback)
 #             + counter-example matrix (leaf / middle / arc.toml / .aopkg / toolchain).
 #
-# This script is ASCII-only (PowerShell 5.1 reads BOM-less scripts in ANSI; see
-# prep-exclusive-machine.ps1).
+# This script is ASCII-only (PowerShell 5.1 reads BOM-less scripts in ANSI).
 #
 # Exit codes:
 #   0 = window valid AND s <= threshold AND d <= threshold AND equivalence green
@@ -269,7 +268,7 @@ function Parse-Report([string[]]$lines) {
 }
 
 # ---------------------------------------------------------------------------
-# Exclusivity report (informational; not authoritative -- see prep-exclusive-machine.ps1)
+# Exclusivity report (informational; not authoritative -- exclusive machine required for claims)
 # ---------------------------------------------------------------------------
 function Report-Exclusivity {
     Write-Host '===== exclusivity (informational) ====='

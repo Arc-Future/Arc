@@ -19,11 +19,20 @@ fn read_std(rel: &str) -> String {
 fn treeview_declares_flatindex_viewport_window() {
     let tv = read_std("std/UI/Core/Components/TreeView.as");
     assert!(tv.contains("VerticalOffset"), "missing VerticalOffset DP");
-    assert!(tv.contains("ContentExtentHeight"), "missing arithmetic extent");
+    assert!(
+        tv.contains("ContentExtentHeight"),
+        "missing arithmetic extent"
+    );
     assert!(tv.contains("ItemViewport"), "missing ItemViewport");
-    assert!(tv.contains("MaterializeWindowRows"), "missing window materialize");
+    assert!(
+        tv.contains("MaterializeWindowRows"),
+        "missing window materialize"
+    );
     assert!(tv.contains("_rowPool"), "missing recycle pool");
-    assert!(tv.contains("EnsureViewportMaterialization"), "missing EnsureViewport");
+    assert!(
+        tv.contains("EnsureViewportMaterialization"),
+        "missing EnsureViewport"
+    );
     assert!(
         tv.contains("FlatIndex-window") || tv.contains("FlatIndex window"),
         "must document FlatIndex-window honest boundary"

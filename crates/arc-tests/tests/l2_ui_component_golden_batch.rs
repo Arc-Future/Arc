@@ -28,7 +28,10 @@ const GOLDEN_FILES: &[(&str, &str)] = &[
         "button_textblock_layout_v1",
         "goldens/ui/button_textblock_layout.golden.json",
     ),
-    ("checkbox_layout_v1", "goldens/ui/checkbox_layout.golden.json"),
+    (
+        "checkbox_layout_v1",
+        "goldens/ui/checkbox_layout.golden.json",
+    ),
 ];
 
 fn golden_path(rel: &str) -> PathBuf {
@@ -225,9 +228,8 @@ void Main() {
             continue;
         };
         let canon = rest.trim();
-        let id = extract_golden_id(canon).unwrap_or_else(|| {
-            panic!("missing id in golden payload:\n{canon}")
-        });
+        let id = extract_golden_id(canon)
+            .unwrap_or_else(|| panic!("missing id in golden payload:\n{canon}"));
         by_id.insert(id.to_string(), canon.to_string());
     }
 

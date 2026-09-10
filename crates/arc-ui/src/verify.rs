@@ -201,7 +201,14 @@ fn check_a11y(element: &Element, report: &mut VerificationReport) {
     // Button/Input/CheckBox 等交互控件应有 Content/Text/AutomationProperties.Name
     let interactive = matches!(
         element.name.as_str(),
-        "Button" | "TextBox" | "PasswordBox" | "CheckBox" | "RadioButton" | "ToggleButton" | "Slider" | "ComboBox"
+        "Button"
+            | "TextBox"
+            | "PasswordBox"
+            | "CheckBox"
+            | "RadioButton"
+            | "ToggleButton"
+            | "Slider"
+            | "ComboBox"
     );
     if interactive {
         let has_label = element.attr("Content").is_some()

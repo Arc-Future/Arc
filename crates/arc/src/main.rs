@@ -1052,14 +1052,12 @@ fn run(cli: Cli) -> Result<(), String> {
             ..
         } => {
             if coverage {
-                return Err(
-                    "arc test --coverage is not yet implemented (QIF-5). \
+                return Err("arc test --coverage is not yet implemented (QIF-5). \
                      Design: docs/rfc/015-llvm-backend/references/coverage.md \
                      (LLVM source-based → .profraw → llvm-cov lcov). \
                      Remaining blockers: clang coverage flag plumbing through \
                      codegen + llvm-profdata/llvm-cov toolchain bundle."
-                        .into(),
-                );
+                    .into());
             }
             let file = project.unwrap_or(file);
             let release = config_str == "Release";

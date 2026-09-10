@@ -155,9 +155,7 @@ void Main() {
         assert!(
             r.passed,
             "{name}: passed={} err={:?}\nstdout:\n{}",
-            r.passed,
-            r.error,
-            r.stdout
+            r.passed, r.error, r.stdout
         );
     }
 }

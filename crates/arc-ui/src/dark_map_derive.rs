@@ -61,7 +61,9 @@ pub fn normalize_argb_hex(raw: &str) -> Result<String, String> {
     match upper.len() {
         8 => Ok(format!("#{upper}")),
         6 => Ok(format!("#FF{upper}")),
-        _ => Err(format!("unsupported hex length in {raw} (want #RRGGBB or #AARRGGBB)")),
+        _ => Err(format!(
+            "unsupported hex length in {raw} (want #RRGGBB or #AARRGGBB)"
+        )),
     }
 }
 
@@ -166,12 +168,22 @@ fn validate_derived_key_set(map: &BTreeMap<String, String>) -> Result<(), String
 pub fn emit_dark_arml(colors: &BTreeMap<String, String>) -> String {
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    out.push_str("<!-- Built-in Dark theme — derived from Light Seed via arc-ui::dark_map_derive\n");
-    out.push_str("     (Ant Design 6.x darkAlgorithm map token snapshot; seed colorPrimary=#1677ff).\n");
+    out.push_str(
+        "<!-- Built-in Dark theme — derived from Light Seed via arc-ui::dark_map_derive\n",
+    );
+    out.push_str(
+        "     (Ant Design 6.x darkAlgorithm map token snapshot; seed colorPrimary=#1677ff).\n",
+    );
     out.push_str("     Neutrals: generateNeutralColorPalettes(bgBase=#000, textBase=#fff).\n");
-    out.push_str("     Primary map: dark generate(#1677ff) -> #1668dc / hover #3c89e8 / active #1554ad.\n");
-    out.push_str("     Honest: build-time Seed->Map derivation only; full darkAlgorithm runtime = P3.\n");
-    out.push_str("     Token alignment only — not pixel DOM/CSS clone. Same key set as Light.arml.\n");
+    out.push_str(
+        "     Primary map: dark generate(#1677ff) -> #1668dc / hover #3c89e8 / active #1554ad.\n",
+    );
+    out.push_str(
+        "     Honest: build-time Seed->Map derivation only; full darkAlgorithm runtime = P3.\n",
+    );
+    out.push_str(
+        "     Token alignment only — not pixel DOM/CSS clone. Same key set as Light.arml.\n",
+    );
     out.push_str("     Regenerate: scripts/ui-theme/derive-dark-from-light.ps1 -->\n");
     out.push_str("<ResourceDictionary\n");
     out.push_str("    xmlns=\"http://schemas.arc.dev/winfx/2026\"\n");
@@ -193,7 +205,9 @@ fn dark_key_comment(key: &str) -> &'static str {
         "Color.Background" => "colorBgLayout getSolidColor(#000, 0)",
         "Color.Surface" => "colorBgContainer getSolidColor(#000, 8)",
         "Color.Border" => "colorBorder getSolidColor(#000, 26)",
-        "Color.Border.Disabled" => "colorBorderDisabled (Ant Design 6; Dark same band as colorBorder)",
+        "Color.Border.Disabled" => {
+            "colorBorderDisabled (Ant Design 6; Dark same band as colorBorder)"
+        }
         "Color.Text.Primary" => "colorText rgba(255,255,255,0.85)",
         "Color.Text.Secondary" => "colorTextSecondary rgba(255,255,255,0.65)",
         "Color.Primary" => "dark generate(colorPrimary) step-6",
@@ -261,7 +275,10 @@ mod tests {
     fn default_light_seed_derives_known_dark_primary() {
         let light = load_theme_colors(&repo_root().join(LIGHT_ARML_REL)).expect("Light");
         let dark = derive_dark_map_from_light(&light).expect("derive");
-        assert_eq!(dark.get("Color.Primary").map(String::as_str), Some("#FF1668DC"));
+        assert_eq!(
+            dark.get("Color.Primary").map(String::as_str),
+            Some("#FF1668DC")
+        );
         assert_eq!(
             dark.get("Color.Primary.Hover").map(String::as_str),
             Some("#FF3C89E8")

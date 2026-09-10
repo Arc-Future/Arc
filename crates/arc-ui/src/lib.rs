@@ -13,8 +13,8 @@ mod adaptive_lit;
 mod ast;
 mod bare_value;
 mod builtin_theme_gen;
-mod dark_map_derive;
 mod codegen;
+mod dark_map_derive;
 mod design_token_catalog;
 mod error;
 mod inspect;
@@ -27,7 +27,8 @@ mod typeck;
 mod verify;
 
 pub use style_key::{
-    codegen_style_key_tokens, lookup_candidates, miss_diagnostic, resolve_style_key, CodegenStyleRef,
+    codegen_style_key_tokens, lookup_candidates, miss_diagnostic, resolve_style_key,
+    CodegenStyleRef,
 };
 
 pub use adaptive::{check_adaptive, check_codebehind_pollution, AdaptiveCheck};
@@ -42,6 +43,7 @@ pub use builtin_theme_gen::{
     write_colors_g_as, write_styles_g_as, COLORS_G_AS_REL, CONTROLS_ARML_REL, CONTROLS_DIR_REL,
     CONTROL_STYLE_SOURCES, DARK_ARML_REL, LIGHT_ARML_REL, STYLES_G_AS_REL,
 };
+pub use codegen::{generate, generate_project, CodegenOptions, GeneratedFile, ProjectOutput};
 pub use dark_map_derive::{
     derive_dark_map_from_light, emit_dark_arml, generate_dark_arml_from_light, normalize_argb_hex,
     write_dark_arml_from_light,
@@ -50,7 +52,6 @@ pub use design_token_catalog::{
     generate_catalog_json, write_catalog_json, DesignTokenCatalog, DesignTokenEntry, TokenCategory,
     CATALOG_JSON_REL,
 };
-pub use codegen::{generate, generate_project, CodegenOptions, GeneratedFile, ProjectOutput};
 pub use error::{ArmlError, ArmlResult};
 pub use inspect::{ascii_preview, inspect_json};
 pub use lexer::{Lexer, Token, TokenKind};

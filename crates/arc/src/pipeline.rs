@@ -5325,7 +5325,7 @@ mod tests {
         let mut b1 = make_method("ClassB", "M1", "Fact", vec![]);
         b1.collection_name = Some("C2".into());
         let solo = make_method("Solo", "M1", "Fact", vec![]);
-        let methods = vec![a1, b1, a2, solo];
+        let methods = [a1, b1, a2, solo];
         let refs: Vec<&QifTestMethod> = methods.iter().collect();
         let (reordered, ranges) = group_methods_by_collection(&refs);
         assert_eq!(reordered.len(), 4);

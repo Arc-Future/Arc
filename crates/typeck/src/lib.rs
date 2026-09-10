@@ -1,40 +1,31 @@
 //! Type checker for Arc with IEnumerable / IQueryable dual-path dispatch.
 mod attr_table;
-/// Typed HIR 借用检查（MIR lower 之前）。
-mod borrow;
-/// Stub facade 类名 SSoT（typeck / MIR / codegen 契约）。
-mod builtin_facade;
+mod borrow; // Typed HIR 借用检查（MIR lower 之前）
+mod builtin_facade; // Stub facade 类名 SSoT（typeck / MIR / codegen 契约）
 mod call_args;
 mod check_call_bind;
 mod check_expr;
 mod check_stmt;
 mod checker;
-/// RFC 004 §D9 / RFC 037 M2：隐式 variant 构造（typeck AST 重写）。
-mod coerce_variant;
-/// RFC 017 残余：集合表达式目标类型 `List<T>`（`[…]` → 数组中转 + Add）。
-mod collection_expr_list;
+mod coerce_variant; // RFC 004 §D9 / RFC 037 M2：隐式 variant 构造
+mod collection_expr_list; // RFC 017：`[…]` → List<T>（数组中转 + Add）
 mod comptime;
 mod error;
-/// RFC 017 M4-link Phase B: 跨 `.ao` 包符号注册。
-mod external_symbols;
-/// RFC 005 里程碑④：编译期声明级字段环检测（`arc-cycle-001` warning 通道）。
-mod field_cycle;
+mod external_symbols; // RFC 017 M4-link Phase B：跨 `.ao` 包符号注册
+mod field_cycle; // RFC 005 里程碑④：声明级字段环检测
 mod field_keyword;
 mod generics;
 mod layout;
-/// RFC 009 M4: 宏特性代码注入体系——typeck 侧识别与目录构建。
-mod macro_eval;
+mod macro_eval; // RFC 009 M4：宏特性注入（typeck 识别与目录）
 mod match_pat;
-mod method_group; // RFC 008：方法组 → 委托（自由函数 / 静态 / 实例脱糖为 lambda）。
+mod method_group; // RFC 008：方法组 → 委托
 mod null_flow;
 mod oop_types;
-mod operator_overload; // RFC 003：用户运算符重载 → `op_*` 静态调用脱糖。
+mod operator_overload; // RFC 003：用户运算符重载 → `op_*`
 mod out_flow;
-/// RFC 006 M2：record `with` / 值相等重写。
-mod record_m2;
+mod record_m2; // RFC 006 M2：record `with` / 值相等重写
 pub mod registry;
-/// RFC 006：目标类型 `new()`（typeck AST 填类型）。
-mod target_typed_new;
+mod target_typed_new; // RFC 006：目标类型 `new()`
 mod type_id;
 mod typed;
 

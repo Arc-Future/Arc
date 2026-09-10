@@ -105,7 +105,7 @@ impl ComponentRegistry {
                 .with_property("CommandParameter", PropType::Object)
                 .with_property("IsDefault", PropType::Bool)
                 .with_property("IsCancel", PropType::Bool),
-                // Appearance 已删：变体靠 Style 短键 / AppliedStyleKeys → VSM（RFC 037 §3）
+            // Appearance 已删：变体靠 Style 短键 / AppliedStyleKeys → VSM（RFC 037 §3）
         );
         reg.register(
             ComponentInfo::new("Image")

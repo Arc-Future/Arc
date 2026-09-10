@@ -3392,13 +3392,13 @@ impl<'a> ModuleEmitter<'a> {
                 .filter(|f| {
                     (self.layouts.classes.contains_key(f.ty.as_str())
                         && !is_opaque_runtime_handle(f.ty.as_str()))
-                        || is_runtime_array_ty(f.ty.as_str(), &self.layouts)
+                        || is_runtime_array_ty(f.ty.as_str(), self.layouts)
                 })
                 .map(|f| {
                     (
                         f.ty.to_string(),
                         f.offset,
-                        is_runtime_array_ty(f.ty.as_str(), &self.layouts),
+                        is_runtime_array_ty(f.ty.as_str(), self.layouts),
                     )
                 })
                 .collect();

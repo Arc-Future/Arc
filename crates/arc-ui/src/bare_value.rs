@@ -30,13 +30,7 @@ pub fn is_thickness_token_property(name: &str) -> bool {
 pub fn is_token_definition_element(element_name: &str) -> bool {
     matches!(
         element_name,
-        "Color"
-            | "Thickness"
-            | "Double"
-            | "String"
-            | "Boolean"
-            | "Match"
-            | "SolidColorBrush"
+        "Color" | "Thickness" | "Double" | "String" | "Boolean" | "Match" | "SolidColorBrush"
     )
 }
 

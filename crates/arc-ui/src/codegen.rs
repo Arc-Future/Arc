@@ -635,9 +635,9 @@ fn emit_child_elements(
                             out.push_str(&format!("{}{}.Style = {};\n", pad, var, style_var));
                         }
                         typed
-                            if typed
-                                .iter()
-                                .all(|r| matches!(r, crate::style_key::CodegenStyleRef::Typed(_))) =>
+                            if typed.iter().all(|r| {
+                                matches!(r, crate::style_key::CodegenStyleRef::Typed(_))
+                            }) =>
                         {
                             let list_var = format!("_style_refs_{}", *bind_counter);
                             *bind_counter += 1;

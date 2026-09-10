@@ -8,9 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::ast::{
-    AttributeValue, MarkupKind, ResourceDictionaryDef, StyleDef,
-};
+use crate::ast::{AttributeValue, MarkupKind, ResourceDictionaryDef, StyleDef};
 use crate::parser::Parser;
 
 /// 相对仓库根的 Light 主题 ARML。
@@ -250,7 +248,10 @@ pub fn load_controls_styles(repo_root: &Path) -> Result<Vec<StyleDef>, String> {
         if !is_keyed {
             for setter in &style.setters {
                 let prop = setter.property.as_str();
-                if matches!(prop, "FontFamily" | "FontSize" | "FontWeight" | "Foreground") {
+                if matches!(
+                    prop,
+                    "FontFamily" | "FontSize" | "FontWeight" | "Foreground"
+                ) {
                     return Err(format!(
                         "Controls Style TargetType={target} must not carry {prop} setter"
                     ));
@@ -373,9 +374,7 @@ fn emit_styles_g_as(styles: &[StyleDef]) -> String {
                 "        {setter_var}.Value = {};\n",
                 format_style_setter_value(&setter.value)
             ));
-            out.push_str(&format!(
-                "        {style_var}.Setters.Add({setter_var});\n"
-            ));
+            out.push_str(&format!("        {style_var}.Setters.Add({setter_var});\n"));
         }
         out.push_str(&format!("        d.AddStyle({style_var});\n"));
     }
@@ -400,15 +399,8 @@ fn format_style_setter_value(value: &AttributeValue) -> String {
             format!("SetterValue.String(\"{}\")", escape_arc_string(val))
         }
         AttributeValue::MarkupExtension(ext) if ext.kind == MarkupKind::StaticResource => {
-            let key = ext
-                .args
-                .first()
-                .map(|s| s.as_str())
-                .unwrap_or("");
-            format!(
-                "SetterValue.StaticResource(\"{}\")",
-                escape_arc_string(key)
-            )
+            let key = ext.args.first().map(|s| s.as_str()).unwrap_or("");
+            format!("SetterValue.StaticResource(\"{}\")", escape_arc_string(key))
         }
         AttributeValue::MarkupExtension(ext) => {
             panic!(
@@ -468,7 +460,9 @@ mod tests {
         assert!(styles.iter().any(|s| s.key.as_deref() == Some("Large")));
         assert!(styles.iter().any(|s| s.key.as_deref() == Some("Small")));
         assert!(
-            !styles.iter().any(|s| s.key.as_deref() == Some("Button.Large")),
+            !styles
+                .iter()
+                .any(|s| s.key.as_deref() == Some("Button.Large")),
             "no redundant Button.Large when Shared Large owns size+padding"
         );
         assert!(

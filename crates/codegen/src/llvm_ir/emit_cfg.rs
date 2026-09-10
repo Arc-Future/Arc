@@ -371,10 +371,7 @@ impl<'a> FnEmitter<'a> {
                                             &effective_ty,
                                             self.layouts,
                                         ) {
-                                            self.emit_arc_retain_for_ty(
-                                                &effective_ty,
-                                                &store_val,
-                                            );
+                                            self.emit_arc_retain_for_ty(&effective_ty, &store_val);
                                         }
                                         // load 旧值 → store 新值 → dec 旧值（ARC 覆写语义）。
                                         // 旧槽位 entry 块零初始化为 null，首次赋值 dec(null) 为 no-op。
