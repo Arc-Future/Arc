@@ -2905,10 +2905,7 @@ impl MirBuilder {
                 }
             } else {
                 let rv = lower_call::maybe_unbox_iface_rvalue_to_object_place(
-                    &init.node,
-                    rv,
-                    &local_ty,
-                    ctx,
+                    &init.node, rv, &local_ty, ctx,
                 );
                 stmts.push(MirStatement::Assign {
                     place: id,
