@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 use crate::error::ParseError;
 use crate::lexer::Token;

@@ -1,3 +1,8 @@
 # 行尾策略：生成文件以 LF 入库/检出，避免 core.autocrlf 使工作区 CRLF 导致契约测试假红。
 std/UI/Core/Styling/BuiltInTheme.Colors.g.as text eol=lf
 std/UI/Core/Styling/BuiltInTheme.Styles.g.as text eol=lf
+
+# Rust / rustfmt: force LF so Linux CI cargo fmt --check matches Windows checkouts
+*.rs text eol=lf
+rustfmt.toml text eol=lf
+rust-toolchain.toml text eol=lf

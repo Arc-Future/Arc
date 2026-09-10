@@ -1,4 +1,4 @@
-﻿//! NLL 诊断 P3 错误转译层（RFC 036 §2.3 / §2.7）。
+//! NLL 诊断 P3 错误转译层（RFC 036 §2.3 / §2.7）。
 //!
 //! 将内部 `BorrowConflict` / `IteratorInvalidation` 转译为用户友好诊断：
 //! - **不**暴露「borrow」「loan」「lifetime」术语（P3 约束）

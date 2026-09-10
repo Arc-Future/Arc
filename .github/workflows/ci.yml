@@ -15,13 +15,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # rust-toolchain.toml 锁定实际版本，rustup 自动对齐
-      - uses: dtolnay/rust-toolchain@stable
+      # 与 rust-toolchain.toml 对齐；显式 pin 避免 action 标签漂移
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.97.1"
           components: clippy, rustfmt
 
       - name: Install LLVM (Linux)
         run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - name: Show toolchain / rustfmt.toml identity
+        run: |
+          rustc --version
+          cargo fmt --version
+          python3 -c "p=open('rustfmt.toml','rb').read(8); print('rustfmt.toml head bytes', list(p))"
 
       - name: Cargo fmt check
         run: cargo fmt --all -- --check

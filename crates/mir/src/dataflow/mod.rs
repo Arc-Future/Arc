@@ -1,4 +1,4 @@
-﻿//! MIR dataflow 分析框架（RFC 036 §2.1 / 计划文档 刀 1.2）。
+//! MIR dataflow 分析框架（RFC 036 §2.1 / 计划文档 刀 1.2）。
 //!
 //! 提供 `DataflowAnalysis` trait + worklist 求解器，支持前向/后向、
 //! 并集/交集 meet。NLL `BorrowAnalysis`（前向）与 `LiveVarAnalysis`（后向）
