@@ -173,7 +173,7 @@ void*   rt_array_convert_all_int(void*, rt_list_pred_fn);  /* converter 返回�
 /* Empty → rt_array_create(0, 4) */
 ```
 
-谓词 ABI：`rt_list_pred_fn` 类型为 `int32_t(*)(const void*)`，但 Arc `Func<T,bool>` / 无捕获 lambda 发射为 LLVM `i1`（只保证 AL）。runtime 经 `rt_pred_hit` 只取最低位判真，避免 EAX 脏高位把 false 当成 true。`List.Sort()` 默认路径对 `List<string>` 用 `rt_list_cmp_str`（按「8B 槽 + 非空 eq + 无 ARC」判别，**禁止** `eq == rt_list_eq_str` 跨 DLL 指针恒等）。
+谓词 ABI：`rt_list_pred_fn` 类型为 `int32_t(*)(const void*)`，但 Arc `Func<T,bool>` / 无捕获 lambda 发射为 LLVM `i1`（只保证 AL）。runtime 经 `rt_pred_hit` 只取最低位判真，避免 EAX 脏高位把 false 当成 true。`List.Sort()` 默认路径对 `List<string>` 用 `rt_list_cmp_str`（按「8B 槽 + 非空 eq + 无 ARC」判别，**禁止** `eq == rt_list_eq_str` 跨 DLL 指针恒等）。**禁回退**：不得去掉 `rt_pred_hit` / 不得恢复 eq 指针恒等；门禁 `examples/UnitTest` → `ListTests.FindIndex_Found` / `Exists_Predicate` / `TrueForAll_Mixed` / `RemoveAll_RemovesMatching` / `Sort_Strings`。
 
 `std/Arc/Array.as` Stable 公开面（均为 `[Builtin]`；Array 为 stub facade）：`Copy`/`Clear`/`Reverse` → `rt_array_*`（泛型 + `int[]`）；`IndexOf`/`LastIndexOf`/`Empty`/`Resize` 仅 `int[]`；`Exists`/`Find`/`FindLast`/`FindIndex`/`FindLastIndex`/`TrueForAll`/`ForEach` 仅 `int[]` + `Func`/`Action` trampoline；`Sort`/`BinarySearch` 仅 `int[]` 升序（未命中返回 `~insertionPoint`）；`FindAll`/`ConvertAll` 仅 `int[]`（`FindAll`→新建匹配数组；`ConvertAll`→`Func<int,int>` 映射）。**禁止**空 stub 挂 Stable；`Join`（C# `System.Array` 无此成员，勿发明）勿引入。
 

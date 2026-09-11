@@ -500,7 +500,8 @@ void rt_list_sort_default(void* handle) {
     /* string：codegen 传 `@rt_list_eq_str` + 无 ARC。禁止 `list->eq ==
      * rt_list_eq_str` 指针恒等——Windows DLL 下调用方持有 IAT stub 地址，
      * 与本 DSO 内定义不等（Contains 经调用仍正确；Sort 会误走 memcmp）。
-     * 判别：8B 槽 + 非空 eq + 无 arc（`List<Iface>` 有 arc，不走此径）。 */
+     * 判别：8B 槽 + 非空 eq + 无 arc（`List<Iface>` 有 arc，不走此径）。
+     * **禁回退**：不得恢复 eq 函数指针恒等；门禁 `ListTests.Sort_Strings`。 */
     if (list->elem_size == (int32_t)sizeof(void*) && list->eq != NULL
         && list->arc_inc == NULL && list->arc_dec == NULL) {
         qsort(list->data, (size_t)list->size, (size_t)list->elem_size,

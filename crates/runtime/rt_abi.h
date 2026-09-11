@@ -985,7 +985,11 @@ typedef int32_t (*rt_list_cmp_fn)(const void* a, const void* b);
 /* Arc `Func<T,bool>` / 无捕获 lambda 编译为 LLVM `i1`（约定只保证 AL）；
  * 本 typedef 为 `int32_t`。跨约定调用时 EAX 高位可能残留脏值，C 侧
  * `if (pred())` 会把 false 当成 true（UnitTest FindIndex/Exists/TrueForAll/
- * RemoveAll 实证）。真值只看最低位（0/1），与 dict `zext i1→i32` 契约一致。 */
+ * RemoveAll 实证）。真值只看最低位（0/1），与 dict `zext i1→i32` 契约一致。
+ *
+ * **禁回退**：List/Array 谓词路径必须经 `rt_pred_hit`（或等价 zext-i1→i32
+ * 边界）；不得改回裸 `if (pred(...))`。门禁：`ListTests.FindIndex_Found` /
+ * `Exists_Predicate` / `TrueForAll_Mixed` / `RemoveAll_RemovesMatching`。 */
 static inline int32_t rt_pred_hit(rt_list_pred_fn pred, const void* elem) {
     return (int32_t)(((uint32_t)pred(elem)) & 1u);
 }

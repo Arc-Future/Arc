@@ -173,6 +173,7 @@ public class ListTests
         Assert.True(list[1] == "beta");
     }
 
+    /// <summary>回归：i1→i32 谓词 ABI（rt_pred_hit）；禁回退裸 if(pred)。</summary>
     [Fact]
     public void FindIndex_Found()
     {
@@ -196,6 +197,7 @@ public class ListTests
         Assert.Equal(-1, list.LastIndexOf(99));
     }
 
+    /// <summary>回归：谓词 false 不得被 EAX 脏高位抬成 true。</summary>
     [Fact]
     public void TrueForAll_Mixed()
     {
@@ -239,6 +241,7 @@ public class ListTests
         Assert.Equal(3, list[2]);
     }
 
+    /// <summary>回归：Sort 默认路径走 rt_list_cmp_str（禁 DLL eq 指针恒等）。</summary>
     [Fact]
     public void Sort_Strings()
     {
@@ -381,6 +384,7 @@ public class ListTests
 
     // ── 谓词批量 ──
 
+    /// <summary>回归：RemoveAll 谓词须经 rt_pred_hit（禁恒真）。</summary>
     [Fact]
     public void RemoveAll_RemovesMatching()
     {
@@ -412,6 +416,7 @@ public class ListTests
         Assert.Equal(4, list.Count); // 源列表不变
     }
 
+    /// <summary>回归：Exists 负例不得被脏 EAX 抬成 true。</summary>
     [Fact]
     public void Exists_Predicate()
     {
