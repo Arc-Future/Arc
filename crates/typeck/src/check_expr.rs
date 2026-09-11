@@ -7,7 +7,8 @@ use crate::checker::TypeChecker;
 use crate::collection_expr_list::contains_collection_expr;
 use crate::error::TypeError;
 use crate::generics::{
-    substitute_type_ast, substitute_type_name, substitution_map, type_id_to_field_name,
+    mangle_generic, substitute_type_ast, substitute_type_name, substitution_map,
+    type_id_to_field_name,
 };
 use crate::match_pat::MatchPat;
 use crate::target_typed_new::contains_target_typed_new;
@@ -115,15 +116,22 @@ impl TypeChecker {
                 "`ObserveProperty` 实参须为编译期字符串字面量（命名 `[Observable]` 属性）".into(),
             ));
         };
-        // 仅 `[Observable]` auto-property 有合成隐藏通道，可订阅；否则编译错误。
-        let has_observable = match self.member_def_id(tname.as_str(), prop_name.as_str()) {
-            Some(def_id) => self.attribute_table.has_attr(def_id, "Observable"),
-            None => false,
-        };
-        if !has_observable {
+        // `[Observable]` = 通知通道 / TwoWay；成员不存在 ≠ 缺 Observable。
+        // Plain auto-properties / fields have no DefId unless attributed.
+        let def_id = self.member_def_id_inherited(tname.as_str(), prop_name.as_str());
+        let is_observable = def_id
+            .is_some_and(|id| self.attribute_table.has_attr(id, "Observable"))
+            || self.ast_member_has_observable(tname.as_str(), prop_name.as_str());
+        if !is_observable {
+            if def_id.is_some() || self.has_bindable_member(tname.as_str(), prop_name.as_str()) {
+                return Err(TypeError::Oop(format!(
+                    "`{{Binding {prop_name}, Mode=TwoWay}}` requires source `[Observable]` \
+                     (notify / write-back). OneWay/OneTime can read a plain property; \
+                     do not call ObserveProperty on `{tname}.{prop_name}`."
+                )));
+            }
             return Err(TypeError::Oop(format!(
-                "`ObserveProperty(\"{prop_name}\")` 失败：`{tname}` 上无 `[Observable]` \
-                 auto-property `{prop_name}`（仅编译器合成隐藏通道的属性可订阅）"
+                "`ObserveProperty(\"{prop_name}\")` 失败：`{tname}` 上无成员 `{prop_name}`"
             )));
         }
         let prop_ident: Ident = Ident::from(prop_name.as_str());
@@ -138,7 +146,15 @@ impl TypeChecker {
             .and_then(|props| props.iter().find(|p| p.name == prop_ident))
             .map(|p| p.ty.as_str().to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        let signal_ty = TypeId::Named(format!("Signal_{prop_ty}").into());
+        // 返回类型必须是已注册的 `Signal<T>`：调用方会立刻 `.Subscribe` /
+        // 读 `.Value`。pipeline 在 `check_module` 之后才按 `[Observable]` 强制
+        // 实例化，赶不上本调用的成员解析（`OOP: undefined type Signal_Foo`）。
+        let arg_ty = resolve_named_type_id(Ident::from(prop_ty.as_str()));
+        let _ = self.force_instantiate_generic_class(
+            &Ident::from("Signal"),
+            std::slice::from_ref(&arg_ty),
+        );
+        let signal_ty = TypeId::Named(mangle_generic("Signal", std::slice::from_ref(&arg_ty)).into());
         Ok(TypedExpr {
             ty: signal_ty,
             expr: expr.clone(),

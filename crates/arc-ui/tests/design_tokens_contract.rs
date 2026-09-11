@@ -801,6 +801,8 @@ fn control_metrics_owns_geometry() {
         "TabHeaderMinWidth",
         "TabOverflowArrowWidth",
         "TabOverflowScrollStep",
+        "TabCloseSlotWidth",
+        "TabCloseGlyphSize",
         "MessageBoxWidth",
         "MessageBoxButtonWidth",
         "MessageBoxIconSize",
@@ -854,8 +856,11 @@ fn control_metrics_owns_geometry() {
                 || chrome.contains("ControlMetrics.ComboChevronStepY"))
             && render.contains("ControlMetrics.TabHeaderBarHeight")
             && render.contains("ControlMetrics.TabOverflowArrowWidth")
+            && render.contains("ControlMetrics.TabCloseSlotWidth")
+            && render.contains("ControlMetrics.TabCloseGlyphSize")
+            && render.contains("HoverTabIndex")
             && render.contains("HeaderOverflow"),
-        "RenderTree/TemplateChrome chevron/Tab micro-geometry must use ControlMetrics (incl. overflow arrows)"
+        "RenderTree/TemplateChrome chevron/Tab micro-geometry must use ControlMetrics (incl. overflow arrows / close hover)"
     );
     assert!(
         !render.contains("chevronCy + 2.0")

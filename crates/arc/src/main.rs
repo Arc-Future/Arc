@@ -1719,6 +1719,7 @@ fn run_ui(command: UiCommand) -> Result<(), String> {
                 project_root,
                 config: config.unwrap_or_else(|| "Debug".into()),
                 framework_sources: Vec::new(),
+                ..Default::default()
             };
             let result = generate_project(&files, &opts)?;
 
@@ -2124,6 +2125,7 @@ fn codegen_ui_project(
         project_root: Some(root.to_path_buf()),
         config: config.to_string(),
         framework_sources,
+        ..Default::default()
     };
 
     // 4. 执行 codegen —— 生成 .g.as + Program.as 内容

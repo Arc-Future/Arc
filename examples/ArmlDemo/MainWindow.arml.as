@@ -3,11 +3,14 @@
 // 事件处理器可见性：`protected`（WPF code-behind 惯例）。ARML `Click=` 经
 // codegen 转为 `child_N.OnClick(_ => this.OnX())`——partial class 类内调用，
 // protected 合法（typeck 不强制 public）。例外：
-//   - `Message`（x:Bind 绑定源）须 public（RFC 026 M4 切片约定）
+//   - 绑定源（Caption / Greeting / Draft / Message / Model / Items / Click / …）须 public
 //   - `OnLoaded()` override 须与基类可见性一致，不能改为 protected
 //
-// 签名契约（与 ARML Click= 绑定一致）：
-//   - OnClickHello() / OnPrimaryClick() / OnSecondaryClick() / OnChangeMessage()
+// 签名契约（与 ARML Click= / Command= 绑定一致）：
+//   - OnClickHello() / OnToggleClickArmed() / OnPrimaryClick() / OnSecondaryClick()
+//   - OnChangeCaption() / OnResetCaption() / OnMutateGreeting()
+//   - OnChangeMessage() / OnResetMessage() / OnAppendMessage() / OnFillDraft()
+//   - OnRenameModel() / OnReplaceModel() / OnToggleFeatureEnabled()
 //   - OnOpenDemoPopup() ← 分区 2 Popup 演示
 //   - OnOpenStackedPopup() ← 多弹层 Z 序（后开在上 · Esc LIFO）
 //   - OnShowMessageBoxOk/OkCancel/YesNo/YesNoCancel ← MessageBox 按钮集 + 图标
@@ -29,6 +32,8 @@ public partial class MainWindow : Window {
     int _helloCommandCount = 0;
     int _primaryCount = 0;
     int _secondaryCount = 0;
+    int _modelGen = 0;
+    bool _clickArmed = true;
 
     /// <summary>Slider ValueChanged 静态路由锚点。</summary>
     static MainWindow _volumeHost;
@@ -52,11 +57,53 @@ public partial class MainWindow : Window {
     Popup _demoPopup;
     Popup _stackedPopup;
 
-    /// <summary>x:Bind 绑定源（分区 3；勿与 Window.Title 同名）。</summary>
+    /// <summary>Window.Title 源（勿与 Window.Title 同名）。</summary>
+    [Observable] public string Caption { get; set; }
+
+    /// <summary>Plain OneWay 源——无通知通道，加载快照。</summary>
+    public string Greeting { get; set; }
+
+    /// <summary>TextBox TwoWay 源。</summary>
+    [Observable] public string Draft { get; set; }
+
+    /// <summary>OneWay 通知源（Bind 页 Message 段）。</summary>
     [Observable] public string Message { get; set; }
 
+    /// <summary>嵌套 Binding Model.Name 父对象；替换触发重订叶。</summary>
+    [Observable] public BindModel Model { get; set; }
+
+    /// <summary>ListView ItemsSource 源。</summary>
+    public ObservableCollection<string> Items { get; }
+
+    /// <summary>Hello / Bind 页 Command=&quot;{Binding Click}&quot;。</summary>
+    public RelayCommand Click { get; }
+
+    /// <summary>IsEnabled=&quot;{Binding FeatureEnabled}&quot; 源。</summary>
+    [Observable] public bool FeatureEnabled { get; set; }
+
+    /// <summary>Button Content=&quot;{Binding CommandLabel}&quot;（编译期 setter）。</summary>
+    public string CommandLabel { get; }
+
     public MainWindow() {
-        Message = "Hello, x:Bind!";
+        _helloHost = this;
+        this.Caption = "Arc.UI — ArmlDemo";
+        this.Greeting = "Plain OneWay — snapshot at load.";
+        this.Draft = "Edit me (TwoWay)";
+        this.Message = "Hello, Binding!";
+        this.FeatureEnabled = true;
+        this.CommandLabel = "Content bind";
+        this.Model = new BindModel();
+        this.Model.Name = "Nested Alice";
+        this.Items = new ObservableCollection<string>();
+        this.Items.Add("Alpha");
+        this.Items.Add("Beta");
+        this.Items.Add("Gamma");
+        this.Items.Add("Delta");
+        this.Items.Add("Epsilon");
+        this.Items.Add("Zeta");
+        this.Items.Add("Eta");
+        this.Items.Add("Theta");
+        this.Click = new RelayCommand(MainWindow.OnHelloCommandStatic, MainWindow.CanHelloCommandStatic);
     }
 
     /// <summary>分区 1：Click="OnClickHello" 处理器。</summary>
@@ -66,16 +113,7 @@ public partial class MainWindow : Window {
         Console.WriteLine("Button clicked! count=" + _clickCount.ToString());
     }
 
-    /// <summary>分区 1：RelayCommand Execute（程序化接线；ARML Command 绑定后置）。</summary>
-    void WireHelloCommand() {
-        if (this.HelloCommandButton == null) {
-            return;
-        }
-        _helloHost = this;
-        this.HelloCommandButton.Command = new RelayCommand(MainWindow.OnHelloCommandStatic);
-    }
-
-    /// <summary>Hello RelayCommand 静态 Execute。</summary>
+    /// <summary>Hello RelayCommand 静态 Execute（Command=&quot;{Binding Click}&quot;）。</summary>
     static void OnHelloCommandStatic(object parameter) {
         MainWindow host = _helloHost;
         if (host == null) {
@@ -84,6 +122,28 @@ public partial class MainWindow : Window {
         host._helloCommandCount = host._helloCommandCount + 1;
         host.SetHelloStatus("RelayCommand · count=" + host._helloCommandCount.ToString());
         Console.WriteLine("Hello RelayCommand count=" + host._helloCommandCount.ToString());
+    }
+
+    /// <summary>Click.CanExecute — Toggle CanExecute 翻转后 RaiseCanExecuteChanged。</summary>
+    static bool CanHelloCommandStatic(object parameter) {
+        MainWindow host = _helloHost;
+        if (host == null) {
+            return false;
+        }
+        return host._clickArmed;
+    }
+
+    /// <summary>翻转 Click.CanExecute 并通知按钮同步 IsEnabled。</summary>
+    protected void OnToggleClickArmed() {
+        _clickArmed = !_clickArmed;
+        if (this.Click != null) {
+            this.Click.RaiseCanExecuteChanged();
+        }
+        string state = "armed";
+        if (!_clickArmed) {
+            state = "disarmed";
+        }
+        this.SetHelloStatus("CanExecute " + state);
     }
 
     /// <summary>Hello 页状态行。</summary>
@@ -104,15 +164,60 @@ public partial class MainWindow : Window {
         _secondaryCount = _secondaryCount + 1;
     }
 
+    /// <summary>Window.Title 活绑定：写 Caption。</summary>
+    protected void OnChangeCaption() {
+        this.Caption = "ArmlDemo · bound title";
+    }
+
+    /// <summary>恢复落地窗标题。</summary>
+    protected void OnResetCaption() {
+        this.Caption = "Arc.UI — ArmlDemo";
+    }
+
+    /// <summary>改普通 Greeting——OneWay 快照不刷新，对照可通知 Message。</summary>
+    protected void OnMutateGreeting() {
+        this.Greeting = "Mutated Greeting (UI stays snapshot)";
+    }
+
     /// <summary>分区 3：Click="OnChangeMessage" 处理器。</summary>
     protected void OnChangeMessage() {
-        Message = "Message updated via [Observable] setter";
+        this.Message = "Message updated via Observable setter";
+    }
+
+    /// <summary>恢复 Message 初值。</summary>
+    protected void OnResetMessage() {
+        this.Message = "Hello, Binding!";
     }
 
     /// <summary>分区 3：追加 tick——验证连续 SyncText Invalidate 闭环。</summary>
     protected void OnAppendMessage() {
         _secondaryCount = _secondaryCount + 1;
-        Message = "Bind tick #" + _secondaryCount.ToString();
+        this.Message = "Bind tick #" + _secondaryCount.ToString();
+    }
+
+    /// <summary>从代码写 Draft，TwoWay 盒与 OneWay 回显一起更新。</summary>
+    protected void OnFillDraft() {
+        this.Draft = "Filled from code";
+    }
+
+    /// <summary>改 Model.Name 叶——Observable 通知，OneWay 立刻刷新。</summary>
+    protected void OnRenameModel() {
+        if (this.Model != null) {
+            this.Model.Name = "Renamed leaf";
+        }
+    }
+
+    /// <summary>替换 Model 父对象——嵌套路径重订叶。</summary>
+    protected void OnReplaceModel() {
+        _modelGen = _modelGen + 1;
+        BindModel next = new BindModel();
+        next.Name = "Replaced #" + _modelGen.ToString();
+        this.Model = next;
+    }
+
+    /// <summary>翻转 FeatureEnabled → IsEnabled 活绑定。</summary>
+    protected void OnToggleFeatureEnabled() {
+        this.FeatureEnabled = !this.FeatureEnabled;
     }
 
     /// <summary>
@@ -256,22 +361,11 @@ public partial class MainWindow : Window {
 
     /// <summary>窗口加载后：分区 2 ComboBox / 5 Slider / 4·8 数据装载。</summary>
     public override void OnLoaded() {
-        this.WireHelloCommand();
         this.WireThemeCombo();
         this.WireVolumeSlider();
         this.WireSelectionSubscribe();
         this.WireDemoTree();
 
-        ObservableCollection<string> items = new ObservableCollection<string>();
-        items.Add("Alpha");
-        items.Add("Beta");
-        items.Add("Gamma");
-        items.Add("Delta");
-        items.Add("Epsilon");
-        items.Add("Zeta");
-        items.Add("Eta");
-        items.Add("Theta");
-        this.ItemsList.ItemsSource = items;
         this.ItemsList.OnLoaded();
         this.ItemsList.SelectIndex(1);
         double listExtent0 = this.ItemsList.ContentExtentHeight;
@@ -284,7 +378,7 @@ public partial class MainWindow : Window {
         peerList.ItemsSource = peerItems;
         peerList.OnLoaded();
         double peerExtent0 = peerList.ContentExtentHeight;
-        items.Add("Obs multi-A");
+        this.Items.Add("Obs multi-A");
         peerItems.Add("Peer-B");
         // 禁再 OnLoaded：Extent 须经 OnViewChanged→ApplyCollectionChange 更新（证明多槽路由）。
         Console.WriteLine(

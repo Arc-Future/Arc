@@ -148,7 +148,7 @@ Win32 WM_MOUSE* / KEY
 
 **句柄表**：`PointerRouter` 使用 `Dictionary<long, T>`（无固定 16 槽上限）——多页签 ArmlDemo 等场景可并存注册。
 
-### 4.2 Binding / x:Bind → 刷新
+### 4.2 `{Binding}` → 刷新
 
 ```
 [Observable] setter → 合成通道 Signal.Set
@@ -157,16 +157,16 @@ Win32 WM_MOUSE* / KEY
   → wgpu 下一帧读镜像 Text
 ```
 
-正道：`x:Bind` 编译期脱糖（`ObserveProperty` 静态定址）；`{Binding}` 运行时路径为后移项（037 §4）。逃逸闭包约束：订阅回调只捕获绑定 id（见 `BindingOperations.as`）。
+正道：`{Binding Path}` 编译期脱糖（`this.Path` / `this.Foo.Bar`；仅 `[Observable]` 才 `ObserveProperty`。`[Observable]` = 通知 / TwoWay，不是绑定准入；中间有标才重订阅叶）。`{x:Bind}` 非作者 API。逃逸闭包约束：订阅回调只捕获绑定 id（见 `BindingOperations.as`）。
 
-**命令面（2026-09-10）**：`Button.RaiseClick` → `ICommand.Execute`；`ICommand.CanExecuteChanged`（`Signal`）+ `RelayCommand.RaiseCanExecuteChanged` → Button 直写 `IsEnabled`（headless `ui_button_command`）。**不**宣称 ARML Command 绑定扩展、CommandManager.RequerySuggested、IsEnabledCore 合取。
+**命令面**：`Command="{Binding Click}"` → Command setter；`RaiseClick` → `ICommand.Execute`；`CanExecuteChanged` → IsEnabled。**不**宣称 Converter / 运行时路径行走 / CommandManager.RequerySuggested / IsEnabledCore 合取。
 
 ## 5. 现状病灶表（诚实）
 
 | ID | 病灶 | 证据路径 | 影响 | 状态 |
 |----|------|----------|------|------|
 | F1 | 显式 Background（宿主 Style）永久挡住 VSM Hover/Pressed | 旧 `StateColorMotion`；`App.arml` 全局 Button `#FF4D4F` | 「无悬停反馈」假死 | **本轮已修**：`ChromeStateColor(forceTheme)` |
-| F2 | `SyncText` 不 Invalidate | `BindingOperations.SyncText` | x:Bind 改数据不重画 | **本轮已修** |
+| F2 | `SyncText` 不 Invalidate | `BindingOperations.SyncText` | Binding 改数据不重画 | **本轮已修** |
 | F3 | PointerRouter 共享 ≤16 槽，后注册控件丢 Click | 旧 fixed-slot | Bind/后页签按钮无响应 | **本轮已修**：Dictionary |
 | F4 | 文档/COMPONENTS 仍写「Ant 5.x」 | 多处 | 口径过期 | **本轮升 6.x** |
 | F5 | 缺 `colorBorderDisabled` Map Token | Ant 6 公开表 | 禁用描边无语义键 | **本轮已补** |

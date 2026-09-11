@@ -72,6 +72,12 @@ pub struct CodegenOptions {
     pub project_root: Option<PathBuf>,
     /// 构建配置（`Debug` 或 `Release`），影响 bin 输出子目录。
     pub config: String,
+    /// 已知 `[Observable]` 成员名 / 路径（`Message`、`User`、`User.Name`）。
+    /// 非空则视为已提供元数据：OneWay 只对命中段发 `ObserveProperty`；
+    /// TwoWay 叶不在集合内 → 生成期错误（须 `[Observable]`）。
+    pub observable_members: HashSet<String>,
+    /// 内存 code-behind（L2 splice 前扫描 `[Observable]`）。
+    pub companion_source: Option<String>,
 }
 
 impl Default for CodegenOptions {
@@ -84,7 +90,77 @@ impl Default for CodegenOptions {
             obj_dir: None,
             project_root: None,
             config: "Debug".into(),
+            observable_members: HashSet::new(),
+            companion_source: None,
         }
+    }
+}
+
+/// 从源码扫描 `[Observable]` 后的成员名（属性 / 字段）。
+pub fn scan_observable_member_names(src: &str) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut rest = src;
+    while let Some(idx) = rest.find("[Observable]") {
+        rest = &rest[idx + "[Observable]".len()..];
+        let cut = rest
+            .find('{')
+            .into_iter()
+            .chain(rest.find(';'))
+            .min()
+            .unwrap_or(rest.len());
+        let decl = rest[..cut].trim();
+        if let Some(name) = decl
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .filter(|s| {
+                !s.is_empty() && s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            })
+            .last()
+        {
+            names.insert(name.to_string());
+        }
+    }
+    names
+}
+
+struct ObservableSet {
+    known: bool,
+    names: HashSet<String>,
+}
+
+impl ObservableSet {
+    fn from_opts(opts: &CodegenOptions) -> Self {
+        let mut names = opts.observable_members.clone();
+        let mut scanned = false;
+        if let Some(src) = &opts.companion_source {
+            names.extend(scan_observable_member_names(src));
+            scanned = true;
+        }
+        for p in &opts.user_sources {
+            if let Ok(src) = std::fs::read_to_string(p) {
+                names.extend(scan_observable_member_names(&src));
+                scanned = true;
+            }
+        }
+        Self {
+            known: scanned || !opts.observable_members.is_empty(),
+            names,
+        }
+    }
+
+    fn is(&self, segs: &[String], end: usize) -> bool {
+        if segs.is_empty() || end >= segs.len() {
+            return false;
+        }
+        let path = segs[..=end].join(".");
+        self.names.contains(&path) || self.names.contains(&segs[end])
+    }
+
+    fn is_leaf(&self, path: &BindPath) -> bool {
+        !path.segs.is_empty() && self.is(&path.segs, path.segs.len() - 1)
+    }
+
+    fn any(&self, path: &BindPath) -> bool {
+        (0..path.segs.len()).any(|i| self.is(&path.segs, i))
     }
 }
 
@@ -182,7 +258,8 @@ pub fn generate_project(
             .map_err(|e| format!("read {}: {e}", arml_path.display()))?;
         let doc = Parser::parse(&src).map_err(|e| format!("parse {}: {e}", arml_path.display()))?;
 
-        let (class_name, body) = generate_partial_class_body(&doc)?;
+        let obs = ObservableSet::from_opts(opts);
+        let (class_name, body) = generate_partial_class_body(&doc, &obs)?;
 
         // 写独立 .g.as 文件到 obj/<config>/code/<relative_path>/<stem>.g.as（对标 .NET）
         if let Some(obj_dir) = &opts.obj_dir {
@@ -310,10 +387,13 @@ fn format_g_as_file(
 ///
 /// 返回 `(class_name, body)`。`body` 是 `public partial class <Name> { ... }` 块。
 /// 支持根元素 `Window` 与 `Application`。
-fn generate_partial_class_body(doc: &ArmlDocument) -> Result<(String, String), String> {
+fn generate_partial_class_body(
+    doc: &ArmlDocument,
+    obs: &ObservableSet,
+) -> Result<(String, String), String> {
     let root_name = &doc.root.name;
     match root_name.as_str() {
-        "Window" => generate_window_partial(doc),
+        "Window" => generate_window_partial(doc, obs),
         "Application" => generate_application_partial(doc),
         _ => Err(format!(
             "unsupported root element: `{}` (expected `Window` or `Application`)",
@@ -344,6 +424,35 @@ fn extract_class_name(doc: &ArmlDocument) -> Result<String, String> {
         })
 }
 
+/// Window `DataType` / `x:DataType` → last segment (bind-root CLR type in the compilation unit).
+fn extract_window_data_type(root: &Element) -> Result<Option<String>, String> {
+    let Some(attr) = root
+        .attr("DataType")
+        .or_else(|| root.attr_with_prefix("x", "DataType"))
+    else {
+        return Ok(None);
+    };
+    let Some(raw) = attr.value.as_literal() else {
+        return Err(
+            "`DataType` / `x:DataType` must be a type name (e.g., `Demo.MainVm`)".into(),
+        );
+    };
+    let mut last: Option<&str> = None;
+    for seg in raw.split('.') {
+        let ok = !seg.is_empty()
+            && seg
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !ok {
+            return Err(format!("invalid DataType `{raw}`"));
+        }
+        last = Some(seg);
+    }
+    Ok(last.map(|s| s.to_string()))
+}
+
 /// `<Window>` 根元素 → `partial class MainWindow : Window`，override
 /// `InitializeComponent()` 设置从 ARML 解析的属性 + 递归生成子元素树。
 ///
@@ -369,8 +478,14 @@ fn extract_class_name(doc: &ArmlDocument) -> Result<String, String> {
 /// `Window` 基类提供 `Show()`/`Close()`/`OnLoaded()`/`OnClosed()` 等实例方法
 /// 与生命周期钩子；`InitializeComponent()` 仅设置属性 + 构建元素树，
 /// 不进入事件循环（事件循环由 `Application.Run()` 调用 `MainWindow.Show()` 触发）。
-fn generate_window_partial(doc: &ArmlDocument) -> Result<(String, String), String> {
+fn generate_window_partial(
+    doc: &ArmlDocument,
+    obs: &ObservableSet,
+) -> Result<(String, String), String> {
     let class_name = extract_class_name(doc)?;
+    let data_type = extract_window_data_type(&doc.root)?;
+    reject_root_window_bindings(&doc.root)?;
+    let title_binding = window_title_binding(&doc.root);
     let (title, width, height) = extract_root_window(&doc.root);
 
     // M-U2：编译期投影规格（§11.5）。窗口含 Token 引用/`<Adaptive>` 时才发射求值器。
@@ -398,6 +513,24 @@ fn generate_window_partial(doc: &ArmlDocument) -> Result<(String, String), Strin
     body.push_str("    public override void InitializeComponent() {\n");
     emit_window_property_assignments(&mut body, &title, width, height, /*indent=*/ 8);
 
+    let mut bind_counter = 0usize;
+    let mut nested_emit = NestedEmit::default();
+    if let Some(ext) = title_binding {
+        emit_binding_attr(
+            &mut body,
+            "Window",
+            "Title",
+            "this",
+            "0",
+            ext,
+            &mut bind_counter,
+            "        ",
+            &mut nested_emit,
+            obs,
+            data_type.as_deref(),
+        )?;
+    }
+
     // M3 样式系统：TypeName 供 StyleManager 隐式匹配
     body.push_str("        this.TypeName = \"Window\";\n");
 
@@ -418,7 +551,6 @@ fn generate_window_partial(doc: &ArmlDocument) -> Result<(String, String), Strin
     // 每个 .arml 子元素 → `var child_N = new ElementType(); ...; parent.AddChild(child_N);`
     // 平台镜像由 Window.Show() → PlatformTreeSync.BuildFromArc 一次性同步（M3.6）。
     let mut counter = 0usize;
-    let mut bind_counter = 0usize;
     let named_fields = emit_child_elements(
         &mut body,
         &doc.root,
@@ -428,6 +560,9 @@ fn generate_window_partial(doc: &ArmlDocument) -> Result<(String, String), Strin
         /*indent=*/ 8,
         if has_tokens { Some(&token_ids) } else { None },
         &style_keys,
+        &mut nested_emit,
+        obs,
+        data_type.as_deref(),
     )?;
 
     body.push_str("    }\n");
@@ -438,6 +573,21 @@ fn generate_window_partial(doc: &ArmlDocument) -> Result<(String, String), Strin
     }
     if has_tokens {
         body.push_str("    private AdaptiveHost _adaptiveHost;\n");
+    }
+    for (idx, _) in &nested_emit.bodies {
+        body.push_str(&format!("    private int _nested_bind_{idx};\n"));
+    }
+    if !nested_emit.bodies.is_empty() {
+        body.push_str("    public override void OnNestedBindingRefresh(int id) {\n");
+        for (idx, refresh) in &nested_emit.bodies {
+            body.push_str(&format!(
+                "        if (id == this._nested_bind_{idx}) {{\n"
+            ));
+            body.push_str(refresh);
+            body.push_str("            return;\n");
+            body.push_str("        }\n");
+        }
+        body.push_str("    }\n");
     }
     body.push_str("}\n");
 
@@ -460,7 +610,7 @@ fn generate_window_partial(doc: &ArmlDocument) -> Result<(String, String), Strin
 /// （`InitializeComponent` 后 code-behind 可引用）。
 ///
 /// 变量名计数器 `counter` 在递归中持续递增，保证整个 InitializeComponent
-/// 内变量名唯一；`bind_counter` 为 `x:Bind` 订阅退订 token（`xbind_N`）独立
+/// 内变量名唯一；`bind_counter` 为 `{Binding}` 订阅退订 token（`bind_N`）独立
 /// 递增。
 ///
 /// `tokens`：Token 名 → 投影表索引（窗口含自适应规格时 `Some`）。`{Token X}`
@@ -479,6 +629,9 @@ fn emit_child_elements(
     indent: usize,
     tokens: Option<&std::collections::BTreeMap<String, usize>>,
     style_keys: &std::collections::BTreeMap<String, String>,
+    nested_emit: &mut NestedEmit,
+    obs: &ObservableSet,
+    data_type: Option<&str>,
 ) -> Result<Vec<(String, String)>, String> {
     let pad = " ".repeat(indent);
     let mut named_fields: Vec<(String, String)> = Vec::new();
@@ -528,17 +681,17 @@ fn emit_child_elements(
         *counter += 1;
 
         // `child_N_p` 是平台镜像句柄（long），仅在元素需要平台回写时引用：
-        //   - `<TextBlock Text="{x:Bind ...}"/>` 的 M4 文本同步
+        //   - `<TextBlock Text="{Binding ...}"/>` 的 M4 文本同步
         // 平台树由 Window.Show() → PlatformTreeSync.BuildFromArc 才构建（RFC 037 M3.6），
         // InitializeComponent 阶段无句柄可取；rt_ui_element_set_string 对 null 句柄
         // 为安全 no-op，故初值 `0`——Arc 逻辑树侧赋值始终生效，Show 时全量同步。
         // Image.Source 不走 codegen 直写（_p 初值 0 下为 no-op 死代码）——由
         // PlatformTreeSync.Image 分支在 Show 阶段统一同步（RFC 037 M3.5/M3.6）。
-        // 仅 TextBlock.Text 的 x:Bind 需要 _p（SyncText 回写平台镜像）；TextBox.Text
+        // 仅 TextBlock.Text 的 {Binding} 需要 _p（SyncText 回写平台镜像）；TextBox.Text
         // 经 BindTextBoxText 载体（自身 SyncMirrorText 路径），不声明 _p。
         let needs_p = elem.attributes.iter().any(|a| {
             a.value.as_markup().is_some_and(|m| {
-                m.kind == MarkupKind::XBind && elem.name == "TextBlock" && a.name == "Text"
+                m.kind == MarkupKind::Binding && elem.name == "TextBlock" && a.name == "Text"
             })
         });
 
@@ -578,7 +731,7 @@ fn emit_child_elements(
 
         // 设置属性——无前缀：Arc DP；有前缀/dotted：附加属性
         for attr in &elem.attributes {
-            // 标记扩展（如 {x:Bind Title}、{Binding Title}、{Token X}）
+            // 标记扩展（如 {Binding Title}、{Token X}）
             if let Some(markup) = attr.value.as_markup() {
                 if markup.kind == MarkupKind::Token {
                     // M-U2：`{Token X}` 编译期展开为投影表数据 + 宿主绑定注册。
@@ -613,7 +766,7 @@ fn emit_child_elements(
                 // 编译定型：全部键均命中窗口资源字典的样式定义 → 直接引用注册的
                 // _style_N 对象（单键直赋 / 多键 List<Style>，运行时零字符串查找）；
                 // 任一键不可解析（App 全局/主题域）→ 逗号分隔键字符串，应用期由
-                // StyleManager 显式趟经解析链逐键解析。必须先于 emit_xbind_attr
+                // StyleManager 显式趟经解析链逐键解析。必须先于 emit_binding_attr
                 // （其余 markup 报错）。
                 if markup.kind == MarkupKind::StaticResource && attr.name == "Style" {
                     if markup.args.is_empty() {
@@ -680,7 +833,7 @@ fn emit_child_elements(
                     }
                     continue;
                 }
-                emit_xbind_attr(
+                emit_binding_attr(
                     out,
                     &elem.name,
                     &attr.name,
@@ -689,6 +842,9 @@ fn emit_child_elements(
                     markup,
                     bind_counter,
                     &pad,
+                    nested_emit,
+                    obs,
+                    data_type,
                 )?;
                 continue;
             }
@@ -726,6 +882,9 @@ fn emit_child_elements(
             indent,
             tokens,
             style_keys,
+            nested_emit,
+            obs,
+            data_type,
         )?;
         named_fields.extend(nested);
 
@@ -828,47 +987,65 @@ fn emit_attached_property(
     }
 }
 
-/// `x:Bind` Mode 参数（RFC 037 D4.2）。
+/// `{Binding}` Mode 参数（RFC 037：唯一作者惯用法；编译期脱糖）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum XBindMode {
+enum BindMode {
     OneTime,
     OneWay,
     TwoWay,
 }
 
-fn xbind_mode(ext: &MarkupExtension) -> Result<XBindMode, String> {
+fn reject_unsupported_binding_props(ext: &MarkupExtension) -> Result<(), String> {
+    for (key, _) in &ext.properties {
+        if key != "Mode" {
+            return Err(format!(
+                "{{Binding}} `{key}` is not supported (positional Path; Mode=OneTime|OneWay|TwoWay only; no Converter/ElementName/RelativeSource)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn bind_mode(ext: &MarkupExtension) -> Result<BindMode, String> {
+    reject_unsupported_binding_props(ext)?;
     for (key, val) in &ext.properties {
         if key == "Mode" {
             return match val.as_str() {
-                "OneTime" => Ok(XBindMode::OneTime),
-                "OneWay" => Ok(XBindMode::OneWay),
-                "TwoWay" => Ok(XBindMode::TwoWay),
+                "OneTime" => Ok(BindMode::OneTime),
+                "OneWay" => Ok(BindMode::OneWay),
+                "TwoWay" => Ok(BindMode::TwoWay),
                 "OneWayToSource" => Err(format!(
-                    "x:Bind Mode={val} is not supported in RFC 026 M4 slice (OneTime/OneWay/TwoWay only)"
+                    "{{Binding}} Mode={val} is not supported (OneTime/OneWay/TwoWay only)"
                 )),
                 other => Err(format!(
-                    "invalid x:Bind Mode `{other}`, expected OneTime/OneWay/TwoWay"
+                    "invalid {{Binding}} Mode `{other}`, expected OneTime/OneWay/TwoWay"
                 )),
             };
         }
     }
-    Ok(XBindMode::OneWay)
+    Ok(BindMode::OneWay)
 }
 
-/// 将 `{x:Bind path}` 脱糖为强类型 code-behind 属性访问（RFC 037 M4）。
+const XBIND_REJECT: &str =
+    "`{x:Bind}` is not an author API; use `{Binding Path}` (compile-time binding)";
+
+/// 将 `{Binding path}` 脱糖为强类型 code-behind 属性访问（RFC 037）。
 ///
-/// M4 垂直切片目标（对齐 027 §13 / 042 §2.3）：
-///   - `<TextBlock Text="{x:Bind Prop}"/>`：`SyncText` 切片（逻辑树 + 平台镜像），
-///     OneTime 仅初值；OneWay/TwoWay 追加 `ObserveProperty` 订阅 + G2 卸载退订；
-///     TextBlock 无输入通道，TwoWay 与 OneWay 等价（仅源→目标）。
-///   - `<TextBox Text="{x:Bind Prop}"/>`：VM→UI 经运行时载体
-///     `BindingOperations.BindTextBoxText`（初始值 + 订阅 + G2 退订，经 Text
-///     setter 路由编辑内核）；TwoWay 追加内联 `OnTextChanged` 写回 VM setter
-///     （相等性守卫防回环）。
+/// 唯一作者惯用法。实现 = 编译期静态定址（`this.Path` / `ObserveProperty`），
+/// **不是** WPF 运行时路径行走，也不是通往反射 Binding 的过渡轨。
+/// `{x:Bind}` 硬拒绝，见 [`XBIND_REJECT`]。
 ///
-/// 绑定源 = code-behind `[Observable]` 属性（`this.ObserveProperty("Prop")`
-/// 静态定址，编译器管理生命周期，G2 退订）。
-fn emit_xbind_attr(
+///   - `<TextBlock Text="{Binding Prop}"/>`：初值始终 `root.Path` / `StringOf`。
+///     `[Observable]` 叶才 `ObserveProperty` + `BindText`；TwoWay 要求叶 `[Observable]`。
+///     TextBlock 无输入通道，TwoWay 与 live OneWay 同形（仅源→目标）。
+///   - `<TextBox Text="{Binding Prop}"/>`：普通属性只读初值；`[Observable]` 才
+///     `BindTextBoxText`；TwoWay 写回 + 要求叶 `[Observable]`。
+///   - `<Button Command="{Binding Click}"/>`：`child.Command = root.Click`
+///     （走 Button.Command setter → HookCommand；Mode 接受但不订阅）。
+///   - `ItemsSource` / `ContentPresenter.Content`：同形 setter 赋 `root.Path`。
+///   - 窗口 `DataType` / `x:DataType`：`root` = 编译期转型的 `DataContext`；
+///     否则 `root` = code-behind `this`。
+fn emit_binding_attr(
     out: &mut String,
     elem_type: &str,
     attr_name: &str,
@@ -877,13 +1054,14 @@ fn emit_xbind_attr(
     ext: &MarkupExtension,
     bind_counter: &mut usize,
     pad: &str,
+    nested_emit: &mut NestedEmit,
+    obs: &ObservableSet,
+    data_type: Option<&str>,
 ) -> Result<(), String> {
     match ext.kind {
-        MarkupKind::XBind => {}
-        MarkupKind::Binding => {
-            return Err(
-                "`{Binding}` runtime binding is not supported; use `{x:Bind}` (RFC 037 M4 compile-time binding)".into(),
-            );
+        MarkupKind::Binding => {}
+        MarkupKind::XBind => {
+            return Err(XBIND_REJECT.into());
         }
         other => {
             return Err(format!(
@@ -894,85 +1072,260 @@ fn emit_xbind_attr(
     }
 
     if ext.args.is_empty() {
-        return Err("`x:Bind` requires a binding path (e.g., `{x:Bind Title}`)".into());
+        return Err("`{Binding}` requires a binding path (e.g., `{Binding Title}`)".into());
     }
-    let path = ext.args[0].as_str();
-    if path.contains('.') {
-        return Err(format!(
-            "nested x:Bind path `{path}` is not supported in RFC 026 M4 slice (single property only)"
-        ));
+    let segs = crate::parse_binding_path(ext.args[0].as_str())?;
+    let mode = bind_mode(ext)?;
+    let path = BindPath {
+        segs,
+        data_type: data_type.map(|s| s.to_string()),
+    };
+    if mode == BindMode::TwoWay && obs.known && !obs.is_leaf(&path) {
+        return Err(twoway_requires_observable(&path));
     }
-    if !path.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(format!("invalid x:Bind path `{path}`"));
-    }
-
-    let mode = xbind_mode(ext)?;
-    // 绑定源：code-behind `[Observable]` 属性（编译器静态定址通道，零运行期字符串解析）。
-    let prop = format!("this.{path}");
-    let src = format!("this.ObserveProperty(\"{}\")", path);
 
     match (elem_type, attr_name) {
-        ("TextBlock", "Text") => {
-            emit_xbind_text(out, target_var, target_p_var, &src, mode, bind_counter, pad);
+        ("TextBlock", "Text") => emit_bind_text(
+            out,
+            target_var,
+            target_p_var,
+            &path,
+            mode,
+            bind_counter,
+            pad,
+            nested_emit,
+            obs,
+        ),
+        ("TextBox", "Text") => {
+            emit_bind_textbox(
+                out,
+                target_var,
+                &path,
+                mode,
+                bind_counter,
+                pad,
+                nested_emit,
+                obs,
+            )
+        }
+        ("Window", "Title") => {
+            emit_bind_window_title(out, &path, mode, bind_counter, pad, nested_emit, obs)
+        }
+        (_, "IsEnabled") => {
+            emit_bind_is_enabled(out, target_var, &path, mode, bind_counter, pad, nested_emit, obs)
+        }
+        ("Button", "Command") => {
+            emit_bind_assign_path(out, target_var, "Command", &path, pad);
             Ok(())
         }
-        ("TextBox", "Text") => {
-            emit_xbind_textbox(out, target_var, &src, &prop, mode, bind_counter, pad);
+        (list, "ItemsSource") if crate::is_compile_time_binding_target(list, "ItemsSource") => {
+            emit_bind_assign_path(out, target_var, "ItemsSource", &path, pad);
+            Ok(())
+        }
+        (host, "Content")
+            if crate::is_compile_time_binding_target(host, "Content") =>
+        {
+            emit_bind_assign_path(out, target_var, "Content", &path, pad);
             Ok(())
         }
         _ => Err(format!(
-            "x:Bind on `<{elem_type} {attr_name}=...>` is not supported in RFC 026 M4 slice (only `<TextBlock Text={{x:Bind ...}}/>` and `<TextBox Text={{x:Bind ...}}/>`)"
+            "{{Binding}} on `<{elem_type} {attr_name}=...>` is not supported (TextBlock/TextBox Text, Window Title, IsEnabled, Button Command/Content, ItemsSource, ContentPresenter Content)"
         )),
     }
 }
 
-/// `Text.Text="{x:Bind Prop}"` 脱糖形态（RFC 037 M4，运行时载体扩展）：
-///
-/// ```arc
-/// long child_0_p = 0;  // 平台镜像句柄占位（long；Show() 后由镜像树持有，0 = 未构建）
-/// BindingOperations.SyncText(child_0, child_0_p, this.ObserveProperty("Prop").Value.ToString());
-/// int xbind_0 = BindingOperations.BindText(child_0, child_0_p, this.ObserveProperty("Prop"));
-/// ```
-///
-/// `child_0_p` 声明由 `emit_child_elements` 在元素需要平台回写时生成（初值 `0`，
-/// 句柄在 Window.Show() → PlatformTreeSync.BuildFromArc 阶段才创建；运行时对
-/// null 句柄为安全 no-op）。OneTime 仅初值行（SyncText）；OneWay/TwoWay 经
-/// `BindingOperations.BindText` 运行时载体（初始 SyncText + 源订阅 + G2 卸载
-/// 退订登记，一次调用内完成）。订阅/退订回调只捕获绑定 id（int），不捕获
-/// 类引用——规避逃逸闭包 ByRef 捕获悬垂（RFC 006 M4 报告；与手动
-/// `Subscribe(v => SyncText(child_0, ...))` 形态相对，后者跨函数逃逸后 AV）。
-/// `xbind_N` 为 `InitializeComponent` 内载体返回的退订 token（BindText 已
-/// 内部登记 G2 退订，token 变量仅保序占位）。
-fn emit_xbind_text(
+struct BindPath {
+    segs: Vec<String>,
+    data_type: Option<String>,
+}
+
+impl BindPath {
+    fn root_expr(&self) -> String {
+        match &self.data_type {
+            None => "this".into(),
+            Some(ty) => format!("(({ty})BindingOperations.ContextRoot(this))"),
+        }
+    }
+
+    fn prefix_upto(&self, last_seg: usize) -> String {
+        format!("{}.{}", self.root_expr(), self.segs[..=last_seg].join("."))
+    }
+
+    fn access(&self) -> String {
+        format!("{}.{}", self.root_expr(), self.segs.join("."))
+    }
+
+    fn observe_src(&self) -> String {
+        format!(
+            "{}.ObserveProperty(\"{}\")",
+            self.observe_receiver(),
+            self.leaf()
+        )
+    }
+
+    fn observe_receiver(&self) -> String {
+        if self.segs.len() <= 1 {
+            self.root_expr()
+        } else {
+            self.prefix_upto(self.segs.len() - 2)
+        }
+    }
+
+    fn leaf(&self) -> &str {
+        self.segs.last().map(String::as_str).unwrap_or("")
+    }
+
+    fn uses_data_context(&self) -> bool {
+        self.data_type.is_some()
+    }
+
+    fn simple_this_leaf(&self) -> bool {
+        self.segs.len() == 1 && self.data_type.is_none()
+    }
+}
+
+fn twoway_requires_observable(path: &BindPath) -> String {
+    format!(
+        "{{Binding {}, Mode=TwoWay}} requires source `[Observable]` (notify / write-back). OneWay/OneTime can read a plain property.",
+        path.segs.join(".")
+    )
+}
+
+/// 中间段 null 守卫；叶段不判空（`StringOf` / 赋值承担默认）。
+fn emit_with_intermediate_guards(
+    out: &mut String,
+    path: &BindPath,
+    pad: &str,
+    stmt: &str,
+) {
+    let mut depth = 0usize;
+    if path.uses_data_context() {
+        out.push_str(&format!(
+            "{pad}if (BindingOperations.ContextRoot(this) != null) {{\n"
+        ));
+        depth = 1;
+    }
+    let intermediates = path.segs.len().saturating_sub(1);
+    for i in 0..intermediates {
+        let prefix = path.prefix_upto(i);
+        out.push_str(&format!(
+            "{pad}{}if ({prefix} != null) {{\n",
+            "    ".repeat(depth + i)
+        ));
+    }
+    out.push_str(&format!(
+        "{pad}{}{stmt}",
+        "    ".repeat(depth + intermediates)
+    ));
+    for i in (0..intermediates).rev() {
+        out.push_str(&format!("{pad}{}}}\n", "    ".repeat(depth + i)));
+    }
+    if path.uses_data_context() {
+        out.push_str(&format!("{pad}}}\n"));
+    }
+}
+
+/// 对象 DP 脱糖：必须走属性 setter（Command 挂 HookCommand；ItemsSource 走控件管道）。
+/// Mode 校验后忽略——引用一次性赋入，不经 SetBinding/SetValue。
+fn emit_bind_assign_path(
+    out: &mut String,
+    target_var: &str,
+    dp: &str,
+    path: &BindPath,
+    pad: &str,
+) {
+    let stmt = format!("{target_var}.{dp} = {};\n", path.access());
+    emit_with_intermediate_guards(out, path, pad, &stmt);
+}
+
+/// `TextBlock.Text="{Binding Prop}"`：初值 `StringOf(this.Path)`；`[Observable]` 才订阅。
+fn emit_bind_text(
     out: &mut String,
     target_var: &str,
     target_p_var: &str,
-    src: &str,
-    mode: XBindMode,
+    path: &BindPath,
+    mode: BindMode,
+    bind_counter: &mut usize,
+    pad: &str,
+    nested_emit: &mut NestedEmit,
+    obs: &ObservableSet,
+) -> Result<(), String> {
+    emit_snapshot_text(out, target_var, target_p_var, path, bind_counter, pad);
+    if wants_live(mode, path, obs) {
+        if path.simple_this_leaf() {
+            let token = format!("bind_{}", *bind_counter);
+            *bind_counter += 1;
+            out.push_str(&format!(
+                "{pad}int {token} = BindingOperations.BindText({target_var}, {target_p_var}, {});\n",
+                path.observe_src()
+            ));
+        } else {
+            emit_nested_chain(
+                out,
+                path,
+                pad,
+                bind_counter,
+                &format!("BindingOperations.BeginNestedText({target_var}, {target_p_var}, this)"),
+                "RebindNestedText",
+                "PushNestedText",
+                nested_emit,
+                obs,
+                mode,
+            );
+        }
+    }
+    Ok(())
+}
+
+fn emit_snapshot_text(
+    out: &mut String,
+    target_var: &str,
+    target_p_var: &str,
+    path: &BindPath,
     bind_counter: &mut usize,
     pad: &str,
 ) {
-    out.push_str(&format!(
-        "{}BindingOperations.SyncText({}, {}, {}.Value.ToString());\n",
-        pad, target_var, target_p_var, src
-    ));
-
-    if mode != XBindMode::OneTime {
-        let token = format!("xbind_{}", *bind_counter);
-        *bind_counter += 1;
+    if path.simple_this_leaf() {
         out.push_str(&format!(
-            "{}int {} = BindingOperations.BindText({}, {}, {});\n",
-            pad, token, target_var, target_p_var, src
+            "{}BindingOperations.SyncText({}, {}, BindingOperations.StringOf({}));\n",
+            pad,
+            target_var,
+            target_p_var,
+            path.access()
+        ));
+    } else {
+        let dest = format!("bindval_{}", *bind_counter);
+        out.push_str(&format!("{pad}string {dest} = \"\";\n"));
+        emit_with_intermediate_guards(
+            out,
+            path,
+            pad,
+            &format!(
+                "{dest} = BindingOperations.StringOf({});\n",
+                path.access()
+            ),
+        );
+        out.push_str(&format!(
+            "{}BindingOperations.SyncText({}, {}, {});\n",
+            pad, target_var, target_p_var, dest
         ));
     }
 }
 
-/// `TextBox.Text="{x:Bind Prop}"` 脱糖形态（RFC 037 M4 / §8 修订 text-editing.md）：
+fn wants_live(mode: BindMode, path: &BindPath, obs: &ObservableSet) -> bool {
+    match mode {
+        BindMode::OneTime => false,
+        BindMode::OneWay => path.uses_data_context() || obs.any(path),
+        BindMode::TwoWay => true,
+    }
+}
+
+/// `TextBox.Text="{Binding Prop}"` 脱糖形态（RFC 037 / text-editing.md）：
 ///
 /// ```arc
-/// int xbind_0 = BindingOperations.BindTextBoxText(child_0, this.ObserveProperty("Prop"));  // OneWay / VM→UI 半边
-/// child_0.OnTextChanged((x: string) => { if (this.Prop != x) { this.Prop = x; } });        // TwoWay UI→VM 写回
-/// child_0.Text = this.Prop;                                                                // OneTime
+/// int bind_0 = BindingOperations.BindTextBoxText(child_0, this.ObserveProperty("Prop"));
+/// child_0.OnTextChanged((x: string) => { if (this.Prop != x) { this.Prop = x; } });
+/// child_0.Text = this.Prop;
 /// ```
 ///
 /// **VM→UI 半边一律经 `BindTextBoxText` 载体**——`TextBox.Text` setter 路由编辑
@@ -988,47 +1341,283 @@ fn emit_xbind_text(
 /// `if (this.Prop != x)` 防回环（`TextBox.Text` setter 无条件触发
 /// `TextChanged`、string 属性无相等性短路；VM 回声 → 载体 Apply 同值 →
 /// 内核 SetText 同值早退，双重收敛）。
-fn emit_xbind_textbox(
+fn emit_bind_textbox(
     out: &mut String,
     target_var: &str,
-    src: &str,
-    prop: &str,
-    mode: XBindMode,
+    path: &BindPath,
+    mode: BindMode,
     bind_counter: &mut usize,
     pad: &str,
-) {
-    match mode {
-        XBindMode::OneTime => {
-            out.push_str(&format!("{}{}.Text = {};\n", pad, target_var, prop));
-        }
-        XBindMode::OneWay => {
-            let token = format!("xbind_{}", *bind_counter);
+    nested_emit: &mut NestedEmit,
+    obs: &ObservableSet,
+) -> Result<(), String> {
+    let src = path.observe_src();
+    let prop = path.access();
+    let live = wants_live(mode, path, obs);
+    if !live {
+        let stmt = format!("{target_var}.Text = BindingOperations.StringOf({prop});\n");
+        emit_with_intermediate_guards(out, path, pad, &stmt);
+        return Ok(());
+    }
+    if path.simple_this_leaf() {
+        let token = format!("bind_{}", *bind_counter);
+        *bind_counter += 1;
+        out.push_str(&format!(
+            "{pad}int {token} = BindingOperations.BindTextBoxText({target_var}, {src});\n"
+        ));
+    } else {
+        emit_nested_chain(
+            out,
+            path,
+            pad,
+            bind_counter,
+            &format!("BindingOperations.BeginNestedTextBox({target_var}, this)"),
+            "RebindNestedTextBox",
+            "PushNestedTextBox",
+            nested_emit,
+            obs,
+            mode,
+        );
+    }
+    if mode == BindMode::TwoWay {
+        out.push_str(&format!(
+            "{}{}.OnTextChanged((x: string) => {{\n",
+            pad, target_var
+        ));
+        let inner = format!("{pad}    ");
+        emit_with_intermediate_guards(
+            out,
+            path,
+            &inner,
+            &format!("if ({prop} != x) {{\n{inner}    {prop} = x;\n{inner}}}\n"),
+        );
+        out.push_str(&format!("{pad}}});\n"));
+    }
+    Ok(())
+}
+
+fn emit_bind_window_title(
+    out: &mut String,
+    path: &BindPath,
+    mode: BindMode,
+    bind_counter: &mut usize,
+    pad: &str,
+    nested_emit: &mut NestedEmit,
+    obs: &ObservableSet,
+) -> Result<(), String> {
+    let stmt = format!(
+        "this.Title = BindingOperations.StringOf({});\n",
+        path.access()
+    );
+    emit_with_intermediate_guards(out, path, pad, &stmt);
+    if wants_live(mode, path, obs) {
+        if path.simple_this_leaf() {
+            let token = format!("bind_{}", *bind_counter);
             *bind_counter += 1;
+            let src = path.observe_src();
             out.push_str(&format!(
-                "{}int {} = BindingOperations.BindTextBoxText({}, {});\n",
-                pad, token, target_var, src
+                "{pad}int {token} = BindingOperations.BindWindowTitle(this, {src});\n"
             ));
-        }
-        XBindMode::TwoWay => {
-            // VM→UI：BindTextBoxText 载体（初始值 + 订阅 + G2 退订；经 Text setter 路由内核）。
-            let token = format!("xbind_{}", *bind_counter);
-            *bind_counter += 1;
-            out.push_str(&format!(
-                "{}int {} = BindingOperations.BindTextBoxText({}, {});\n",
-                pad, token, target_var, src
-            ));
-            // UI→VM：内联 OnTextChanged 写回 VM setter（捕获 this = 堆对象，跨函数安全；
-            // 相等性守卫防回环）。
-            out.push_str(&format!(
-                "{}{}.OnTextChanged((x: string) => {{\n",
-                pad, target_var
-            ));
-            out.push_str(&format!("{}    if ({} != x) {{\n", pad, prop));
-            out.push_str(&format!("{}        {} = x;\n", pad, prop));
-            out.push_str(&format!("{}    }}\n", pad));
-            out.push_str(&format!("{}}});\n", pad));
+        } else {
+            emit_nested_chain(
+                out,
+                path,
+                pad,
+                bind_counter,
+                "BindingOperations.BeginNestedTitle(this)",
+                "RebindNestedTitle",
+                "PushNestedTitle",
+                nested_emit,
+                obs,
+                mode,
+            );
         }
     }
+    Ok(())
+}
+
+fn emit_bind_is_enabled(
+    out: &mut String,
+    target_var: &str,
+    path: &BindPath,
+    mode: BindMode,
+    bind_counter: &mut usize,
+    pad: &str,
+    nested_emit: &mut NestedEmit,
+    obs: &ObservableSet,
+) -> Result<(), String> {
+    let stmt = format!("{target_var}.IsEnabled = {};\n", path.access());
+    emit_with_intermediate_guards(out, path, pad, &stmt);
+    if wants_live(mode, path, obs) {
+        if path.simple_this_leaf() {
+            let token = format!("bind_{}", *bind_counter);
+            *bind_counter += 1;
+            let src = path.observe_src();
+            out.push_str(&format!(
+                "{pad}int {token} = BindingOperations.BindIsEnabled({target_var}, {src});\n"
+            ));
+        } else {
+            emit_nested_chain(
+                out,
+                path,
+                pad,
+                bind_counter,
+                &format!("BindingOperations.BeginNestedIsEnabled({target_var}, this)"),
+                "RebindNestedIsEnabled",
+                "PushNestedIsEnabled",
+                nested_emit,
+                obs,
+                mode,
+            );
+        }
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct NestedEmit {
+    bodies: Vec<(usize, String)>,
+}
+
+/// 嵌套路径：仅 `[Observable]` 中间段订阅替换；叶 `[Observable]` 才订 Signal，否则 Push 快照。
+/// 窗口 `DataType`：根订阅 DataContext DP（非 `this.ObserveProperty`）；VM 段在 refresh 里重订。
+fn emit_nested_chain(
+    out: &mut String,
+    path: &BindPath,
+    pad: &str,
+    bind_counter: &mut usize,
+    begin_call: &str,
+    rebind: &str,
+    push: &str,
+    nested_emit: &mut NestedEmit,
+    obs: &ObservableSet,
+    mode: BindMode,
+) {
+    let idx = *bind_counter;
+    *bind_counter += 1;
+    let field = format!("_nested_bind_{idx}");
+    out.push_str(&format!("{pad}this.{field} = {begin_call};\n"));
+    if path.uses_data_context() {
+        out.push_str(&format!(
+            "{pad}int nested_root_{idx} = this.Observe<object>(Element.DataContextProperty).Subscribe((v) => {{\n"
+        ));
+        out.push_str(&format!(
+            "{pad}    BindingOperations.RunNestedRefresh(this.{field});\n"
+        ));
+        out.push_str(&format!("{pad}}});\n"));
+        out.push_str(&format!(
+            "{pad}BindingOperations.RememberNestedRoot(this.{field}, () => {{\n"
+        ));
+        out.push_str(&format!(
+            "{pad}    this.Observe<object>(Element.DataContextProperty).Unsubscribe(nested_root_{idx});\n"
+        ));
+        out.push_str(&format!("{pad}}});\n"));
+    } else if obs.is(&path.segs, 0) {
+        out.push_str(&format!(
+            "{pad}int nested_root_{idx} = this.ObserveProperty(\"{}\").Subscribe((v) => {{\n",
+            path.segs[0]
+        ));
+        out.push_str(&format!(
+            "{pad}    BindingOperations.RunNestedRefresh(this.{field});\n"
+        ));
+        out.push_str(&format!("{pad}}});\n"));
+        out.push_str(&format!(
+            "{pad}BindingOperations.RememberNestedRoot(this.{field}, () => {{\n"
+        ));
+        out.push_str(&format!(
+            "{pad}    this.ObserveProperty(\"{}\").Unsubscribe(nested_root_{idx});\n",
+            path.segs[0]
+        ));
+        out.push_str(&format!("{pad}}});\n"));
+    }
+    out.push_str(&format!(
+        "{pad}BindingOperations.RunNestedRefresh(this.{field});\n"
+    ));
+
+    let mut refresh = String::new();
+    let inner = "            ";
+    let n = path.segs.len();
+    let mut extra_closes = 0usize;
+    if path.uses_data_context() {
+        refresh.push_str(&format!(
+            "{inner}if (BindingOperations.ContextRoot(this) != null) {{\n"
+        ));
+        extra_closes += 1;
+        if n >= 2 && obs.is(&path.segs, 0) {
+            let root = path.root_expr();
+            let first = &path.segs[0];
+            refresh.push_str(&format!(
+                "{inner}    int mid_dc = {root}.ObserveProperty(\"{first}\").Subscribe((v) => {{\n"
+            ));
+            refresh.push_str(&format!(
+                "{inner}        BindingOperations.RunNestedRefresh(this.{field});\n"
+            ));
+            refresh.push_str(&format!("{inner}    }});\n"));
+            refresh.push_str(&format!(
+                "{inner}    BindingOperations.RememberNestedDetach(this.{field}, () => {{\n"
+            ));
+            refresh.push_str(&format!(
+                "{inner}        {root}.ObserveProperty(\"{first}\").Unsubscribe(mid_dc);\n"
+            ));
+            refresh.push_str(&format!("{inner}    }});\n"));
+        }
+    }
+    for i in 0..(n.saturating_sub(2)) {
+        let prefix = path.prefix_upto(i);
+        let next = &path.segs[i + 1];
+        refresh.push_str(&format!("{inner}if ({prefix} != null) {{\n"));
+        if obs.is(&path.segs, i + 1) {
+            refresh.push_str(&format!(
+                "{inner}    int mid_{i} = {prefix}.ObserveProperty(\"{next}\").Subscribe((v) => {{\n"
+            ));
+            refresh.push_str(&format!(
+                "{inner}        BindingOperations.RunNestedRefresh(this.{field});\n"
+            ));
+            refresh.push_str(&format!("{inner}    }});\n"));
+            refresh.push_str(&format!(
+                "{inner}    BindingOperations.RememberNestedDetach(this.{field}, () => {{\n"
+            ));
+            refresh.push_str(&format!(
+                "{inner}        {prefix}.ObserveProperty(\"{next}\").Unsubscribe(mid_{i});\n"
+            ));
+            refresh.push_str(&format!("{inner}    }});\n"));
+        }
+    }
+    let parent = path.observe_receiver();
+    let leaf_obs = obs.is_leaf(path) || (mode == BindMode::TwoWay && !obs.known);
+    refresh.push_str(&format!("{inner}if ({parent} != null) {{\n"));
+    if leaf_obs {
+        refresh.push_str(&format!(
+            "{inner}    BindingOperations.{rebind}(this.{field}, {parent}.ObserveProperty(\"{}\"));\n",
+            path.leaf()
+        ));
+        refresh.push_str(&format!("{inner}}} else {{\n"));
+        refresh.push_str(&format!(
+            "{inner}    BindingOperations.{rebind}(this.{field}, null);\n"
+        ));
+    } else if push.contains("IsEnabled") {
+        refresh.push_str(&format!(
+            "{inner}    BindingOperations.{push}(this.{field}, {});\n",
+            path.access()
+        ));
+        refresh.push_str(&format!("{inner}}} else {{\n"));
+        refresh.push_str(&format!("{inner}    BindingOperations.{push}(this.{field}, false);\n"));
+    } else {
+        refresh.push_str(&format!(
+            "{inner}    BindingOperations.{push}(this.{field}, BindingOperations.StringOf({}));\n",
+            path.access()
+        ));
+        refresh.push_str(&format!("{inner}}} else {{\n"));
+        refresh.push_str(&format!("{inner}    BindingOperations.{push}(this.{field}, \"\");\n"));
+    }
+    refresh.push_str(&format!("{inner}}}\n"));
+    for _ in 0..(n.saturating_sub(2)) {
+        refresh.push_str(&format!("{inner}}}\n"));
+    }
+    for _ in 0..extra_closes {
+        refresh.push_str(&format!("{inner}}}\n"));
+    }
+    nested_emit.bodies.push((idx, refresh));
 }
 
 /// 格式化附加数值属性为 double 字面量（SetAttachedNumber 第二参数须为 double）。
@@ -1677,7 +2266,8 @@ fn format_resource_value(type_name: &str, value: &str) -> String {
 /// `Err` 描述错误。早期 demo 的"无 Class 属性退化为顶层 Main 函数"模式已
 /// 随 Window.Text 字段废弃而删除（M3 元素树渲染完备后不再需要纯文本 fallback）。
 pub fn generate(doc: &ArmlDocument, opts: &CodegenOptions) -> Result<String, String> {
-    let (_class_name, body) = generate_partial_class_body(doc)?;
+    let obs = ObservableSet::from_opts(opts);
+    let (_class_name, body) = generate_partial_class_body(doc, &obs)?;
     let mut out = String::new();
     out.push_str("// <auto-generated>\n");
     out.push_str("// 由 `arc ui codegen` 从 .arml 文档生成。RFC 026 M2 ARML code-behind。\n");
@@ -1783,6 +2373,32 @@ fn emit_window_property_assignments(
     out.push_str(&format!("{}this.Height = {};\n", pad, height));
 }
 
+fn window_title_binding(root: &Element) -> Option<&MarkupExtension> {
+    root.attr("Title")
+        .and_then(|a| a.value.as_markup())
+        .filter(|m| m.kind == MarkupKind::Binding)
+}
+
+fn reject_root_window_bindings(root: &Element) -> Result<(), String> {
+    for attr in &root.attributes {
+        let Some(markup) = attr.value.as_markup() else {
+            continue;
+        };
+        match markup.kind {
+            MarkupKind::XBind => return Err(XBIND_REJECT.into()),
+            MarkupKind::Binding if attr.name == "Title" => {}
+            MarkupKind::Binding => {
+                return Err(format!(
+                    "{{Binding}} on `<Window {}=...>` is not supported (Window Title, TextBlock/TextBox Text, IsEnabled, Button Command/Content, ItemsSource, ContentPresenter Content)",
+                    attr.name
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// 从根元素提取 `(title, width, height)`。
 ///
 /// - `title` 来自根元素 `Title` 属性，缺省 `"Arc"`。
@@ -1791,11 +2407,14 @@ fn emit_window_property_assignments(
 /// 不再提取 `Text` 属性——Window.Text 字段已废弃（RFC 026 D3.2 依赖属性
 /// 重构），内容由 Content 属性或子元素树承载。
 fn extract_root_window(root: &Element) -> (String, u32, u32) {
-    let title = root
-        .attr("Title")
-        .and_then(|a| a.value.as_literal())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "Arc".into());
+    let title = if window_title_binding(root).is_some() {
+        String::new()
+    } else {
+        root.attr("Title")
+            .and_then(|a| a.value.as_literal())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "Arc".into())
+    };
     let width = root
         .attr("Width")
         .and_then(|a| a.value.as_literal())
@@ -1833,34 +2452,35 @@ mod tests {
     // ===== 单文档 generate() 测试 =====
 
     #[test]
-    fn codegen_xbind_text_oneway_uses_bindtext_carrier() {
+    fn codegen_binding_text_oneway_uses_bindtext_carrier() {
         let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
-    <TextBlock Text="{x:Bind Title, Mode=OneWay}"/>
+    <TextBlock Text="{Binding Title, Mode=OneWay}"/>
 </Window>"#;
         let doc = Parser::parse(src).expect("parse");
         let code = generate(
             &doc,
             &CodegenOptions {
                 namespace: "Ns".into(),
+                observable_members: ["Title".into()].into_iter().collect(),
                 ..CodegenOptions::default()
             },
         )
         .expect("generate");
         assert!(code.contains("long child_0_p = 0;"));
-        assert!(code.contains("BindingOperations.SyncText(child_0, child_0_p, this.ObserveProperty(\"Title\").Value.ToString());"));
+        assert!(code.contains("BindingOperations.SyncText(child_0, child_0_p, BindingOperations.StringOf(this.Title));"));
         // 订阅经运行时载体 BindText（初始 SyncText + 订阅 + G2 退订，一次调用）；
         // 不产生捕获类引用的逃逸闭包手动 Subscribe 形态。
         assert!(code.contains(
-            "int xbind_0 = BindingOperations.BindText(child_0, child_0_p, this.ObserveProperty(\"Title\"));"
+            "int bind_0 = BindingOperations.BindText(child_0, child_0_p, this.ObserveProperty(\"Title\"));"
         ));
         assert!(!code.contains(".Subscribe(v =>"));
         assert!(!code.contains("RegisterDetach(() =>"));
     }
 
     #[test]
-    fn codegen_xbind_text_onetime_skips_subscribe() {
+    fn codegen_binding_text_onetime_skips_subscribe() {
         let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
-    <TextBlock Text="{x:Bind Title, Mode=OneTime}"/>
+    <TextBlock Text="{Binding Title, Mode=OneTime}"/>
 </Window>"#;
         let doc = Parser::parse(src).expect("parse");
         let code = generate(
@@ -1872,16 +2492,17 @@ mod tests {
         )
         .expect("generate");
         assert!(code.contains("long child_0_p = 0;"));
-        assert!(code.contains("BindingOperations.SyncText(child_0, child_0_p, this.ObserveProperty(\"Title\").Value.ToString());"));
+        assert!(code.contains("BindingOperations.SyncText(child_0, child_0_p, BindingOperations.StringOf(this.Title));"));
+        assert!(!code.contains("ObserveProperty"));
         assert!(!code.contains(".Subscribe("));
         assert!(!code.contains("RegisterDetach"));
     }
 
     #[test]
-    fn codegen_xbind_text_twoway_no_input_channel_equals_oneway() {
+    fn codegen_binding_text_twoway_no_input_channel_equals_oneway() {
         // TextBlock 无输入通道：TwoWay 与 OneWay 等价（仅源→目标；运行时载体 BindText）。
         let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
-    <TextBlock Text="{x:Bind Title, Mode=TwoWay}"/>
+    <TextBlock Text="{Binding Title, Mode=TwoWay}"/>
 </Window>"#;
         let doc = Parser::parse(src).expect("parse");
         let code = generate(
@@ -1893,22 +2514,23 @@ mod tests {
         )
         .expect("generate");
         assert!(code.contains(
-            "int xbind_0 = BindingOperations.BindText(child_0, child_0_p, this.ObserveProperty(\"Title\"));"
+            "int bind_0 = BindingOperations.BindText(child_0, child_0_p, this.ObserveProperty(\"Title\"));"
         ));
         // TextBlock 无 OnTextChanged 写回表面
         assert!(!code.contains("OnTextChanged"));
     }
 
     #[test]
-    fn codegen_xbind_textbox_oneway_uses_bindtextboxtext_carrier() {
+    fn codegen_binding_textbox_oneway_uses_bindtextboxtext_carrier() {
         let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
-    <TextBox Text="{x:Bind Name, Mode=OneWay}"/>
+    <TextBox Text="{Binding Name, Mode=OneWay}"/>
 </Window>"#;
         let doc = Parser::parse(src).expect("parse");
         let code = generate(
             &doc,
             &CodegenOptions {
                 namespace: "Ns".into(),
+                observable_members: ["Name".into()].into_iter().collect(),
                 ..CodegenOptions::default()
             },
         )
@@ -1916,7 +2538,7 @@ mod tests {
         // VM→UI 半边经 BindTextBoxText 载体（初始值 + 订阅 + G2 退订；经 Text
         // setter 路由编辑内核 TextBoxModel，不绕过内核裸 SetValue）。
         assert!(code.contains(
-            "int xbind_0 = BindingOperations.BindTextBoxText(child_0, this.ObserveProperty(\"Name\"));"
+            "int bind_0 = BindingOperations.BindTextBoxText(child_0, this.ObserveProperty(\"Name\"));"
         ));
         // TextBox 经载体路径同步平台镜像，不声明 _p 占位
         assert!(!code.contains("long child_0_p = 0;"));
@@ -1924,9 +2546,9 @@ mod tests {
     }
 
     #[test]
-    fn codegen_xbind_textbox_onetime_initial_write_only() {
+    fn codegen_binding_textbox_onetime_initial_write_only() {
         let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
-    <TextBox Text="{x:Bind Name, Mode=OneTime}"/>
+    <TextBox Text="{Binding Name, Mode=OneTime}"/>
 </Window>"#;
         let doc = Parser::parse(src).expect("parse");
         let code = generate(
@@ -1938,15 +2560,15 @@ mod tests {
         )
         .expect("generate");
         // OneTime：仅初值直写（TextBox.Text setter 自身同步平台镜像；无订阅）
-        assert!(code.contains("child_0.Text = this.Name;"));
+        assert!(code.contains("child_0.Text = BindingOperations.StringOf(this.Name);"));
         assert!(!code.contains("BindTextBoxText"));
         assert!(!code.contains("SetBinding"));
     }
 
     #[test]
-    fn codegen_xbind_textbox_twoway_carrier_plus_inline_writeback() {
+    fn codegen_binding_textbox_twoway_carrier_plus_inline_writeback() {
         let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
-    <TextBox Text="{x:Bind Name, Mode=TwoWay}"/>
+    <TextBox Text="{Binding Name, Mode=TwoWay}"/>
 </Window>"#;
         let doc = Parser::parse(src).expect("parse");
         let code = generate(
@@ -1961,7 +2583,7 @@ mod tests {
         // VM setter（RFC 037 §5.3 场景 3：codegen 写回 VM setter → 合成通知闭环；
         // 相等性守卫防回环 + 内核 SetText 同值早退双重收敛）。
         assert!(code.contains(
-            "int xbind_0 = BindingOperations.BindTextBoxText(child_0, this.ObserveProperty(\"Name\"));"
+            "int bind_0 = BindingOperations.BindTextBoxText(child_0, this.ObserveProperty(\"Name\"));"
         ));
         assert!(code.contains("child_0.OnTextChanged((x: string) => {"));
         assert!(code.contains("if (this.Name != x) {"));
@@ -1972,25 +2594,231 @@ mod tests {
     }
 
     #[test]
-    fn codegen_xbind_binding_runtime_rejected() {
+    fn codegen_xbind_author_api_rejected() {
         let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
-    <TextBlock Text="{Binding Title}"/>
+    <TextBlock Text="{x:Bind Title}"/>
 </Window>"#;
         let doc = Parser::parse(src).expect("parse");
         let err = generate(&doc, &CodegenOptions::default()).unwrap_err();
-        assert!(err.contains("Binding"));
-        assert!(err.contains("x:Bind"));
+        assert!(err.contains("x:Bind"), "{err}");
+        assert!(err.contains("{Binding Path}"), "{err}");
     }
 
     #[test]
-    fn codegen_xbind_non_text_target_rejected() {
+    fn codegen_binding_non_text_target_rejected() {
         let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
-    <Button Content="{x:Bind Title}"/>
+    <Button Background="{Binding Title}"/>
 </Window>"#;
         let doc = Parser::parse(src).expect("parse");
         let err = generate(&doc, &CodegenOptions::default()).unwrap_err();
-        assert!(err.contains("not supported"));
-        assert!(err.contains("TextBlock Text"));
+        assert!(err.contains("not supported"), "{err}");
+        assert!(err.contains("Background"), "{err}");
+    }
+
+    #[test]
+    fn codegen_binding_itemssource_assigns_this_path() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
+    <ListView ItemsSource="{Binding Items}"/>
+</Window>"#;
+        let doc = Parser::parse(src).expect("parse");
+        let code = generate(
+            &doc,
+            &CodegenOptions {
+                namespace: "Ns".into(),
+                ..CodegenOptions::default()
+            },
+        )
+        .expect("generate");
+        assert!(code.contains("child_0.ItemsSource = this.Items;"));
+    }
+
+    #[test]
+    fn codegen_binding_nested_path_emits_access() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
+    <TextBlock Text="{Binding User.Name}"/>
+</Window>"#;
+        let code = generate(
+            &Parser::parse(src).expect("parse"),
+            &CodegenOptions::default(),
+        )
+        .expect("generate");
+        assert!(code.contains("StringOf(this.User.Name)"), "{code}");
+        assert!(!code.contains("ObserveProperty"), "{code}");
+        assert!(!code.contains("BeginNestedText"), "{code}");
+    }
+
+    #[test]
+    fn codegen_binding_nested_observable_emits_resubscribe() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
+    <TextBlock Text="{Binding User.Name}"/>
+</Window>"#;
+        let code = generate(
+            &Parser::parse(src).expect("parse"),
+            &CodegenOptions {
+                observable_members: ["User".into(), "Name".into()].into_iter().collect(),
+                ..CodegenOptions::default()
+            },
+        )
+        .expect("generate");
+        assert!(code.contains("BeginNestedText"), "{code}");
+        assert!(code.contains("OnNestedBindingRefresh"), "{code}");
+        assert!(code.contains("this.ObserveProperty(\"User\")"), "{code}");
+        assert!(code.contains("this.User.ObserveProperty(\"Name\")"), "{code}");
+        assert!(code.contains("RunNestedRefresh"), "{code}");
+    }
+
+    #[test]
+    fn codegen_binding_window_title_oneway() {
+        let src = r#"<Window Title="{Binding Caption}" Width="100" Height="100" Class="Ns.W"/>"#;
+        let code = generate(
+            &Parser::parse(src).expect("parse"),
+            &CodegenOptions {
+                namespace: "Ns".into(),
+                observable_members: ["Caption".into()].into_iter().collect(),
+                ..CodegenOptions::default()
+            },
+        )
+        .expect("generate");
+        assert!(
+            code.contains("this.Title = BindingOperations.StringOf(this.Caption);"),
+            "{code}"
+        );
+        assert!(
+            code.contains("BindWindowTitle(this, this.ObserveProperty(\"Caption\"))"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn codegen_binding_is_enabled() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
+    <Button Content="Go" IsEnabled="{Binding CanGo}"/>
+</Window>"#;
+        let code = generate(
+            &Parser::parse(src).expect("parse"),
+            &CodegenOptions {
+                namespace: "Ns".into(),
+                observable_members: ["CanGo".into()].into_iter().collect(),
+                ..CodegenOptions::default()
+            },
+        )
+        .expect("generate");
+        assert!(code.contains("child_0.IsEnabled = this.CanGo;"), "{code}");
+        assert!(
+            code.contains("BindIsEnabled(child_0, this.ObserveProperty(\"CanGo\"))"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn codegen_binding_datatype_reads_context_root() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W" DataType="MainVm">
+    <TextBlock Text="{Binding Greeting, Mode=OneWay}"/>
+</Window>"#;
+        let code = generate(
+            &Parser::parse(src).expect("parse"),
+            &CodegenOptions::default(),
+        )
+        .expect("generate");
+        assert!(
+            code.contains("((MainVm)BindingOperations.ContextRoot(this)).Greeting"),
+            "{code}"
+        );
+        assert!(
+            code.contains("this.Observe<object>(Element.DataContextProperty)"),
+            "{code}"
+        );
+        assert!(!code.contains("this.Greeting"), "{code}");
+        assert!(!code.contains("ObserveProperty(\"Greeting\")"), "{code}");
+        assert!(code.contains("PushNestedText"), "{code}");
+    }
+
+    #[test]
+    fn codegen_binding_x_datatype_onetime_snapshots() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W" xmlns:x="http://x" x:DataType="MainVm">
+    <TextBlock Text="{Binding Greeting, Mode=OneTime}"/>
+</Window>"#;
+        let code = generate(
+            &Parser::parse(src).expect("parse"),
+            &CodegenOptions::default(),
+        )
+        .expect("generate");
+        assert!(
+            code.contains("((MainVm)BindingOperations.ContextRoot(this)).Greeting"),
+            "{code}"
+        );
+        assert!(!code.contains("ObserveProperty"), "{code}");
+        assert!(!code.contains("DataContextProperty"), "{code}");
+    }
+
+    #[test]
+    fn codegen_binding_plain_oneway_reads_without_observe() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
+    <TextBlock Text="{Binding Title, Mode=OneWay}"/>
+</Window>"#;
+        let code = generate(
+            &Parser::parse(src).expect("parse"),
+            &CodegenOptions::default(),
+        )
+        .expect("generate");
+        assert!(
+            code.contains("BindingOperations.StringOf(this.Title)"),
+            "{code}"
+        );
+        assert!(!code.contains("ObserveProperty"), "{code}");
+        assert!(!code.contains("BindText("), "{code}");
+    }
+
+    #[test]
+    fn codegen_binding_twoway_without_observable_errors() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
+    <TextBox Text="{Binding Name, Mode=TwoWay}"/>
+</Window>"#;
+        let err = generate(
+            &Parser::parse(src).expect("parse"),
+            &CodegenOptions {
+                companion_source: Some("    public string Name { get; set; }\n".into()),
+                ..CodegenOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("TwoWay"), "{err}");
+        assert!(err.contains("[Observable]"), "{err}");
+        assert!(!err.contains("cannot bind"), "{err}");
+        assert!(!err.contains("not supported"), "{err}");
+    }
+
+    #[test]
+    fn codegen_binding_converter_rejected() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
+    <TextBlock Text="{Binding Title, Converter=Invert}"/>
+</Window>"#;
+        let err = generate(
+            &Parser::parse(src).expect("parse"),
+            &CodegenOptions::default(),
+        )
+        .unwrap_err();
+        assert!(err.contains("Converter"), "{err}");
+        assert!(err.contains("not supported"), "{err}");
+    }
+
+    #[test]
+    fn codegen_binding_button_command_assigns_this_path() {
+        let src = r#"<Window Title="T" Width="100" Height="100" Class="Ns.W">
+    <Button x:Name="GoBtn" Content="Go" Command="{Binding Click}"/>
+</Window>"#;
+        let doc = Parser::parse(src).expect("parse");
+        let code = generate(
+            &doc,
+            &CodegenOptions {
+                namespace: "Ns".into(),
+                ..CodegenOptions::default()
+            },
+        )
+        .expect("generate");
+        assert!(code.contains("child_0.Command = this.Click;"));
+        assert!(!code.contains("SetBinding"));
+        assert!(!code.contains("ObserveProperty"));
     }
 
     #[test]
@@ -2163,7 +2991,7 @@ mod tests {
         assert!(code.contains("child_0.FontSize = 14;"));
         assert!(!code.contains("WindowHost.ElementSet"));
         assert!(!code.contains("_p = WindowHost"));
-        // `_p` 仅在有平台回写需求（x:Bind）时声明，普通元素不生成
+        // `_p` 仅在有平台回写需求（{Binding} Text）时声明，普通元素不生成
         assert!(!code.contains("child_0_p"));
     }
 
@@ -2305,7 +3133,9 @@ mod tests {
              x:Class="ArmlHello.App"
              StartupUri="MainWindow.arml"/>"#;
         let doc = Parser::parse(src).expect("parse");
-        let (class_name, body) = generate_partial_class_body(&doc).expect("body");
+        let (class_name, body) =
+            generate_partial_class_body(&doc, &ObservableSet::from_opts(&CodegenOptions::default()))
+                .expect("body");
         assert_eq!(class_name, "App");
         // WPF-aligned: partial class App : Application + override InitializeComponent
         assert!(body.contains("public partial class App : Application {"));
@@ -2320,7 +3150,9 @@ mod tests {
         // 无 StartupUri → 默认 MainWindow
         let src = r#"<Application x:Class="Ns.App"/>"#;
         let doc = Parser::parse(src).expect("parse");
-        let (_, body) = generate_partial_class_body(&doc).expect("body");
+        let (_, body) =
+            generate_partial_class_body(&doc, &ObservableSet::from_opts(&CodegenOptions::default()))
+                .expect("body");
         assert!(body.contains("this.MainWindow = new MainWindow();"));
     }
 
@@ -2455,7 +3287,11 @@ mod tests {
     fn codegen_unsupported_root_element_errors() {
         let src = r#"<Button x:Class="Ns.Btn"/>"#;
         let doc = Parser::parse(src).expect("parse");
-        let err = generate_partial_class_body(&doc).unwrap_err();
+        let err = generate_partial_class_body(
+            &doc,
+            &ObservableSet::from_opts(&CodegenOptions::default()),
+        )
+        .unwrap_err();
         assert!(err.contains("unsupported root element"));
         assert!(err.contains("Button"));
     }
@@ -2464,7 +3300,11 @@ mod tests {
     fn codegen_missing_class_attribute_errors() {
         let src = r#"<Window Title="x" Width="1" Height="1"/>"#;
         let doc = Parser::parse(src).expect("parse");
-        let err = generate_partial_class_body(&doc).unwrap_err();
+        let err = generate_partial_class_body(
+            &doc,
+            &ObservableSet::from_opts(&CodegenOptions::default()),
+        )
+        .unwrap_err();
         assert!(err.contains("missing"));
         assert!(err.contains("Class"));
     }
@@ -2551,6 +3391,7 @@ public void Main() {
             project_root: Some(tmpdir.clone()),
             config: "Debug".into(),
             framework_sources: Vec::new(),
+            ..Default::default()
         };
 
         let result =
@@ -2648,6 +3489,7 @@ public void Main() {
             project_root: None,
             config: "Debug".into(),
             framework_sources: Vec::new(),
+            ..Default::default()
         };
 
         let result = generate_project(&[arml], &opts).expect("project");
@@ -2693,6 +3535,7 @@ public void Main() {
             project_root: None,
             config: "Debug".into(),
             framework_sources: vec![fw_window, fw_internal],
+            ..Default::default()
         };
         let result = generate_project(&[arml], &opts).expect("project");
         assert!(!result.program.contains("using Arc.UI.Internal;"));

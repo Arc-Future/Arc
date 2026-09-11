@@ -176,7 +176,7 @@ impl<'a> Lexer<'a> {
     /// 语法：`{Kind arg0, arg1, prop0=val0, prop1=val1}`
     pub fn lex_markup_extension(&mut self) -> ArmlResult<(crate::ast::MarkupExtension, usize)> {
         let start = self.pos;
-        // 读取扩展类型（`x:Bind`/`Binding`/`StaticResource`/...）
+        // 读取扩展类型（`Binding`/`StaticResource`/`x:Bind` 拒绝诊断/...）
         let kind_str = self.lex_qname()?;
         let kind = crate::ast::MarkupKind::parse(&kind_str).ok_or_else(|| {
             ArmlError::lex(

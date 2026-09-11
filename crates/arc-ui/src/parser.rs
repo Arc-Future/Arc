@@ -4,7 +4,7 @@
 //! 支持：XML 声明、元素树、属性、内容（元素/文本/注释）、
 //! 属性元素语法（`<Button.Background>` / `<Window.Resources>`）、
 //! 指令元素（`<Style>` / `<ResourceDictionary>` / `<Setter>`）、
-//! 标记扩展（`{x:Bind ...}` / `{StaticResource ...}`）。
+//! 标记扩展（`{Binding ...}` / `{StaticResource ...}`；`{x:Bind}` 词法保留供拒绝）。
 
 use crate::ast::*;
 use crate::error::{ArmlError, ArmlResult};

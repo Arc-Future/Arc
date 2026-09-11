@@ -109,7 +109,8 @@ public class LivePreviewHost : VisualHost {
     // ===== 核心 API =====
 
     /// <summary>
-    /// 加载 ARML 字符串并渲染预览。
+    /// 加载 ARML 字符串并渲染预览（G2：spec → 离屏单帧，无编译 ARML 工程、无 HWND）。
+    /// 运行时经 <see cref="ArmlParser"/> 解析实例化；编译期完整校验仍由 arc-ui typeck 承担，本入口不二次校验。
     /// </summary>
     /// <param name="arml">ARML 标记字符串。</param>
     /// <param name="width">视口宽度（0 = 使用当前）。</param>

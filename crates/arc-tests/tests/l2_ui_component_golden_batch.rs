@@ -4,7 +4,7 @@
 //! → GetLayoutSnapshot → 结构骨架（Type/Name/整数几何，排除 Margin/TextLines/字体）
 //! 与 `goldens/ui/*.golden.json` 比对。
 //!
-//! 当前矩阵：Button/TextBlock + CheckBox（IsChecked=true）各一条布局结构 Golden。
+//! 当前矩阵：Button/TextBlock + CheckBox（IsChecked=true）+ RadioButton（IsChecked=true）各一条布局结构 Golden。
 //!
 //! 再生：`UPDATE_UI_COMPONENT_GOLDEN=1 cargo test -p arc-tests --features full-rt --test l2_ui_component_golden_batch`
 //!
@@ -31,6 +31,10 @@ const GOLDEN_FILES: &[(&str, &str)] = &[
     (
         "checkbox_layout_v1",
         "goldens/ui/checkbox_layout.golden.json",
+    ),
+    (
+        "radiobutton_layout_v1",
+        "goldens/ui/radiobutton_layout.golden.json",
     ),
 ];
 
@@ -205,6 +209,11 @@ void Main() {
 
     string checkArml = "<StackPanel Width=\"240\" Height=\"48\"><CheckBox x:Name=\"Feature\" Width=\"200\" Height=\"32\" Content=\"Enable\" IsChecked=\"true\"/></StackPanel>";
     if (!RunFixture("check", "checkbox_layout_v1", checkArml, 240.0, 48.0, "CheckBox", "Feature")) {
+        return;
+    }
+
+    string radioArml = "<StackPanel Width=\"240\" Height=\"48\"><RadioButton x:Name=\"Choice\" Width=\"200\" Height=\"32\" Content=\"Option\" IsChecked=\"true\"/></StackPanel>";
+    if (!RunFixture("radio", "radiobutton_layout_v1", radioArml, 240.0, 48.0, "RadioButton", "Choice")) {
         return;
     }
 

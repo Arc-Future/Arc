@@ -56,6 +56,9 @@ int rt_ui_dispatch_control_click(RtUiElement* elem);
 int rt_ui_dispatch_control_click_at(RtUiElement* elem, int32_t px, int32_t py);
 int rt_ui_dispatch_control_visual_state(RtUiElement* elem);
 int rt_ui_dispatch_control_drag(RtUiElement* elem, int32_t px, int32_t py);
+/* Tab 页签栏悬停：与 HitTabIndex 同源几何；箭头/客户区 → HoverTabIndex=-1。 */
+int rt_ui_tabcontrol_update_hover(RtUiElement* elem, int32_t px, int32_t py);
+void rt_ui_tabcontrol_clear_hover(RtUiElement* elem);
 
 #ifdef __cplusplus
 }

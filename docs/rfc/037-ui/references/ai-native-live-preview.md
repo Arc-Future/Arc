@@ -34,14 +34,14 @@ WYSIWYG 不是「两套渲染做对比」，而是**同一个渲染面换宿主*
 
     /// <summary>即时预览宿主：无窗口离屏渲染 + 单帧重渲染 + 属性补丁。</summary>
     public class LivePreviewHost : VisualHost {
-        /// <summary>以 spec/ARML 字符串构建内层树（Rebuild 的字符串入口）。</summary>
-        public void LoadSpec(string arml);
+        /// <summary>以 spec/ARML 字符串构建内层树并渲染一帧（0 尺寸 = 沿用当前视口）。</summary>
+        public ArmlParseResult LoadSpec(string arml, double width, double height);
 
-        /// <summary>属性补丁：修改一个属性值并立即重渲染为单帧（改即见）。</summary>
-        public void ApplyPatch(string elementPath, string propertyName, object value);
+        /// <summary>属性补丁：按元素路径改 DP 字符串值并单帧重渲染（改即见）。</summary>
+        public bool ApplyPatch(string elementPath, string propertyName, string value);
 
         /// <summary>渲染当前内层树到离屏 target 并回读为 PNG 文件。</summary>
-        public bool CapturePng(string filePath, double width, double height);
+        public bool CapturePng(string filePath);
 
         /// <summary>当前内层树的结构化布局快照。</summary>
         public LayoutSnapshot GetLayoutSnapshot();
@@ -54,11 +54,12 @@ WYSIWYG 不是「两套渲染做对比」，而是**同一个渲染面换宿主*
 
 | 面 | 决策 |
 |----|------|
-| 构建 | LoadSpec = 解析（复用 arc-ui parser）→ 校验（arc-ui typeck）→ 实例化 → Rebuild；**校验失败返回结构化诊断，不渲染** |
-| 补丁 | ApplyPatch：元素路径（如 Root/StackPanel/Button）+ 属性名 + 值 → 脏标记 → 重布局 → **单帧渲染** → 可选截图。LLM 借此知道「改一个属性值会有什么表现」，迅速且自然 |
+| 构建 | LoadSpec = 运行时 `ArmlParser` 解析实例化 → `SetContent` → 离屏单帧；**空/非法 spec 返回诊断且不建树**。编译期完整校验仍由 **arc-ui typeck** 承担（ARML 工程路径），本入口不二次跑 typeck |
+| 补丁 | ApplyPatch：元素路径（`Root/Title` 或类型段）+ 属性名 + **字符串值**（经 `DpValueConverter`）→ 重布局 → **单帧渲染**。未知路径 / 未知 DP 返回 `false`，树不变 |
 | 帧 | 无帧泵：每次 ApplyPatch / LoadSpec 后渲染一帧到离屏 target；截图按需回读 |
 | 尺寸 | 预览尺寸由调用方指定（如 1280×800 或窗口当前尺寸）；自适应投影按该尺寸取环境快照 |
 | 截图 | CapturePng 经 [render-capture](ai-native-render-capture.md) 回读编码；headless（无 display）同样可用 |
+| 绘制 | 预览走 `TreeDrawListBuilder` → 同一 DrawList IR / `WgpuRender` 离屏面；**不是** WindowHost `RenderTree` 第二套渲染——G1 双宿主像素一致另排 |
 
 ## 4. 属性补丁语义（改即见）
 
@@ -85,6 +86,23 @@ WYSIWYG 不是「两套渲染做对比」，而是**同一个渲染面换宿主*
 
 - **无交互**：LivePreviewHost 无输入路由 / 焦点 / IME；交互预览（点击/键入反馈）为后续能力
   （独立焦点域/输入路由/IME 隔离，见 [visual-host](ai-native-visual-host.md)）。
-- 不替代编译期 ARML：LoadSpec 走 arc-ui 校验管线，等价编译期校验的运行时复用，非第二套语法。
+- 不替代编译期 ARML：运行时 `ArmlParser` 是实例化简化面（未知类型 fallback Element）；产品面 `.arml` 仍走 arc-ui typeck，非第二套语法。
 - 截图不无条件进 LLM 上下文：渐进披露——先 [layout-snapshot](ai-native-layout-snapshot.md) 文本，必要时才截图。
 - 动态绑定（DataContext 运行时路径）走受限通道，见 [visual-host](ai-native-visual-host.md) §4。
+- **不**宣称 G1（LivePreviewHost 与 WindowHost 像素一致）、G3（预览帧贴 `VideoSurface`）、审视回路 / 像素闸。
+
+## 7. 验收 checklist（G2 最小硬门槛）
+
+> **宣称纪律**：下列仅关「spec 字符串 → 离屏单帧 + 属性补丁可 CI」；勾选后仍 **不** 宣称 G1 双宿主像素一致、G3 VideoSurface、运行时 arc-ui typeck、审视回路、像素闸或「AI 原生全部完成」。
+
+| 项 | 状态 | 证据 |
+|----|------|------|
+| `Initialize` 离屏（无 HWND）+ `LoadSpec` 建树并单帧 | ✅ | `LivePreviewHost.as` |
+| 空 spec：`Success=false` + 诊断 + 不建树 | ✅ | `g2_loadspec_empty_diag` |
+| `ApplyPatch` 改 `TextBlock.Text`：属性值变 + 布局行盒变宽 | ✅ | `g2_apply_patch_text_layout` |
+| 未知路径补丁返回 false，树不变 | ✅ | `g2_apply_patch_unknown_false` |
+| `CapturePng`：文件存在 / PNG 魔数 / IHDR 尺寸 | ✅ | `g2_loadspec_capture_png`（经 `PngEncoder`） |
+| `Reset` 清树：快照 null、补丁拒绝 | ✅ | `g2_reset_clears` |
+| G1 双宿主像素一致 / G3 VideoSurface / 审视回路 | ☐ | 后置；本切片不宣称 |
+
+验证：`cargo test -p arc-tests --features full-rt --test l2_ui_live_preview_g2_batch`。

@@ -52,6 +52,10 @@ static int rt_ui_win32_is_button(RtUiElement* elem) {
     return elem && elem->type_name && strcmp(elem->type_name, "Button") == 0;
 }
 
+static int rt_ui_win32_is_tabcontrol(RtUiElement* elem) {
+    return elem && elem->type_name && strcmp(elem->type_name, "TabControl") == 0;
+}
+
 /* 指针目标泛化：Button（专用通道）或注册了泛化交互回调的控件（RFC 037 D10.6）。 */
 static int rt_ui_win32_is_pointer_target(RtUiElement* elem) {
     if (!elem) return 0;
@@ -74,6 +78,9 @@ static void rt_ui_win32_set_hover(RtUiElement** pointer_over, RtUiElement* next,
     if (prev == next) return;
     if (prev && rt_ui_win32_is_pointer_target(prev) && prev->is_mouse_over) {
         prev->is_mouse_over = 0;
+        if (rt_ui_win32_is_tabcontrol(prev)) {
+            rt_ui_tabcontrol_clear_hover(prev);
+        }
         rt_ui_win32_dispatch_visual(prev);
         *dirty = 1;
     }
@@ -110,6 +117,10 @@ static void rt_ui_win32_pointer_move(RtUiElement** root, RtUiElement** pointer_d
     RtUiElement* hover = rt_ui_win32_is_pointer_target(hit) ? hit : NULL;
     int dirty = 0;
     rt_ui_win32_set_hover(pointer_over, hover, &dirty);
+    if (hover && rt_ui_win32_is_tabcontrol(hover)
+        && rt_ui_tabcontrol_update_hover(hover, dip_x, dip_y)) {
+        dirty = 1;
+    }
     /* RFC 037 D10.6：按下期间连续拖拽（Slider）——pointer_down 目标驱动，与
      * window.cpp vscroll 拖拽分流次序互斥（vscroll 先消费，未命中才落本层）。 */
     if (pointer_down && *pointer_down && rt_ui_win32_is_pointer_target(*pointer_down)) {
@@ -158,6 +169,10 @@ static void rt_ui_win32_pointer_down(RtUiElement** root, RtUiElement** pointer_d
             dirty = 1;
         }
         rt_ui_win32_set_hover(pointer_over, hit, &dirty);
+        if (rt_ui_win32_is_tabcontrol(hit)
+            && rt_ui_tabcontrol_update_hover(hit, dip_x, dip_y)) {
+            dirty = 1;
+        }
         /* track 点击跳转（Slider）：按下即按像素位置设置值。TextBox/PasswordBox 选区拖拽
          * 仅在 MOVE 路径扩展，避免 DOWN 先于 click 定位破坏 Anchor。 */
         if (!(hit->type_name && (strcmp(hit->type_name, "TextBox") == 0

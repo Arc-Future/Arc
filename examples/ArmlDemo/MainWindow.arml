@@ -7,7 +7,7 @@
     xmlns="http://schemas.arc.dev/winfx/2026"
     xmlns:x="http://schemas.arc.dev/xaml"
     x:Class="ArmlDemo.MainWindow"
-    Title="Arc.UI — ArmlDemo"
+    Title="{Binding Caption}"
     Width="880"
     Height="720">
     <StackPanel Orientation="Vertical" Spacing="0">
@@ -31,11 +31,12 @@
                                       FontFamily="AppSans" FontWeight="Bold" FontSize="14"/>
                             </StackPanel>
                         </Border>
-                        <TextBlock Text="Events: Click= handler · RelayCommand on the Primary button (code-behind; ARML Command bind deferred)."
+                        <TextBlock Text="Events: Click= handler · Command bound to Click (RelayCommand + CanExecute). Toggle CanExecute to watch IsEnabled sync."
                               FontSize="12" Style="{StaticResource Demo.Caption}"/>
                         <StackPanel Orientation="Horizontal" Spacing="10">
-                            <Button x:Name="HelloCommandButton" Content="RelayCommand" Style="{StaticResource Primary}"/>
+                            <Button x:Name="HelloCommandButton" Content="RelayCommand" Style="{StaticResource Primary}" Command="{Binding Click}"/>
                             <Button Content="Click Me" Style="{StaticResource Default}" Click="OnClickHello"/>
+                            <Button Content="Toggle CanExecute" Style="{StaticResource Dashed}" Click="OnToggleClickArmed"/>
                         </StackPanel>
                         <TextBlock x:Name="HelloStatusLabel" Text="Ready — try RelayCommand or Click Me."
                               FontSize="12" Style="{StaticResource Demo.Caption}"/>
@@ -180,31 +181,101 @@
             </TabItem>
 
             <TabItem Header="Bind">
-                <StackPanel Orientation="Vertical" Spacing="12" Margin="20,16,20,16">
-                    <TextBlock Text="x:Bind live path" FontSize="15" Style="{StaticResource Demo.SectionTitle}"/>
-                    <TextBlock Text="x:Bind OneWay + Observable → SyncText → Invalidate → wgpu. Runtime Binding path deferred."
-                          FontSize="12" Style="{StaticResource Demo.Caption}"/>
-                    <Border Width="480">
-                        <StackPanel Orientation="Vertical" Spacing="10" Margin="14,12,14,12">
-                            <TextBlock Text="Bound message" FontSize="12" Style="{StaticResource Demo.Caption}"/>
-                            <TextBlock Text="{x:Bind Message, Mode=OneWay}" FontSize="16"/>
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button Content="Change Message" Style="{StaticResource Primary}" Click="OnChangeMessage"/>
-                                <Button Content="Reset" Style="{StaticResource Default}" Click="OnChangeMessage"/>
-                                <Button Content="Append tick" Style="{StaticResource Dashed}" Click="OnAppendMessage"/>
+                <ScrollView VerticalScrollBarVisibility="Auto">
+                    <StackPanel Orientation="Vertical" Spacing="16" Margin="20,16,20,16">
+                        <TextBlock Text="Product Binding"
+                              FontSize="15" Style="{StaticResource Demo.SectionTitle}"/>
+                        <TextBlock Text="Binding Path only · compile-time desugar. Plain OneWay snapshot · Observable notify / TwoWay · nested Foo.Bar + parent replace. Not x:Bind."
+                              FontSize="12" Style="{StaticResource Demo.Caption}"/>
+
+                        <Border Width="560">
+                            <StackPanel Orientation="Vertical" Spacing="8" Margin="14,12,14,12">
+                                <TextBlock Text="Window.Title bound to Caption" FontSize="13" Style="{StaticResource Demo.SectionTitle}"/>
+                                <TextBlock Text="Caption is [Observable]. Change it and the native window title follows."
+                                      FontSize="12" Style="{StaticResource Demo.Caption}"/>
+                                <TextBlock Text="{Binding Caption, Mode=OneWay}" FontSize="16"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Set title" Style="{StaticResource Primary}" Click="OnChangeCaption"/>
+                                    <Button Content="Reset title" Style="{StaticResource Default}" Click="OnResetCaption"/>
+                                </StackPanel>
                             </StackPanel>
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
+                        </Border>
+
+                        <Border Width="560">
+                            <StackPanel Orientation="Vertical" Spacing="8" Margin="14,12,14,12">
+                                <TextBlock Text="Plain OneWay (no [Observable])" FontSize="13" Style="{StaticResource Demo.SectionTitle}"/>
+                                <TextBlock Text="Greeting is a plain property. Mutate after load — the TextBlock stays at the load snapshot."
+                                      FontSize="12" Style="{StaticResource Demo.Caption}"/>
+                                <TextBlock Text="{Binding Greeting, Mode=OneWay}" FontSize="16"/>
+                                <Button Content="Mutate Greeting (UI stays)" Style="{StaticResource Dashed}" Click="OnMutateGreeting"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Width="560">
+                            <StackPanel Orientation="Vertical" Spacing="8" Margin="14,12,14,12">
+                                <TextBlock Text="[Observable] OneWay" FontSize="13" Style="{StaticResource Demo.SectionTitle}"/>
+                                <TextBlock Text="Message notify → SyncText → Invalidate → wgpu."
+                                      FontSize="12" Style="{StaticResource Demo.Caption}"/>
+                                <TextBlock Text="{Binding Message, Mode=OneWay}" FontSize="16"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Change Message" Style="{StaticResource Primary}" Click="OnChangeMessage"/>
+                                    <Button Content="Reset" Style="{StaticResource Default}" Click="OnResetMessage"/>
+                                    <Button Content="Append tick" Style="{StaticResource Dashed}" Click="OnAppendMessage"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Width="560">
+                            <StackPanel Orientation="Vertical" Spacing="8" Margin="14,12,14,12">
+                                <TextBlock Text="TextBox TwoWay ([Observable] Draft)" FontSize="13" Style="{StaticResource Demo.SectionTitle}"/>
+                                <TextBlock Text="Type in the box (writes back) · Fill from code (source → box). Echo is OneWay on the same Draft."
+                                      FontSize="12" Style="{StaticResource Demo.Caption}"/>
+                                <TextBox Text="{Binding Draft, Mode=TwoWay}" Width="400" Height="32" FontSize="14"/>
+                                <TextBlock Text="{Binding Draft, Mode=OneWay}" FontSize="14"/>
+                                <Button Content="Fill Draft from code" Style="{StaticResource Primary}" Click="OnFillDraft"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Width="560">
+                            <StackPanel Orientation="Vertical" Spacing="8" Margin="14,12,14,12">
+                                <TextBlock Text="Nested Binding Model.Name" FontSize="13" Style="{StaticResource Demo.SectionTitle}"/>
+                                <TextBlock Text="Name is Observable — Rename leaf live-updates. Parent Model is Observable — Replace Model rebinds the leaf."
+                                      FontSize="12" Style="{StaticResource Demo.Caption}"/>
+                                <TextBlock Text="{Binding Model.Name}" FontSize="16"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Rename leaf" Style="{StaticResource Primary}" Click="OnRenameModel"/>
+                                    <Button Content="Replace Model" Style="{StaticResource Default}" Click="OnReplaceModel"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Width="560">
+                            <StackPanel Orientation="Vertical" Spacing="8" Margin="14,12,14,12">
+                                <TextBlock Text="Command · IsEnabled · Content" FontSize="13" Style="{StaticResource Demo.SectionTitle}"/>
+                                <TextBlock Text="Same Click RelayCommand as Hello. IsEnabled is a live bool bind. Content is a compile-time setter."
+                                      FontSize="12" Style="{StaticResource Demo.Caption}"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Command again" Style="{StaticResource Primary}" Command="{Binding Click}"/>
+                                    <Button Content="Toggle CanExecute" Style="{StaticResource Dashed}" Click="OnToggleClickArmed"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Needs FeatureEnabled" Style="{StaticResource Default}" IsEnabled="{Binding FeatureEnabled}"/>
+                                    <Button Content="Toggle IsEnabled" Style="{StaticResource Dashed}" Click="OnToggleFeatureEnabled"/>
+                                </StackPanel>
+                                <Button Content="{Binding CommandLabel}" Style="{StaticResource Text}"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollView>
             </TabItem>
 
             <TabItem Header="List">
                 <StackPanel Orientation="Vertical" Spacing="12" Margin="20,16,20,16">
                     <TextBlock Text="ListView" FontSize="15" Style="{StaticResource Demo.SectionTitle}"/>
-                    <TextBlock Text="Click to select · keyboard ↑↓ Home/End/Enter · Observable multi-instance smoke in OnLoaded."
+                    <TextBlock Text="ItemsSource bound to Items · click to select · keyboard ↑↓ Home/End/Enter · Observable multi-instance smoke in OnLoaded."
                           FontSize="12" Style="{StaticResource Demo.Caption}"/>
                     <TextBlock x:Name="ListSelectionLabel" Text="Selected: (none)" FontSize="12" Style="{StaticResource Demo.Caption}"/>
-                    <ListView x:Name="ItemsList" Height="360" Width="720"/>
+                    <ListView x:Name="ItemsList" Height="360" Width="720" ItemsSource="{Binding Items}"/>
                 </StackPanel>
             </TabItem>
 
@@ -313,7 +384,7 @@
             <TabItem Header="12 Overflow Gamma Crowded">
                 <StackPanel Orientation="Vertical" Spacing="12" Margin="20,16,20,16">
                     <TextBlock Text="Third overflow page" FontSize="15" Style="{StaticResource Demo.SectionTitle}"/>
-                    <TextBlock Text="No switch animation / close button in this slice."
+                    <TextBlock Text="Close is product VSCode behavior (active × always, inactive hover). No switch animation."
                           FontSize="12" Style="{StaticResource Demo.Caption}"/>
                 </StackPanel>
             </TabItem>

@@ -760,7 +760,7 @@ public partial class WgpuRender {
             return;
         }
 
-        // ---- TabControl（内置页签栏：测宽左对齐 + 溢出裁剪/箭头 + 选中 Accent 底线）----
+        // ---- TabControl（内置页签栏：测宽左对齐 + 溢出裁剪/箭头 + 关闭 x 选中常显/未选中悬停 + Accent 底线）----
         if (type == "TabControl") {
             Color bg = this.ElementColor(handle, "Background", Color.Transparent());
             this.DrawBackground(bg, lx, ly, lw, lh);
@@ -817,14 +817,38 @@ public partial class WgpuRender {
                     }
                     bool isSel = ti == selected;
                     Color labelFg = isSel ? fg : fgMuted;
+                    double closeSlot = WindowHost.ElementGetNumber(handle, "CloseSlotWidth",
+                        ControlMetrics.TabCloseSlotWidth);
+                    if (closeSlot < 0.0) {
+                        closeSlot = 0.0;
+                    }
+                    if (closeSlot > cellW) {
+                        closeSlot = cellW;
+                    }
+                    double textRegionW = cellW - closeSlot;
                     double textW = this.EstTextWidth(header, 0.0, fontSize, family, weight);
-                    double textX = cursorX + (cellW - textW) / 2.0;
+                    double textX = cursorX + (textRegionW - textW) / 2.0;
                     if (textX < cursorX + ControlMetrics.SpacingXS) {
                         textX = cursorX + ControlMetrics.SpacingXS;
                     }
                     double textY = ly + (barH - fontSize) / 2.0 - ControlMetrics.TabLabelNudgeY;
                     this.DrawText(header, textX, textY, fontSize, this.ColorTransparent(),
                         labelFg, family, isSel ? 1 : weight);
+                    int hoverTab = (int)WindowHost.ElementGetNumber(handle, "HoverTabIndex", -1.0);
+                    bool showClose = isSel || ti == hoverTab;
+                    if (closeSlot > 0.0 && showClose) {
+                        // 选中常显「x」；未选中仅 HoverTabIndex 命中（主题 Text.Secondary）。
+                        double glyphSize = ControlMetrics.TabCloseGlyphSize;
+                        string closeGlyph = "x";
+                        double glyphW = this.EstTextWidth(
+                            closeGlyph, 0.0, glyphSize, family, weight);
+                        double closeLeft = cursorX + cellW - closeSlot;
+                        double glyphX = closeLeft + (closeSlot - glyphW) / 2.0;
+                        double glyphY = ly + (barH - glyphSize) / 2.0
+                            - ControlMetrics.TabLabelNudgeY;
+                        this.DrawText(closeGlyph, glyphX, glyphY, glyphSize,
+                            this.ColorTransparent(), fgMuted, family, weight);
+                    }
                     if (isSel) {
                         this.DrawRect(
                             cursorX + ControlMetrics.SpacingXS,

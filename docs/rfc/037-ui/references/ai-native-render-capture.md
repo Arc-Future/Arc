@@ -67,6 +67,7 @@ PNG 编码（std 层）：
 | headless e2e：文件存在 / PNG 魔数 / IHDR 尺寸 / 回读可读 | ✅ | `l2_ui_render_capture_batch`（`offscreen_png_magic`；空 DrawList + clear） |
 | 超限创建显式拒绝（≤2048） | ✅ | 同批 `offscreen_limit_reject` |
 | FillRect(hex) 着色回读 | ✅ | `offscreen_fillrect_color`：opaque red vs clear black 采样；根因=variant struct payload 栈悬垂，codegen 堆化 |
-| G1 双宿主像素一致 / G2 属性补丁 / G3 VideoSurface | ☐ | 后置；本切片不宣称 |
+| G1 双宿主像素一致 / G3 VideoSurface | ☐ | 后置；本切片不宣称 |
+| G2 属性补丁最小面 | ✅ | 见 [live-preview §7](ai-native-live-preview.md)；本切片不重复宣称 |
 
 验证：`cargo test -p arc-tests --features full-rt --test l2_ui_render_capture_batch`。

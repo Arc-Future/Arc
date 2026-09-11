@@ -180,6 +180,8 @@ internal class PointerRouter {
         WindowHost.SetControlClickHandler("DataGrid", dataGridClick);
         Action<long> tabClick = PointerRouter.RouteTabControlClick;
         WindowHost.SetControlClickHandler("TabControl", tabClick);
+        Action<long, int, int> tabVisual = PointerRouter.RouteTabControlVisualState;
+        WindowHost.SetControlVisualStateHandler("TabControl", tabVisual);
         Action<long> treeClick = PointerRouter.RouteTreeViewClick;
         WindowHost.SetControlClickHandler("TreeView", treeClick);
         Action<long> comboClick = PointerRouter.RouteComboBoxClick;
@@ -274,12 +276,26 @@ internal class PointerRouter {
         }
     }
 
-    /// <summary>C callback entry (type "TabControl"): HitTabOverflow 步进 / HitTabIndex → SelectedIndex。</summary>
+    /// <summary>C callback entry (type "TabControl"): HitTabOverflow 步进 / HitTabClose 关闭 / HitTabIndex → SelectedIndex。</summary>
     internal static void RouteTabControlClick(long platformHandle) {
         TabControl tabs = LookupTabControl(platformHandle);
         if (tabs != null) {
             tabs.SelectHitTab();
         }
+    }
+
+    /// <summary>C visual：离开 TabControl 清 HoverTabIndex（页内移动由 C update_hover 写镜像）。</summary>
+    internal static void RouteTabControlVisualState(long platformHandle, int isMouseOver, int isPressed) {
+        WindowHost.ElementSetBool(platformHandle, "IsMouseOver", isMouseOver != 0 ? 1 : 0);
+        WindowHost.ElementSetBool(platformHandle, "IsPressed", isPressed != 0 ? 1 : 0);
+        if (isMouseOver == 0) {
+            WindowHost.ElementSetNumber(platformHandle, "HoverTabIndex", -1.0);
+            TabControl tabs = LookupTabControl(platformHandle);
+            if (tabs != null) {
+                tabs.ApplyHeaderHover(-1);
+            }
+        }
+        FramePump.Invalidate();
     }
 
     /// <summary>C callback entry (type "TreeView"): 点击聚焦 + HitItemIndex/HitExpand → RouteHit。</summary>

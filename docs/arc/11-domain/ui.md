@@ -42,10 +42,10 @@
 
 ### 1. 标记文件 `MainWindow.arml`
 
-ARML 采用 WPF xaml 心智模型：根元素声明 `x:Class` 指定配套类，属性经 `{Binding Path}` 绑定到 `DataContext` 模型。
+ARML 采用 WPF xaml 心智模型：根元素声明 `x:Class` 指定配套类，属性经 `{Binding Path}` **编译期**绑定到 code-behind / 页面属性（`this.Path`），不是运行时 DataContext 路径行走。
 
 ```arml
-<Window x:Class="Demo.MainWindow" Title="{Binding Title}">
+<Window x:Class="Demo.MainWindow" Title="{Binding Caption}">
     <StackPanel vertical="true" Padding="16">
         <TextBlock Text="{Binding Greeting}" />
         <Button Content="点击" Command="{Binding Click}" />
@@ -55,7 +55,7 @@ ARML 采用 WPF xaml 心智模型：根元素声明 `x:Class` 指定配套类，
 
 ### 2. code-behind `MainWindow.arml.as`
 
-配套类持有 `DataContext`，可重写生命周期方法 `OnLoaded`/`OnClosed`。
+配套类声明绑定源属性（`{Binding Path}` 定址 `this.Path`），可重写生命周期方法 `OnLoaded`/`OnClosed`。
 
 ```as
 namespace Demo;
@@ -64,8 +64,14 @@ using Arc.UI;
 using Arc.UI.Components;
 
 public class MainWindow : Window {
+    [Observable] public string Caption { get; set; }
+    [Observable] public string Greeting { get; set; }
+    public ICommand Click;
+
     public MainWindow() {
-        this.DataContext = new MainViewModel();
+        this.Caption = "Demo";
+        this.Greeting = "Hello";
+        this.Click = new RelayCommand(OnClick);
     }
 
     public override void OnLoaded() {
@@ -92,7 +98,7 @@ public class MainViewModel {
 }
 ```
 
-`[Observable]` 由编译器合成属性变更通知（Signal 通道），`{x:Bind}` 编译期脱糖订阅刷新。集合变更用 `ObservableCollection<T>`。`Button.Command = new RelayCommand(...)` 经 `RaiseClick` 执行；可执行态变化时 `RaiseCanExecuteChanged()` → Button 同步 `IsEnabled`。ARML 上 `Command="{x:Bind …}"` 标记扩展仍后置。
+`[Observable]` 由编译器合成**变更通知**通道（Signal），并允许 **TwoWay**。它**不是**绑定准入：普通属性/字段 `{Binding}` OneWay/OneTime **直接读** `this.Path`，不必打标。`Mode=TwoWay` 而源无 `[Observable]` → 编译错误（须通知/写回通道）。`{Binding Path}` 是**唯一**标记绑定惯用法：编译期脱糖到 `this.Path` /（仅 Observable 成员）`ObserveProperty` + `BindingOperations`（路径不存在即 `arc build` 报错）。视图模型可独立存在，但须在页面上暴露同名属性——**不**走运行时 DataContext 路径行走。`Command="{Binding Click}"` → `button.Command = this.Click`。`{x:Bind}` 硬拒绝。`RaiseCanExecuteChanged()` → Button 同步 `IsEnabled`。
 
 ### 4. 启动入口
 
@@ -139,14 +145,14 @@ void Main() {
 
 | 机制 | 用途 |
 |------|------|
-| `{x:Bind Path}` | **现行主路径**：编译期脱糖到 `ObserveProperty` + `BindingOperations`（TextBlock/TextBox Text 最小面；Mode=OneTime/OneWay/TwoWay） |
-| `{Binding Path}` | **后移**：codegen 拒绝；运行时路径解析 / DataContext 动态切换未开 |
-| `[Observable]` 特性 | 属性变更 → 合成 Signal；触发 `x:Bind` 刷新 |
+| `{Binding Path}` | **唯一作者惯用法**：编译期脱糖（`this.Path` / `this.Foo.Bar`）。普通属性 OneWay/OneTime 直接读；`[Observable]` 叶才 `ObserveProperty` 订阅。`Window.Title` / `IsEnabled` / Text 同此；`Button.Command` / Content / `ItemsSource` → setter。中间段 null → 空/默认；中间无标 → 快照；中间有标 → 重订阅叶（叶类型可晚于生成的 Window）；错名编译失败 |
+| `{x:Bind}` | **非作者 API**：typeck/codegen 硬拒绝，诊断指向 `{Binding}` |
+| `[Observable]` 特性 | **通知 / TwoWay**，不是绑定准入。无标成员仍可读 |
 | `ObservableCollection<T>` | 集合变更通知，驱动列表增量（ItemsControl/DataGrid 等） |
-| `DataContext` | 元素树继承 + VisualHost 边界；**不**驱动 `{Binding}` 运行时解析 |
-| `ICommand` / `RelayCommand` | `Button.Command` + `RaiseClick`→Execute；`CanExecuteChanged`→`IsEnabled`（`RaiseCanExecuteChanged`） |
+| `DataContext` | 元素树继承 + VisualHost 边界；窗口 `DataType`/`x:DataType` 时路径相对该类型，否则 `this.Path`。运行时赋值后重读未签收；**不**做运行时类型切换 |
+| `ICommand` / `RelayCommand` | `Button.Command` + `RaiseClick`→Execute；`CanExecuteChanged`→`IsEnabled`；ARML `{Binding Click}` |
 
-绑定带生命周期管理：G2 `RegisterDetach` 退订；订阅回调只捕获绑定 id（逃逸闭包约束）。**不**宣称 Converter / ElementName / RelativeSource / UpdateSourceTrigger / CommandManager.RequerySuggested / ARML Command 绑定。
+绑定带生命周期管理：G2 `RegisterDetach` 退订；订阅回调只捕获绑定 id（逃逸闭包约束）。**不**宣称 Converter / ElementName / RelativeSource / UpdateSourceTrigger / CommandManager.RequerySuggested / WPF 运行时路径行走。
 
 ### 渲染与虚拟化
 

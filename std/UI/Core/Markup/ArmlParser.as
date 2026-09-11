@@ -16,7 +16,7 @@
 //   <?xml version="1.0"?>                XML 声明（跳过）
 //
 // 不支持（首版）：
-//   {x:Bind ...} 标记扩展（运行时无绑定上下文）
+//   {Binding ...} 标记扩展（编译期脱糖；运行时解析器不求值绑定）
 //   {StaticResource ...} 资源引用
 //   属性元素 <Button.Background>
 //   指令元素 <Style>/<ResourceDictionary>

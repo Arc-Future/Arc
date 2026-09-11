@@ -8,13 +8,18 @@
 // **三轨**：布局自持（顶栏 HeaderBarHeight + 客户区）；平台镜像写 TabCount/
 // Header{i}/HeaderWidth{i}/HeaderScrollOffset/SelectedIndex；渲染走专属 chrome
 // + 子树递归（wgpu 唯一后端）。HeaderWidth = 文案测宽 + 2×TabHeaderPaddingX
-// （WPF 心智：内容尺寸左对齐，不均分拉满栏宽）。
+// + TabCloseSlotWidth（WPF 心智：内容尺寸左对齐，不均分拉满栏宽）。
 //
 // **溢出滚动**：页签总宽 > 栏宽时 HeaderScrollOffset 水平裁剪可见区；
 // 命中 = 栏内 strip localX + offset；滚轮在顶栏调整偏移；选中切换保证选中页签入视。
 // **溢出箭头最小面**：挤栏时两端箭头 chrome + HitTabOverflow（-1/1）步进滚动；
 // 条带宽 = 栏宽 − 2×TabOverflowArrowWidth（与渲染 PushClip / C 命中同源）。
-// **诚实边界**：无切换动画 / 关闭按钮。
+// **关闭按钮**：VSCode 页签——选中常显「x」；未选中仅页签栏悬停该页才显。
+// C HoverTabIndex 与 HitTabIndex 同源（箭头/客户区清 -1）；HitTabClose 仅当
+// 「x」可见。点击 → CloseTab。关闭页 IsClosed，栏撤出、Arrange 视口外；
+// 仍留 Children（无 remove-child ABI）。选中页关闭：右侧滑入同索引，已是
+// 末页则选左侧；关选中左侧则 SelectedIndex-1。
+// **诚实边界**：无切换动画 / 无 Tooltip。
 
 namespace Arc.UI.Components;
 
@@ -34,11 +39,52 @@ public class TabControl : Panel {
     long _mirrorHandle;
     double _headerScrollOffset;
     int _ensureSelectedVisible;
+    int _hoverTabIndex;
 
     /// <summary>构造并绑定 TypeName。</summary>
     public TabControl() {
         this.Type = typeof(TabControl);
         this.TypeName = "TabControl";
+        _hoverTabIndex = -1;
+    }
+
+    /// <summary>页签栏悬停开页索引（-1 = 未悬停页签；与 C HoverTabIndex 同源）。</summary>
+    public int HoverTabIndex
+    {
+        get { return _hoverTabIndex; }
+        set { this.ApplyHeaderHover(value); }
+    }
+
+    /// <summary>关闭「x」是否可见：选中常显；未选中仅 <see cref="HoverTabIndex"/> 命中。</summary>
+    public bool IsCloseGlyphVisible(int tabIndex)
+    {
+        if (tabIndex < 0 || this.CountTabItems() <= 0)
+        {
+            return false;
+        }
+        int selected = this.ResolveSelectedIndex();
+        return tabIndex == selected || tabIndex == _hoverTabIndex;
+    }
+
+    /// <summary>PointerRouter / 测试写悬停；镜像 HoverTabIndex + 脏帧。</summary>
+    internal void ApplyHeaderHover(int tabIndex)
+    {
+        int next = tabIndex;
+        int open = this.CountTabItems();
+        if (next < 0 || next >= open)
+        {
+            next = -1;
+        }
+        if (next == _hoverTabIndex)
+        {
+            return;
+        }
+        _hoverTabIndex = next;
+        if (_mirrorHandle != 0)
+        {
+            WindowHost.ElementSetNumber(_mirrorHandle, "HoverTabIndex", (double)_hoverTabIndex);
+        }
+        FramePump.Invalidate();
     }
 
     /// <summary>当前选中页索引（越界时布局按 0 兜底）。</summary>
@@ -66,7 +112,7 @@ public class TabControl : Panel {
         this.SyncMirrorScroll();
     }
 
-    /// <summary>PointerRouter 入口：溢出箭头步进，或 HitTabIndex 切换页。</summary>
+    /// <summary>PointerRouter 入口：溢出箭头 → 关闭槽 → HitTabIndex 切换页。</summary>
     internal void SelectHitTab() {
         if (_mirrorHandle == 0) {
             return;
@@ -84,10 +130,111 @@ public class TabControl : Panel {
         if (hit >= tabCount) {
             return;
         }
+        int hover = (int)WindowHost.ElementGetNumber(_mirrorHandle, "HoverTabIndex", -1.0);
+        this.ApplyHeaderHover(hover);
+        int closeHit = (int)WindowHost.ElementGetNumber(_mirrorHandle, "HitTabClose", 0.0);
+        if (closeHit != 0 && this.IsCloseGlyphVisible(hit)) {
+            this.CloseTab(hit);
+            return;
+        }
         if (hit == this.SelectedIndex) {
             return;
         }
         this.SelectedIndex = hit;
+    }
+
+    /// <summary>
+    /// 关闭第 <paramref name="tabIndex"/> 个未关闭页签（开页 0-based）。
+    /// 选中页关闭：右侧滑入同索引；已是末页则选左侧。关闭选中左侧页则
+    /// SelectedIndex−1。越界 / 已关为 no-op。
+    /// </summary>
+    public void CloseTab(int tabIndex)
+    {
+        TabItem page = this.TabItemAt(tabIndex);
+        if (page == null)
+        {
+            return;
+        }
+        int selected = this.SelectedIndex;
+        int openCount = this.CountTabItems();
+        page.MarkClosed();
+        int remaining = openCount - 1;
+        if (remaining <= 0)
+        {
+            this.SelectedIndex = 0;
+        }
+        else if (tabIndex < selected)
+        {
+            this.SelectedIndex = selected - 1;
+        }
+        else if (tabIndex == selected)
+        {
+            if (tabIndex >= remaining)
+            {
+                this.SelectedIndex = remaining - 1;
+            }
+            else
+            {
+                this.SelectedIndex = tabIndex;
+            }
+        }
+        if (_hoverTabIndex == tabIndex || remaining <= 0)
+        {
+            this.ApplyHeaderHover(-1);
+        }
+        else if (_hoverTabIndex > tabIndex)
+        {
+            this.ApplyHeaderHover(_hoverTabIndex - 1);
+        }
+        this.SyncMirrorHeaders();
+        this.SyncMirrorScroll();
+        FramePump.InvalidateLayout();
+    }
+
+    /// <summary><see cref="TabItem.Close"/> 入口：按开页索引转 <see cref="CloseTab"/>。</summary>
+    internal void CloseItem(TabItem page)
+    {
+        if (page == null || page.IsClosed)
+        {
+            return;
+        }
+        int index = this.IndexOfOpenItem(page);
+        if (index < 0)
+        {
+            page.MarkClosed();
+            this.SyncMirrorHeaders();
+            FramePump.InvalidateLayout();
+            return;
+        }
+        this.CloseTab(index);
+    }
+
+    int IndexOfOpenItem(TabItem page)
+    {
+        if (this.Children == null || page == null)
+        {
+            return -1;
+        }
+        int seen = 0;
+        int i = 0;
+        while (i < this.Children.Count)
+        {
+            Element raw = this.Children[i];
+            if (raw is TabItem)
+            {
+                TabItem item = (TabItem)raw;
+                if (!item.IsClosed)
+                {
+                    if (item == page)
+                    {
+                        return seen;
+                    }
+                    seen++;
+                }
+            }
+            i++;
+        }
+        return -1;
     }
 
     /// <summary>溢出箭头：dir&lt;0 向左露左侧页签，dir&gt;0 向右露右侧页签。</summary>
@@ -120,6 +267,8 @@ public class TabControl : Panel {
             return;
         }
         WindowHost.ElementSetNumber(_mirrorHandle, "HeaderScrollOffset", _headerScrollOffset);
+        WindowHost.ElementSetNumber(
+            _mirrorHandle, "CloseSlotWidth", ControlMetrics.TabCloseSlotWidth);
         double barW = this.ResolveBarWidth();
         double totalW = this.MeasureHeadersTotalWidth();
         int overflow = 0;
@@ -244,6 +393,9 @@ public class TabControl : Panel {
         int tabCount = this.CountTabItems();
         WindowHost.ElementSetNumber(_mirrorHandle, "TabCount", (double)tabCount);
         WindowHost.ElementSetNumber(_mirrorHandle, "HeaderBarHeight", HeaderBarHeight);
+        WindowHost.ElementSetNumber(_mirrorHandle, "HoverTabIndex", (double)_hoverTabIndex);
+        double closeSlot = ControlMetrics.TabCloseSlotWidth;
+        WindowHost.ElementSetNumber(_mirrorHandle, "CloseSlotWidth", closeSlot);
         double padX = ControlMetrics.TabHeaderPaddingX;
         double fontSize = ControlMetrics.TabHeaderFontSize;
         double minW = ControlMetrics.TabHeaderMinWidth;
@@ -260,11 +412,12 @@ public class TabControl : Panel {
             WindowHost.ElementSetString(_mirrorHandle, "Header" + t, header);
             // 测宽与 DrawText 同源；度量未就绪时 EstimateTextSize 诚实占位，
             // RelayoutSynced 后再 Arrange 写回真实 HeaderWidth。
+            // HeaderWidth = 文案 + 2×padX + 关闭槽（常显）。
             LayoutSize textSize = LayoutHelper.EstimateTextSize(
                 header, fontSize, 0.0, 0.0, "", "Normal");
-            double cellW = textSize.Width + padX * 2.0;
-            if (cellW < minW) {
-                cellW = minW;
+            double cellW = textSize.Width + padX * 2.0 + closeSlot;
+            if (cellW < minW + closeSlot) {
+                cellW = minW + closeSlot;
             }
             WindowHost.ElementSetNumber(_mirrorHandle, "HeaderWidth" + t, cellW);
             t++;
@@ -279,7 +432,10 @@ public class TabControl : Panel {
         int i = 0;
         while (i < this.Children.Count) {
             if (this.Children[i] is TabItem) {
-                n++;
+                TabItem page = (TabItem)this.Children[i];
+                if (!page.IsClosed) {
+                    n++;
+                }
             }
             i++;
         }
@@ -295,10 +451,13 @@ public class TabControl : Panel {
         while (i < this.Children.Count) {
             Element raw = this.Children[i];
             if (raw is TabItem) {
-                if (seen == tabIndex) {
-                    return (TabItem)raw;
+                TabItem page = (TabItem)raw;
+                if (!page.IsClosed) {
+                    if (seen == tabIndex) {
+                        return page;
+                    }
+                    seen++;
                 }
-                seen++;
             }
             i++;
         }
@@ -370,25 +529,33 @@ public class TabControl : Panel {
         this.SetHeaderScrollOffsetClamped(_headerScrollOffset);
         this.SyncMirrorScroll();
         int selected = this.ResolveSelectedIndex();
-        int tabCount = this.CountTabItems();
         double offscreen = -1000000.0;
         double contentH = finalSize.Height - HeaderBarHeight;
         if (contentH < 0.0) {
             contentH = 0.0;
         }
-        int t = 0;
-        while (t < tabCount) {
-            TabItem page = this.TabItemAt(t);
-            if (page != null) {
-                if (t == selected) {
+        if (this.Children == null) {
+            return;
+        }
+        int openIndex = 0;
+        int i = 0;
+        while (i < this.Children.Count) {
+            Element raw = this.Children[i];
+            if (raw is TabItem) {
+                TabItem page = (TabItem)raw;
+                bool show = !page.IsClosed && openIndex == selected;
+                if (show) {
                     LayoutHelper.ArrangeChild(this, page, 0.0, HeaderBarHeight,
                         finalSize.Width, contentH);
                 } else {
                     LayoutHelper.ArrangeChild(this, page, offscreen, offscreen,
                         page.DesiredSize.Width, page.DesiredSize.Height);
                 }
+                if (!page.IsClosed) {
+                    openIndex++;
+                }
             }
-            t++;
+            i++;
         }
     }
 }

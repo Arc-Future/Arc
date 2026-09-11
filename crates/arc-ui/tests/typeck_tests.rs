@@ -132,9 +132,9 @@ fn typecheck_unknown_property_emits_warning() {
 }
 
 #[test]
-fn typecheck_xbind_counted() {
+fn typecheck_binding_counted() {
     let src = r#"<Window>
-        <TextBlock Text="{x:Bind Count, Mode=OneWay}"/>
+        <TextBlock Text="{Binding Count, Mode=OneWay}"/>
     </Window>"#;
     let doc = Parser::parse(src).unwrap();
     let checker = TypeChecker::new();
@@ -144,9 +144,9 @@ fn typecheck_xbind_counted() {
 }
 
 #[test]
-fn typecheck_xbind_missing_path() {
+fn typecheck_binding_missing_path() {
     let src = r#"<Window>
-        <TextBlock Text="{x:Bind}"/>
+        <TextBlock Text="{Binding}"/>
     </Window>"#;
     let doc = Parser::parse(src).unwrap();
     let checker = TypeChecker::new();
@@ -159,9 +159,9 @@ fn typecheck_xbind_missing_path() {
 }
 
 #[test]
-fn typecheck_xbind_invalid_mode() {
+fn typecheck_binding_invalid_mode() {
     let src = r#"<Window>
-        <TextBlock Text="{x:Bind Count, Mode=Invalid}"/>
+        <TextBlock Text="{Binding Count, Mode=Invalid}"/>
     </Window>"#;
     let doc = Parser::parse(src).unwrap();
     let checker = TypeChecker::new();
@@ -171,6 +171,68 @@ fn typecheck_xbind_invalid_mode() {
         .errors
         .iter()
         .any(|e| matches!(e, ArmlError::Type { message, .. } if message.contains("Mode"))));
+}
+
+#[test]
+fn typecheck_xbind_rejected_points_to_binding() {
+    let src = r#"<Window>
+        <TextBlock Text="{x:Bind Count}"/>
+    </Window>"#;
+    let doc = Parser::parse(src).unwrap();
+    let report = TypeChecker::new().check(&doc);
+    assert!(!report.is_ok());
+    assert!(report.errors.iter().any(|e| {
+        matches!(e, ArmlError::Type { message, .. } if message.contains("x:Bind") && message.contains("{Binding Path}"))
+    }));
+}
+
+#[test]
+fn typecheck_binding_nested_path_ok() {
+    let src = r#"<Window>
+        <TextBlock Text="{Binding User.Name}"/>
+    </Window>"#;
+    let doc = Parser::parse(src).unwrap();
+    let report = TypeChecker::new().check(&doc);
+    assert!(report.is_ok(), "errors: {:?}", report.errors);
+    assert_eq!(report.binding_count, 1);
+}
+
+#[test]
+fn typecheck_binding_invalid_path_segment() {
+    let src = r#"<Window>
+        <TextBlock Text="{Binding User..Name}"/>
+    </Window>"#;
+    let doc = Parser::parse(src).unwrap();
+    let report = TypeChecker::new().check(&doc);
+    assert!(!report.is_ok());
+    assert!(report
+        .errors
+        .iter()
+        .any(|e| matches!(e, ArmlError::Type { message, .. } if message.contains("invalid"))));
+}
+
+#[test]
+fn typecheck_binding_window_title_ok() {
+    let src = r#"<Window Title="{Binding Caption}">
+        <TextBlock Text="hi"/>
+    </Window>"#;
+    let doc = Parser::parse(src).unwrap();
+    let report = TypeChecker::new().check(&doc);
+    assert!(report.is_ok(), "errors: {:?}", report.errors);
+    assert_eq!(report.binding_count, 1);
+}
+
+#[test]
+fn typecheck_binding_converter_rejected() {
+    let src = r#"<Window>
+        <TextBlock Text="{Binding Count, Converter=Invert}"/>
+    </Window>"#;
+    let doc = Parser::parse(src).unwrap();
+    let report = TypeChecker::new().check(&doc);
+    assert!(!report.is_ok());
+    assert!(report.errors.iter().any(|e| {
+        matches!(e, ArmlError::Type { message, .. } if message.contains("Converter") && message.contains("not supported"))
+    }));
 }
 
 #[test]
@@ -229,7 +291,7 @@ fn typecheck_rectangle_fill_and_size() {
 #[test]
 fn typecheck_listview_items_source_no_warnings() {
     let src = r#"<Window>
-        <ListView ItemsSource="{x:Bind Items}" DisplayMemberPath="Name"/>
+        <ListView ItemsSource="{Binding Items}" DisplayMemberPath="Name"/>
     </Window>"#;
     let doc = Parser::parse(src).unwrap();
     let checker = TypeChecker::new();
@@ -285,7 +347,7 @@ fn typecheck_visual_host_document() {
 #[test]
 fn typecheck_content_presenter_content_binding() {
     let src = r#"<Window>
-        <ContentPresenter Content="{x:Bind Selected}"/>
+        <ContentPresenter Content="{Binding Selected}"/>
     </Window>"#;
     let doc = Parser::parse(src).unwrap();
     let checker = TypeChecker::new();

@@ -84,6 +84,7 @@ LLM 与工具需要**真实度量**而非猜测：元素最终矩形、对齐、
 | 文本行盒经 TextMeasuring / EstimateTextSize（禁字符数估算） | ✅ | BuildTextLineBoxes |
 | 确定性 JSON（LayoutSnapshot.ToJson）可断言 | ✅ | ToJson + 批测断言 |
 | headless e2e：树结构 / 行盒 / JSON / 未加载 null / 同 spec 确定性 | ✅ | l2_ui_layout_snapshot_batch |
-| G1 双宿主像素一致 / G2 属性补丁 / G3 VideoSurface / 保真闭环 | ☐ | 后置；本切片不宣称 |
+| G1 双宿主像素一致 / G3 VideoSurface / 保真闭环 | ☐ | 后置；本切片不宣称 |
+| G2 属性补丁最小面 | ✅ | 见 [live-preview §7](ai-native-live-preview.md)；本切片不重复宣称 |
 
 验证：`cargo test -p arc-tests --features full-rt --test l2_ui_layout_snapshot_batch`。

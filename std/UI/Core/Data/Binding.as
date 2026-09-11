@@ -1,10 +1,10 @@
 // RFC 037 D4.2: Arc.UI — Binding 绑定描述。
 //
-// Binding 描述 {x:Bind Path, Mode=...} 中的语义信息：
-//   - Path: 源属性路径
-//   - Mode: OneWay/TwoWay/OneTime/OneWayToSource
-//   - Converter: 值转换器
-//   - FallbackValue: 绑定失败时的回退值
+// Binding 描述 {Binding Path, Mode=...} 的编译期脱糖语义：
+//   - Path: 源属性（code-behind `this.Path` / `this.Foo.Bar`；错名编译失败）
+//   - Mode: OneTime/OneWay/TwoWay
+// Converter / ElementName / RelativeSource / UpdateSourceTrigger /
+// OneWayToSource / 运行时路径行走：作者面硬拒绝，字段仅描述骨架。
 //
 // **命名空间归属**：本文件位于 std/UI/Data/ 子目录，但归属到 `Arc.UI`
 // 命名空间（按 RFC 020 §3.2「子命名空间与目录解耦」+ RFC 037 D9.2
@@ -15,13 +15,13 @@ namespace Arc.UI;
 
 /// <summary>绑定描述。</summary>
 public struct Binding {
-    /// <summary>源属性路径（如 "User.Name"）。</summary>
+    /// <summary>源属性路径（如 "Greeting" 或 "Model.Name"；错名编译失败）。</summary>
     public string Path;
 
-    /// <summary>绑定模式："OneWay"/"TwoWay"/"OneTime"/"OneWayToSource"。</summary>
+    /// <summary>绑定模式：作者面仅 "OneTime"/"OneWay"/"TwoWay"。</summary>
     public string Mode;
 
-    /// <summary>值转换器名（来自 {StaticResource}）。</summary>
+    /// <summary>值转换器名。作者面未开（typeck/codegen 硬拒绝）。</summary>
     public string Converter;
 
     /// <summary>转换器参数。</summary>

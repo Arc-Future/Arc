@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 arc = { path = "../arc" }
+arc-ui = { workspace = true }
 codegen = { path = "../codegen" }
 insta = { workspace = true }
 

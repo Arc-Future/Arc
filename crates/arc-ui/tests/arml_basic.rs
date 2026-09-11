@@ -193,15 +193,28 @@ fn parse_comment() {
 }
 
 #[test]
-fn parse_xbind_markup_extension() {
+fn parse_binding_markup_extension() {
+    let src = r#"<TextBlock Text="{Binding Count, Mode=OneWay}"/>"#;
+    let doc = Parser::parse(src).unwrap();
+    let attr = doc.root.attr("Text").unwrap();
+    match &attr.value {
+        AttributeValue::MarkupExtension(ext) => {
+            assert_eq!(ext.kind, MarkupKind::Binding);
+            assert!(!ext.args.is_empty());
+            assert_eq!(ext.args[0].as_str(), "Count");
+        }
+        _ => panic!("expected markup extension"),
+    }
+}
+
+#[test]
+fn parse_xbind_still_lexed_for_reject() {
     let src = r#"<TextBlock Text="{x:Bind Count, Mode=OneWay}"/>"#;
     let doc = Parser::parse(src).unwrap();
     let attr = doc.root.attr("Text").unwrap();
     match &attr.value {
         AttributeValue::MarkupExtension(ext) => {
             assert_eq!(ext.kind, MarkupKind::XBind);
-            assert!(!ext.args.is_empty());
-            assert_eq!(ext.args[0].as_str(), "Count");
         }
         _ => panic!("expected markup extension"),
     }

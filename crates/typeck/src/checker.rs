@@ -443,6 +443,92 @@ impl TypeChecker {
             .copied()
     }
 
+    /// `member_def_id` plus base-class walk. Binding / `ObserveProperty` treat
+    /// inherited fields and properties as present (missing `[Observable]` ≠ unknown name).
+    pub fn member_def_id_inherited(&self, type_name: &str, member: &str) -> Option<DefId> {
+        let mut current = Ident::from(type_name);
+        loop {
+            if let Some(id) = self.member_def_id(current.as_str(), member) {
+                return Some(id);
+            }
+            let Some(nom) = self.registry.types.get(&current) else {
+                return None;
+            };
+            let Some(base) = nom.bases.iter().find(|b| self.registry.is_class(b)).cloned() else {
+                return None;
+            };
+            current = base;
+        }
+    }
+
+    /// Field / property exists on `type_name` or a base (plain auto-properties
+    /// have no `DefId` unless they carry an attribute).
+    fn attrs_include_observable(attrs: &[ast::Attribute]) -> bool {
+        attrs.iter().any(|a| {
+            let n = a.path.last().map(Ident::as_str).unwrap_or("");
+            n == "Observable" || n == "ObservableAttribute"
+        })
+    }
+
+    /// `[Observable]` from ClassDef AST (available before that class's check_class).
+    pub fn ast_member_has_observable(&self, type_name: &str, member: &str) -> bool {
+        let ident = Ident::from(member);
+        let mut current = Ident::from(type_name);
+        loop {
+            if let Some(class) = self.class_defs.get(&current) {
+                let on_prop = class.properties.iter().any(|p| {
+                    p.name == ident && Self::attrs_include_observable(&p.attributes)
+                });
+                let on_field = class.fields.iter().any(|f| {
+                    f.name == ident && Self::attrs_include_observable(&f.attributes)
+                });
+                if on_prop || on_field {
+                    return true;
+                }
+            }
+            let Some(nom) = self.registry.types.get(&current) else {
+                return false;
+            };
+            let Some(base) = nom.bases.iter().find(|b| self.registry.is_class(b)).cloned() else {
+                return false;
+            };
+            current = base;
+        }
+    }
+
+    pub fn has_bindable_member(&self, type_name: &str, member: &str) -> bool {
+        if self.member_def_id_inherited(type_name, member).is_some() {
+            return true;
+        }
+        let ident = Ident::from(member);
+        let mut current = Ident::from(type_name);
+        loop {
+            if self
+                .registry
+                .declared_properties
+                .get(&current)
+                .is_some_and(|props| props.iter().any(|p| p.name == ident))
+            {
+                return true;
+            }
+            if self
+                .registry
+                .types
+                .get(&current)
+                .is_some_and(|nom| nom.fields.contains_key(&ident))
+            {
+                return true;
+            }
+            let Some(nom) = self.registry.types.get(&current) else {
+                return false;
+            };
+            let Some(base) = nom.bases.iter().find(|b| self.registry.is_class(b)).cloned() else {
+                return false;
+            };
+            current = base;
+        }
+    }
+
     /// RFC 032 B2: 按 `DefId` 查询方法签名（通用机制 API）。
     ///
     /// typeck 仅提供通用查询能力——不感知「测试」「断言」等 QIF 语义。
@@ -1757,6 +1843,14 @@ impl TypeChecker {
         for item in &module.items {
             if let HirItem::Enum { def_ast, .. } = item {
                 self.collect_enum_attributes(def_ast);
+            }
+        }
+        // Binding `{Binding Model.Name}`：生成的 Window 常排在用户嵌套类型之前。
+        // 先缓存全部 ClassDef，供 ObserveProperty 在 check_class 之前读 `[Observable]`。
+        for item in &module.items {
+            if let HirItem::Class { def_ast, .. } = item {
+                self.class_defs
+                    .insert(def_ast.name.clone(), def_ast.clone());
             }
         }
         for item in &module.items {

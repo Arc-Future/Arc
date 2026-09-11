@@ -168,7 +168,7 @@ impl Attribute {
 pub enum AttributeValue {
     /// 字面量字符串（如 `Title="Counter"`）。
     Literal(SmolStr),
-    /// 标记扩展（如 `{x:Bind Count, Mode=OneWay}`）。
+    /// 标记扩展（如 `{Binding Count, Mode=OneWay}`）。
     MarkupExtension(MarkupExtension),
 }
 
@@ -192,12 +192,12 @@ impl AttributeValue {
 
 /// 标记扩展（RFC 037 D1.1）。
 ///
-/// 支持：`x:Bind` / `Binding` / `StaticResource` / `Token`。
+/// 支持：`Binding` / `StaticResource` / `Token`（`x:Bind` 仍词法识别，typeck/codegen 硬拒绝）。
 #[derive(Debug, Clone)]
 pub struct MarkupExtension {
-    /// 扩展种类（`x:Bind`/`Binding`/`StaticResource`/`Token`）。
+    /// 扩展种类（`Binding`/`StaticResource`/`Token`；`x:Bind` 仅供拒绝诊断）。
     pub kind: MarkupKind,
-    /// 位置参数（如 `x:Bind Count` 中的 `Count`）。
+    /// 位置参数（如 `Binding Count` 中的 `Count`）。
     pub args: Vec<SmolStr>,
     /// 命名参数（如 `Mode=OneWay`）。
     pub properties: Vec<(SmolStr, SmolStr)>,
@@ -207,9 +207,9 @@ pub struct MarkupExtension {
 /// 标记扩展种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkupKind {
-    /// `{x:Bind path, Mode=OneWay|TwoWay|OneTime}` 编译期绑定（RFC 037 D4）。
+    /// `{x:Bind}` — 非作者 API；typeck/codegen 拒绝并指向 `{Binding}`。
     XBind,
-    /// `{Binding path, Mode=...}` 运行时绑定（回退方案）。
+    /// `{Binding path, Mode=OneWay|TwoWay|OneTime}` 唯一作者绑定（编译期脱糖）。
     Binding,
     /// `{StaticResource key}` 静态资源引用（应用期按活动主题解析；主题即资源）。
     StaticResource,
@@ -241,6 +241,48 @@ impl MarkupKind {
             MarkupKind::Token => "Token",
         }
     }
+}
+
+/// `{Binding}` 编译期脱糖已接线的目标面。其它 DP 硬拒绝（禁止静默跳过）。
+pub fn is_compile_time_binding_target(elem: &str, attr: &str) -> bool {
+    matches!(
+        (elem, attr),
+        ("TextBlock", "Text")
+            | ("TextBox", "Text")
+            | ("Window", "Title")
+            | ("Button", "Command")
+            | ("Button", "Content")
+            | ("CheckBox", "Content")
+            | ("RadioButton", "Content")
+            | ("ToggleButton", "Content")
+            | ("ContentPresenter", "Content")
+    ) || attr == "IsEnabled"
+        || (attr == "ItemsSource"
+            && matches!(
+                elem,
+                "ItemsControl" | "ListView" | "ComboBox" | "DataGrid" | "TreeView"
+            ))
+}
+
+/// `{Binding Path}` 段列表。每段标识符；`Foo.Bar.Baz` 合法。空段 / 非法字符失败。
+pub fn parse_binding_path(path: &str) -> Result<Vec<String>, String> {
+    if path.is_empty() {
+        return Err("`{Binding}` requires a binding path (e.g., `{Binding Title}`)".into());
+    }
+    let mut segs = Vec::new();
+    for seg in path.split('.') {
+        let ok = !seg.is_empty()
+            && seg
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && seg.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !ok {
+            return Err(format!("invalid {{Binding}} path `{path}`"));
+        }
+        segs.push(seg.to_string());
+    }
+    Ok(segs)
 }
 
 /// 指令元素种类（RFC 026 D1 指令元素 / D2.5 资源字典）。

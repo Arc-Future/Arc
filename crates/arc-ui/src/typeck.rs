@@ -1,6 +1,6 @@
 //! `.arml` 类型检查器。
 //!
-//! 验证组件属性、`x:Bind` 表达式、Style Selector（RFC 037 M1）。
+//! 验证组件属性、`{Binding}` 表达式、Style Selector（RFC 037 M1）。
 //! 组件注册表对齐 WPF XAML 正统命名（RFC 037 D1.1）。
 
 use crate::ast::*;
@@ -26,7 +26,8 @@ impl ComponentRegistry {
                 .with_content_control_props()
                 .with_property("Title", PropType::String)
                 .with_property("Left", PropType::Double)
-                .with_property("Top", PropType::Double),
+                .with_property("Top", PropType::Double)
+                .with_property("DataType", PropType::String),
         );
         reg.register(ComponentInfo::new("Page").with_content_control_props());
         reg.register(ComponentInfo::new("UserControl").with_content_control_props());
@@ -476,7 +477,7 @@ impl TypeChecker {
         &self.registry
     }
 
-    /// 检查文档：遍历元素树，验证组件名、属性名、`x:Bind` 绑定路径与 Style 块。
+    /// 检查文档：遍历元素树，验证组件名、属性名、`{Binding}` 绑定路径与 Style 块。
     pub fn check(&self, doc: &ArmlDocument) -> TypeCheckReport {
         let mut report = TypeCheckReport::default();
         self.check_element(&doc.root, &mut report);
@@ -521,7 +522,7 @@ impl TypeChecker {
                         } else if let Some(lit) = attr.value.as_literal() {
                             // RFC 040：Grid.Row/Column 为 typed DependencyProperty<int>，
                             // 仅接受整数字面量——非整数（如 "1.5"/"abc"）编译期报错
-                            // （原运行期 (int) 截断已收紧）。标记扩展（x:Bind 等）不经
+                            // （原运行期 (int) 截断已收紧）。标记扩展（{Binding} 等）不经
                             // 字面量分支，维持现行为。
                             if lit.parse::<i64>().is_err() {
                                 report.errors.push(ArmlError::type_error(
@@ -570,6 +571,20 @@ impl TypeChecker {
                 // 标记扩展检查
                 if let AttributeValue::MarkupExtension(ext) = &attr.value {
                     report.binding_count += 1;
+                    if ext.kind == MarkupKind::Binding
+                        && !crate::is_compile_time_binding_target(
+                            element.name.as_str(),
+                            attr.name.as_str(),
+                        )
+                    {
+                        report.errors.push(ArmlError::type_error(
+                            attr.span,
+                            format!(
+                                "{{Binding}} on `<{} {}=...>` is not supported (TextBlock/TextBox Text, Window Title, IsEnabled, Button Command/Content, ItemsSource, ContentPresenter Content)",
+                                element.name, attr.name
+                            ),
+                        ));
+                    }
                     self.check_markup_extension(ext, attr.span, report);
                 }
                 // fidelity-loop §1.2：色值/Thickness 禁裸值（资源定义元素除外）
@@ -815,14 +830,20 @@ impl TypeChecker {
     ) {
         match ext.kind {
             MarkupKind::XBind => {
-                // x:Bind 至少需要一个位置参数（绑定路径）
+                report.errors.push(ArmlError::type_error(
+                    span,
+                    "`{x:Bind}` is not an author API; use `{Binding Path}` (compile-time binding)",
+                ));
+            }
+            MarkupKind::Binding => {
                 if ext.args.is_empty() {
                     report.errors.push(ArmlError::type_error(
                         span,
-                        "`x:Bind` requires a binding path (e.g., `{x:Bind Count}`)",
+                        "`{Binding}` requires a binding path (e.g., `{Binding Count}`)",
                     ));
+                } else if let Err(msg) = crate::parse_binding_path(ext.args[0].as_str()) {
+                    report.errors.push(ArmlError::type_error(span, msg));
                 }
-                // Mode 参数校验
                 for (key, val) in &ext.properties {
                     if key == "Mode" {
                         match val.as_str() {
@@ -830,10 +851,17 @@ impl TypeChecker {
                             _ => report.errors.push(ArmlError::type_error(
                                 span,
                                 format!(
-                                    "invalid x:Bind Mode `{val}`, expected OneWay/TwoWay/OneTime"
+                                    "invalid {{Binding}} Mode `{val}`, expected OneWay/TwoWay/OneTime"
                                 ),
                             )),
                         }
+                    } else {
+                        report.errors.push(ArmlError::type_error(
+                            span,
+                            format!(
+                                "`{{Binding}}` `{key}` is not supported (positional Path; Mode=OneTime|OneWay|TwoWay only; no Converter/ElementName/RelativeSource)"
+                            )),
+                        );
                     }
                 }
             }
@@ -850,7 +878,7 @@ impl TypeChecker {
                     ));
                 }
             }
-            MarkupKind::Binding | MarkupKind::StaticResource | MarkupKind::Token => {
+            MarkupKind::StaticResource | MarkupKind::Token => {
                 if ext.args.is_empty() {
                     report.warnings.push(ArmlError::type_error(
                         span,

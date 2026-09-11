@@ -31,11 +31,11 @@ fn inspect_json_includes_children() {
 
 #[test]
 fn inspect_json_markup_extension() {
-    let src = r#"<TextBlock Text="{x:Bind Count}"/>"#;
+    let src = r#"<TextBlock Text="{Binding Count}"/>"#;
     let doc = Parser::parse(src).unwrap();
     let json = inspect_json(&doc);
     assert!(json.contains("markup"));
-    assert!(json.contains("x:Bind"));
+    assert!(json.contains("Binding"));
 }
 
 #[test]
@@ -67,9 +67,9 @@ fn ascii_preview_shows_tree() {
 }
 
 #[test]
-fn ascii_preview_shows_xbind() {
-    let src = r#"<TextBlock Text="{x:Bind Count}"/>"#;
+fn ascii_preview_shows_binding() {
+    let src = r#"<TextBlock Text="{Binding Count}"/>"#;
     let doc = Parser::parse(src).unwrap();
     let ascii = ascii_preview(&doc);
-    assert!(ascii.contains("Text={x:Bind Count}"));
+    assert!(ascii.contains("Text={Binding Count}"));
 }

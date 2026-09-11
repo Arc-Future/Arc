@@ -590,4 +590,11 @@ public class Element {
         }
         _detachActions.Add(action);
     }
+
+    /// <summary>
+    /// 嵌套 `{Binding Foo.Bar}` 中间替换刷新入口。codegen 在窗口类 override：
+    /// 按绑定 id 重走编译期路径（Watch 中段 + Rebind 叶）。默认空。
+    /// </summary>
+    public virtual void OnNestedBindingRefresh(int id) {
+    }
 }

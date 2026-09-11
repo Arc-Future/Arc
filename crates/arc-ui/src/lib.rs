@@ -43,7 +43,10 @@ pub use builtin_theme_gen::{
     write_colors_g_as, write_styles_g_as, COLORS_G_AS_REL, CONTROLS_ARML_REL, CONTROLS_DIR_REL,
     CONTROL_STYLE_SOURCES, DARK_ARML_REL, LIGHT_ARML_REL, STYLES_G_AS_REL,
 };
-pub use codegen::{generate, generate_project, CodegenOptions, GeneratedFile, ProjectOutput};
+pub use codegen::{
+    generate, generate_project, scan_observable_member_names, CodegenOptions, GeneratedFile,
+    ProjectOutput,
+};
 pub use dark_map_derive::{
     derive_dark_map_from_light, emit_dark_arml, generate_dark_arml_from_light, normalize_argb_hex,
     write_dark_arml_from_light,

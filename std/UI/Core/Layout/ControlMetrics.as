@@ -151,6 +151,12 @@ internal class ControlMetrics {
     /// <summary>Tab 溢出箭头点击一次的水平滚步长（DIP）。</summary>
     public const double TabOverflowScrollStep = 96.0;
 
+    /// <summary>页签关闭槽宽（文案区右侧；测宽 / 命中 / 渲染同源）。</summary>
+    public const double TabCloseSlotWidth = 16.0;
+
+    /// <summary>页签关闭「x」字号。</summary>
+    public const double TabCloseGlyphSize = 11.0;
+
     /// <summary>MessageBox 对话框外宽（含描边；内边距 = SpacingLG → Size.MessageBox.Padding）。</summary>
     public const double MessageBoxWidth = 400.0;
 

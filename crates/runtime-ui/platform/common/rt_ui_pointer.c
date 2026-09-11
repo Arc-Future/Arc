@@ -260,6 +260,159 @@ static int rt_ui_treeview_hit_row(RtUiElement* elem, int32_t px, int32_t py, int
     return rt_ui_treeview_hit_node(elem, px, py, out_expand);
 }
 
+/* 页签栏命中：与渲染 strip/HeaderWidth/关闭槽同源。箭头优先。
+ * 关闭槽仅当该页关闭「x」可见（选中常显 / 未选中悬停）时置 HitTabClose。 */
+static void rt_ui_tabcontrol_hit(RtUiElement* elem, int32_t px, int32_t py,
+                                 int* out_hit, int* out_overflow, int* out_close) {
+    int hit = -1;
+    int hit_overflow = 0;
+    int hit_close = 0;
+    if (!elem) {
+        if (out_hit) {
+            *out_hit = -1;
+        }
+        if (out_overflow) {
+            *out_overflow = 0;
+        }
+        if (out_close) {
+            *out_close = 0;
+        }
+        return;
+    }
+    double bar_h = rt_ui_get_number(elem, "HeaderBarHeight", 36.0);
+    double tab_count = rt_ui_get_number(elem, "TabCount", 0.0);
+    double scroll_off = rt_ui_get_number(elem, "HeaderScrollOffset", 0.0);
+    double header_overflow = rt_ui_get_number(elem, "HeaderOverflow", 0.0);
+    double arrow_w = rt_ui_get_number(elem, "OverflowArrowWidth", 24.0);
+    double close_slot = rt_ui_get_number(elem, "CloseSlotWidth", 16.0);
+    if (scroll_off < 0.0) {
+        scroll_off = 0.0;
+    }
+    if (arrow_w <= 0.0) {
+        arrow_w = 24.0;
+    }
+    if (close_slot < 0.0) {
+        close_slot = 0.0;
+    }
+    int n = (int)tab_count;
+    if (n > 0 && (double)py >= elem->layout_y
+        && (double)py < elem->layout_y + bar_h
+        && elem->layout_w > 0.0) {
+        double local_x = (double)px - elem->layout_x;
+        if (local_x >= 0.0 && local_x < elem->layout_w) {
+            int show_arrows = (header_overflow > 0.5)
+                && (elem->layout_w > arrow_w * 2.0);
+            if (show_arrows && local_x < arrow_w) {
+                hit_overflow = -1;
+            } else if (show_arrows
+                && local_x >= elem->layout_w - arrow_w) {
+                hit_overflow = 1;
+            } else {
+                double strip_l = show_arrows ? arrow_w : 0.0;
+                double strip_w = show_arrows
+                    ? (elem->layout_w - arrow_w * 2.0)
+                    : elem->layout_w;
+                if (strip_w < 0.0) {
+                    strip_w = 0.0;
+                }
+                double content_x = (local_x - strip_l) + scroll_off;
+                int have_widths = 0;
+                for (int i = 0; i < n; i++) {
+                    char key[32];
+                    snprintf(key, sizeof(key), "HeaderWidth%d", i);
+                    if (rt_ui_get_number(elem, key, 0.0) > 0.0) {
+                        have_widths = 1;
+                        break;
+                    }
+                }
+                double hit_cell_w = 0.0;
+                double hit_cursor = 0.0;
+                if (have_widths) {
+                    double cursor = 0.0;
+                    for (int i = 0; i < n; i++) {
+                        char key[32];
+                        snprintf(key, sizeof(key), "HeaderWidth%d", i);
+                        double cell_w = rt_ui_get_number(elem, key, 0.0);
+                        if (cell_w <= 0.0) {
+                            cell_w = 1.0;
+                        }
+                        if (content_x >= cursor && content_x < cursor + cell_w) {
+                            hit = i;
+                            hit_cell_w = cell_w;
+                            hit_cursor = cursor;
+                            break;
+                        }
+                        cursor += cell_w;
+                    }
+                } else if (strip_w > 0.0) {
+                    hit = (int)((local_x - strip_l) / (strip_w / tab_count));
+                    if (hit < 0) {
+                        hit = 0;
+                    }
+                    if (hit >= n) {
+                        hit = n - 1;
+                    }
+                    hit_cell_w = strip_w / tab_count;
+                    hit_cursor = hit_cell_w * (double)hit;
+                }
+                if (hit >= 0 && close_slot > 0.0 && hit_cell_w > 0.0) {
+                    double slot = close_slot;
+                    if (slot > hit_cell_w) {
+                        slot = hit_cell_w;
+                    }
+                    if (content_x >= hit_cursor + hit_cell_w - slot
+                        && content_x < hit_cursor + hit_cell_w) {
+                        int selected = (int)rt_ui_get_number(elem, "SelectedIndex", 0.0);
+                        int hover = (int)rt_ui_get_number(elem, "HoverTabIndex", -1.0);
+                        if (hit == selected || hit == hover) {
+                            hit_close = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (out_hit) {
+        *out_hit = hit;
+    }
+    if (out_overflow) {
+        *out_overflow = hit_overflow;
+    }
+    if (out_close) {
+        *out_close = hit_close;
+    }
+}
+
+int rt_ui_tabcontrol_update_hover(RtUiElement* elem, int32_t px, int32_t py) {
+    if (!elem || !elem->type_name || strcmp(elem->type_name, "TabControl") != 0) {
+        return 0;
+    }
+    int hit = -1;
+    int overflow = 0;
+    int close_unused = 0;
+    rt_ui_tabcontrol_hit(elem, px, py, &hit, &overflow, &close_unused);
+    if (overflow != 0) {
+        hit = -1;
+    }
+    int prev = (int)rt_ui_get_number(elem, "HoverTabIndex", -1.0);
+    if (prev == hit) {
+        return 0;
+    }
+    rt_ui_element_set_number(elem, "HoverTabIndex", (double)hit);
+    return 1;
+}
+
+void rt_ui_tabcontrol_clear_hover(RtUiElement* elem) {
+    if (!elem || !elem->type_name || strcmp(elem->type_name, "TabControl") != 0) {
+        return;
+    }
+    int prev = (int)rt_ui_get_number(elem, "HoverTabIndex", -1.0);
+    if (prev < 0) {
+        return;
+    }
+    rt_ui_element_set_number(elem, "HoverTabIndex", -1.0);
+}
+
 int rt_ui_dispatch_control_click_at(RtUiElement* elem, int32_t px, int32_t py) {
     if (!elem || !elem->type_name) return 0;
     RtUiControlHandlerEntry* e = rt_ui_control_handler_lookup(elem->type_name);
@@ -292,85 +445,17 @@ int rt_ui_dispatch_control_click_at(RtUiElement* elem, int32_t px, int32_t py) {
         rt_ui_element_set_number(elem, "HitItemIndex", (double)hit_idx);
         rt_ui_element_set_number(elem, "HitExpand", (double)hit_expand);
     }
-    /* TabControl：页签栏内容测宽左对齐——py 落在顶栏。
-     * 溢出箭头（HeaderOverflow）：两端 HitTabOverflow=±1，中间 strip 命中页签。
-     * content_x = (local_x - arrow_w) + HeaderScrollOffset（挤栏）或 local_x + offset。
-     * 与渲染 PushClip + cursorX=stripL-offset 同源。无 HeaderWidth{i} 时回退均分。
-     * 栏外点击保持 HitTabIndex=-1、HitTabOverflow=0。 */
+    /* TabControl：页签栏命中与悬停同源（rt_ui_tabcontrol_hit）。
+     * 先更新 HoverTabIndex，再算 HitTabClose（未选中仅悬停后关闭槽可点）。 */
     if (strcmp(elem->type_name, "TabControl") == 0) {
-        double bar_h = rt_ui_get_number(elem, "HeaderBarHeight", 36.0);
-        double tab_count = rt_ui_get_number(elem, "TabCount", 0.0);
-        double scroll_off = rt_ui_get_number(elem, "HeaderScrollOffset", 0.0);
-        double header_overflow = rt_ui_get_number(elem, "HeaderOverflow", 0.0);
-        double arrow_w = rt_ui_get_number(elem, "OverflowArrowWidth", 24.0);
-        if (scroll_off < 0.0) {
-            scroll_off = 0.0;
-        }
-        if (arrow_w <= 0.0) {
-            arrow_w = 24.0;
-        }
+        rt_ui_tabcontrol_update_hover(elem, px, py);
         int hit = -1;
         int hit_overflow = 0;
-        int n = (int)tab_count;
-        if (n > 0 && (double)py >= elem->layout_y
-            && (double)py < elem->layout_y + bar_h
-            && elem->layout_w > 0.0) {
-            double local_x = (double)px - elem->layout_x;
-            if (local_x >= 0.0 && local_x < elem->layout_w) {
-                int show_arrows = (header_overflow > 0.5)
-                    && (elem->layout_w > arrow_w * 2.0);
-                if (show_arrows && local_x < arrow_w) {
-                    hit_overflow = -1;
-                } else if (show_arrows
-                    && local_x >= elem->layout_w - arrow_w) {
-                    hit_overflow = 1;
-                } else {
-                    double strip_l = show_arrows ? arrow_w : 0.0;
-                    double strip_w = show_arrows
-                        ? (elem->layout_w - arrow_w * 2.0)
-                        : elem->layout_w;
-                    if (strip_w < 0.0) {
-                        strip_w = 0.0;
-                    }
-                    double content_x = (local_x - strip_l) + scroll_off;
-                    int have_widths = 0;
-                    for (int i = 0; i < n; i++) {
-                        char key[32];
-                        snprintf(key, sizeof(key), "HeaderWidth%d", i);
-                        if (rt_ui_get_number(elem, key, 0.0) > 0.0) {
-                            have_widths = 1;
-                            break;
-                        }
-                    }
-                    if (have_widths) {
-                        double cursor = 0.0;
-                        for (int i = 0; i < n; i++) {
-                            char key[32];
-                            snprintf(key, sizeof(key), "HeaderWidth%d", i);
-                            double cell_w = rt_ui_get_number(elem, key, 0.0);
-                            if (cell_w <= 0.0) {
-                                cell_w = 1.0;
-                            }
-                            if (content_x >= cursor && content_x < cursor + cell_w) {
-                                hit = i;
-                                break;
-                            }
-                            cursor += cell_w;
-                        }
-                    } else if (strip_w > 0.0) {
-                        hit = (int)((local_x - strip_l) / (strip_w / tab_count));
-                        if (hit < 0) {
-                            hit = 0;
-                        }
-                        if (hit >= n) {
-                            hit = n - 1;
-                        }
-                    }
-                }
-            }
-        }
+        int hit_close = 0;
+        rt_ui_tabcontrol_hit(elem, px, py, &hit, &hit_overflow, &hit_close);
         rt_ui_element_set_number(elem, "HitTabIndex", (double)hit);
         rt_ui_element_set_number(elem, "HitTabOverflow", (double)hit_overflow);
+        rt_ui_element_set_number(elem, "HitTabClose", (double)hit_close);
     }
     int64_t handle = (int64_t)(uintptr_t)elem;
     if (e->click_env) {

@@ -136,7 +136,13 @@ private const double Pi = 3.14159;
 public const int MAX_LENGTH = 1024;    // 禁止 C 风格
 ```
 
-## 属性声明规范
+## `[Observable]`（通知 / TwoWay，不是绑定准入）
+
+`[Observable]` 表示该成员有**变更通知通道**，因而可以：
+- OneWay **保持存活**（源变 → 目标更新）；
+- **TwoWay** 写回。
+
+**没有** `[Observable]` 的普通属性/字段仍是合法绑定源：`{Binding Foo}` / `{Binding Foo.Bar}` 的 OneWay（默认）与 OneTime **直接读**当前值。禁止把 `[Observable]` 当成「可绑定税」。`Mode=TwoWay` 打在无 `[Observable]` 的源上 → 编译错误（须通知/写回通道），不是「不能绑定」。
 
 ### 首选自动属性
 

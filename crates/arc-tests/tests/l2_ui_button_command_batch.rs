@@ -7,7 +7,7 @@
 //! - `disabled_after_command`：赋 Command 后再手写 IsEnabled=false 仍门控
 //!
 //! 宣称纪律：关 CanExecuteChanged→IsEnabled 直写同步 + RaiseClick×Execute；
-//! **不**宣称 ARML `{x:Bind}`/`{Binding}` Command、RoutedCommand、CommandManager.RequerySuggested、
+//! **不**宣称 Converter/ElementName/RelativeSource、RoutedCommand、CommandManager.RequerySuggested、
 //! WPF IsEnabledCore 合取语义。需 `--features full-rt`。
 
 #![cfg(feature = "full-rt")]
