@@ -982,6 +982,13 @@ int32_t rt_list_eq_iface(const void* a, const void* b);
 /* List<T> (RFC 007 Phase 3: predicate/comparison/array callbacks) */
 typedef int32_t (*rt_list_pred_fn)(const void* elem);
 typedef int32_t (*rt_list_cmp_fn)(const void* a, const void* b);
+/* Arc `Func<T,bool>` / 无捕获 lambda 编译为 LLVM `i1`（约定只保证 AL）；
+ * 本 typedef 为 `int32_t`。跨约定调用时 EAX 高位可能残留脏值，C 侧
+ * `if (pred())` 会把 false 当成 true（UnitTest FindIndex/Exists/TrueForAll/
+ * RemoveAll 实证）。真值只看最低位（0/1），与 dict `zext i1→i32` 契约一致。 */
+static inline int32_t rt_pred_hit(rt_list_pred_fn pred, const void* elem) {
+    return (int32_t)(((uint32_t)pred(elem)) & 1u);
+}
 int32_t rt_list_find_get(void* handle, rt_list_pred_fn pred, void* out_ptr);
 void*   rt_list_find_all(void* handle, rt_list_pred_fn pred);
 int32_t rt_list_exists(void* handle, rt_list_pred_fn pred);

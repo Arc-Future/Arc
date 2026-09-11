@@ -288,7 +288,7 @@ int32_t rt_array_exists(void* payload, rt_list_pred_fn pred) {
     char* buf = (char*)payload;
     int32_t es = h->elem_size;
     for (int32_t i = 0; i < h->length; i++) {
-        if (pred(buf + (size_t)i * (size_t)es)) return 1;
+        if (rt_pred_hit(pred, buf + (size_t)i * (size_t)es)) return 1;
     }
     return 0;
 }
@@ -298,7 +298,7 @@ int32_t rt_array_find_int(void* payload, rt_list_pred_fn pred) {
     if (!h || !pred) return 0;
     int32_t* data = (int32_t*)payload;
     for (int32_t i = 0; i < h->length; i++) {
-        if (pred(&data[i])) return data[i];
+        if (rt_pred_hit(pred, &data[i])) return data[i];
     }
     return 0;
 }
@@ -308,7 +308,7 @@ int32_t rt_array_find_last_int(void* payload, rt_list_pred_fn pred) {
     if (!h || !pred) return 0;
     int32_t* data = (int32_t*)payload;
     for (int32_t i = h->length - 1; i >= 0; i--) {
-        if (pred(&data[i])) return data[i];
+        if (rt_pred_hit(pred, &data[i])) return data[i];
     }
     return 0;
 }
@@ -319,7 +319,7 @@ int32_t rt_array_find_index(void* payload, rt_list_pred_fn pred) {
     char* buf = (char*)payload;
     int32_t es = h->elem_size;
     for (int32_t i = 0; i < h->length; i++) {
-        if (pred(buf + (size_t)i * (size_t)es)) return i;
+        if (rt_pred_hit(pred, buf + (size_t)i * (size_t)es)) return i;
     }
     return -1;
 }
@@ -330,7 +330,7 @@ int32_t rt_array_find_last_index(void* payload, rt_list_pred_fn pred) {
     char* buf = (char*)payload;
     int32_t es = h->elem_size;
     for (int32_t i = h->length - 1; i >= 0; i--) {
-        if (pred(buf + (size_t)i * (size_t)es)) return i;
+        if (rt_pred_hit(pred, buf + (size_t)i * (size_t)es)) return i;
     }
     return -1;
 }
@@ -342,7 +342,7 @@ int32_t rt_array_true_for_all(void* payload, rt_list_pred_fn pred) {
     char* buf = (char*)payload;
     int32_t es = h->elem_size;
     for (int32_t i = 0; i < h->length; i++) {
-        if (!pred(buf + (size_t)i * (size_t)es)) return 0;
+        if (!rt_pred_hit(pred, buf + (size_t)i * (size_t)es)) return 0;
     }
     return 1;
 }
@@ -375,13 +375,13 @@ void* rt_array_find_all_int(void* payload, rt_list_pred_fn pred) {
     int32_t* data = (int32_t*)payload;
     int32_t count = 0;
     for (int32_t i = 0; i < h->length; i++) {
-        if (pred(&data[i])) count++;
+        if (rt_pred_hit(pred, &data[i])) count++;
     }
     void* out = rt_array_create(count, (int32_t)sizeof(int32_t));
     int32_t* od = (int32_t*)out;
     int32_t j = 0;
     for (int32_t i = 0; i < h->length; i++) {
-        if (pred(&data[i])) od[j++] = data[i];
+        if (rt_pred_hit(pred, &data[i])) od[j++] = data[i];
     }
     return out;
 }

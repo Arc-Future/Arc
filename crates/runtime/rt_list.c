@@ -382,7 +382,7 @@ int32_t rt_list_find_get(void* handle, rt_list_pred_fn pred, void* out_ptr) {
     RtList* list = (RtList*)handle;
     for (int32_t i = 0; i < list->size; i++) {
         void* elem = (char*)list->data + (size_t)i * (size_t)list->elem_size;
-        if (pred(elem)) {
+        if (rt_pred_hit(pred, elem)) {
             memcpy(out_ptr, elem, (size_t)list->elem_size);
             return 1;
         }
@@ -398,7 +398,7 @@ void* rt_list_find_all(void* handle, rt_list_pred_fn pred) {
     if (!result) rt_panic("oom");
     for (int32_t i = 0; i < list->size; i++) {
         void* elem = (char*)list->data + (size_t)i * (size_t)list->elem_size;
-        if (pred(elem)) {
+        if (rt_pred_hit(pred, elem)) {
             rt_list_push(result, elem);
         }
     }
@@ -410,7 +410,7 @@ int32_t rt_list_exists(void* handle, rt_list_pred_fn pred) {
     RtList* list = (RtList*)handle;
     for (int32_t i = 0; i < list->size; i++) {
         void* elem = (char*)list->data + (size_t)i * (size_t)list->elem_size;
-        if (pred(elem)) return 1;
+        if (rt_pred_hit(pred, elem)) return 1;
     }
     return 0;
 }
@@ -420,7 +420,7 @@ int32_t rt_list_find_index(void* handle, rt_list_pred_fn pred) {
     RtList* list = (RtList*)handle;
     for (int32_t i = 0; i < list->size; i++) {
         void* elem = (char*)list->data + (size_t)i * (size_t)list->elem_size;
-        if (pred(elem)) return i;
+        if (rt_pred_hit(pred, elem)) return i;
     }
     return -1;
 }
@@ -430,7 +430,7 @@ int32_t rt_list_find_last_index(void* handle, rt_list_pred_fn pred) {
     RtList* list = (RtList*)handle;
     for (int32_t i = list->size - 1; i >= 0; i--) {
         void* elem = (char*)list->data + (size_t)i * (size_t)list->elem_size;
-        if (pred(elem)) return i;
+        if (rt_pred_hit(pred, elem)) return i;
     }
     return -1;
 }
@@ -440,7 +440,7 @@ int32_t rt_list_true_for_all(void* handle, rt_list_pred_fn pred) {
     RtList* list = (RtList*)handle;
     for (int32_t i = 0; i < list->size; i++) {
         void* elem = (char*)list->data + (size_t)i * (size_t)list->elem_size;
-        if (!pred(elem)) return 0;
+        if (!rt_pred_hit(pred, elem)) return 0;
     }
     return 1;
 }
@@ -470,7 +470,7 @@ int32_t rt_list_remove_all(void* handle, rt_list_pred_fn pred) {
     int32_t w = 0;
     for (int32_t r = 0; r < list->size; r++) {
         void* elem = (char*)list->data + (size_t)r * (size_t)list->elem_size;
-        if (pred(elem)) {
+        if (rt_pred_hit(pred, elem)) {
             /* H1: 勿 arc_dec——见 rt_list_arc_dec_ref。 */
             continue;
         }
@@ -497,7 +497,12 @@ void rt_list_sort_default(void* handle) {
     if (!handle) return;
     RtList* list = (RtList*)handle;
     if (list->size <= 1) return;
-    if (list->eq == rt_list_eq_str) {
+    /* string：codegen 传 `@rt_list_eq_str` + 无 ARC。禁止 `list->eq ==
+     * rt_list_eq_str` 指针恒等——Windows DLL 下调用方持有 IAT stub 地址，
+     * 与本 DSO 内定义不等（Contains 经调用仍正确；Sort 会误走 memcmp）。
+     * 判别：8B 槽 + 非空 eq + 无 arc（`List<Iface>` 有 arc，不走此径）。 */
+    if (list->elem_size == (int32_t)sizeof(void*) && list->eq != NULL
+        && list->arc_inc == NULL && list->arc_dec == NULL) {
         qsort(list->data, (size_t)list->size, (size_t)list->elem_size,
               (int (*)(const void*, const void*))rt_list_cmp_str);
     } else {

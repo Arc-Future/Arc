@@ -84,7 +84,9 @@ public class ReflectionTests
         Type t = typeof(RefShape);
         Assert.True(t.FullName != null);
         Assert.True(t.FullName.Length > 0);
-        Assert.Equal(t.Name, t.FullName);
+        // RFC 018：FullName = Ns.Type 点分限定名；Name = 短名。对标 .NET。
+        Assert.True(t.FullName.Contains(t.Name));
+        Assert.True(t.FullName != t.Name);
     }
 
     [Fact]
